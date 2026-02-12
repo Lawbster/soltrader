@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
-import { getConnection, config, createLogger } from '../utils';
+import { getConnection, createLogger } from '../utils';
 import { TokenData } from './types';
 
 const log = createLogger('token-data');
@@ -15,29 +15,24 @@ async function getMintCreationTime(mint: string): Promise<number | null> {
     const conn = getConnection();
     const mintPubkey = new PublicKey(mint);
 
-    // Get signatures for the mint address, oldest-first (limit 1, before everything)
-    // The last signature in reverse chronological = the creation tx
-    const sigs = await conn.getSignaturesForAddress(mintPubkey, { limit: 1 }, 'confirmed');
-    // getSignaturesForAddress returns newest-first. We need the very first tx.
-    // Trick: get oldest by requesting with `until` unset and walking back.
-    // Simpler: use getAccountInfo which returns the slot the data was fetched at,
-    // but not creation slot. Instead, use getSignaturesForAddress in a binary-search-like
-    // manner. For efficiency, just request last page:
-    let oldestSig = sigs.length > 0 ? sigs[sigs.length - 1] : null;
+    // Single RPC call: fetch one page of signatures (newest-first).
+    // The last entry in this batch is a good lower bound for age.
+    // For tokens with <1000 total txs, this IS the creation tx.
+    // For busy tokens with 1000+ txs, the oldest in this page gives a
+    // conservative age estimate (actual age >= this). Good enough for
+    // the 60-360min filter — if a token has 1000+ txs it's definitely
+    // old enough to pass the minimum age gate.
+    const sigs = await conn.getSignaturesForAddress(
+      mintPubkey,
+      { limit: 1000 },
+      'confirmed'
+    );
 
-    // Walk backwards to find the very first signature (creation tx)
-    while (true) {
-      const older = await conn.getSignaturesForAddress(
-        mintPubkey,
-        { limit: 1000, before: oldestSig?.signature },
-        'confirmed'
-      );
-      if (older.length === 0) break;
-      oldestSig = older[older.length - 1];
-    }
+    if (sigs.length === 0) return null;
 
-    if (oldestSig?.blockTime) {
-      const creationMs = oldestSig.blockTime * 1000;
+    const oldest = sigs[sigs.length - 1];
+    if (oldest?.blockTime) {
+      const creationMs = oldest.blockTime * 1000;
       mintCreationCache.set(mint, creationMs);
       return creationMs;
     }
@@ -129,37 +124,43 @@ export async function fetchTokenData(
 
     let top10HolderPct = 0;
     let holderCount = 0;
+    const LP_PROGRAMS = new Set([
+      '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM
+      '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1', // Raydium authority
+      '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',  // pump.fun
+    ]);
+
     if (totalSupply > 0) {
-      // Resolve token account owners to filter out LP/burn/system
+      // Pre-filter by address, then batch-resolve owners in ONE RPC call
+      const candidates = largestAccounts.value.filter(acc => {
+        if ((acc.uiAmount || 0) <= 0) return false;
+        const addr = acc.address.toBase58();
+        return !EXCLUDED_ADDRESSES.has(addr) && !BURN_PATTERN.test(addr);
+      });
+
+      // Single batch RPC call to resolve all token account owners
       const filteredAccounts: { amount: number; address: string }[] = [];
-      for (const acc of largestAccounts.value) {
-        const amount = acc.uiAmount || 0;
-        if (amount <= 0) continue;
-
-        const address = acc.address.toBase58();
-        // Skip if address matches known exclusion patterns
-        if (EXCLUDED_ADDRESSES.has(address) || BURN_PATTERN.test(address)) continue;
-
-        // Try to resolve the owner of this token account
-        try {
-          const accInfo = await conn.getParsedAccountInfo(acc.address);
-          const accData = accInfo.value?.data;
+      try {
+        const accountInfos = await conn.getMultipleParsedAccounts(
+          candidates.map(c => c.address)
+        );
+        for (let i = 0; i < candidates.length; i++) {
+          const accData = accountInfos.value[i]?.data;
           if (accData && 'parsed' in accData) {
             const owner = accData.parsed.info.owner as string;
             if (EXCLUDED_ADDRESSES.has(owner) || BURN_PATTERN.test(owner)) continue;
-            // Exclude if owner is a known AMM/LP program
-            const LP_PROGRAMS = new Set([
-              '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM
-              '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1', // Raydium authority
-              '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',  // pump.fun
-            ]);
             if (LP_PROGRAMS.has(owner)) continue;
           }
-        } catch {
-          // If we can't resolve, include it (conservative)
+          filteredAccounts.push({
+            amount: candidates[i].uiAmount || 0,
+            address: candidates[i].address.toBase58(),
+          });
         }
-
-        filteredAccounts.push({ amount, address });
+      } catch {
+        // Fallback: include all candidates without owner filtering
+        for (const c of candidates) {
+          filteredAccounts.push({ amount: c.uiAmount || 0, address: c.address.toBase58() });
+        }
       }
 
       holderCount = filteredAccounts.length;

@@ -113,13 +113,25 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   }
 }
 
+// Round-robin index so we cycle through all candidates over time
+let analysisOffset = 0;
+const MAX_CANDIDATES_PER_CYCLE = 5;
+
 async function analysisLoop() {
   const mints = Array.from(pendingTokens.keys());
   if (mints.length === 0) return;
 
-  log.debug(`Analyzing ${mints.length} candidates`);
+  // Pick a batch starting from where we left off
+  const batch: string[] = [];
+  for (let i = 0; i < Math.min(MAX_CANDIDATES_PER_CYCLE, mints.length); i++) {
+    const idx = (analysisOffset + i) % mints.length;
+    batch.push(mints[idx]);
+  }
+  analysisOffset = (analysisOffset + MAX_CANDIDATES_PER_CYCLE) % Math.max(mints.length, 1);
 
-  for (const mint of mints) {
+  log.debug(`Analyzing ${batch.length}/${mints.length} candidates`);
+
+  for (const mint of batch) {
     const launch = pendingTokens.get(mint);
     if (!launch) continue;
 
@@ -129,7 +141,8 @@ async function analysisLoop() {
       log.error('Analysis failed for token', { mint, error: err });
     }
 
-    await new Promise(r => setTimeout(r, 300));
+    // 500ms pause between candidates to stay under rate limits
+    await new Promise(r => setTimeout(r, 500));
   }
 }
 

@@ -15,6 +15,28 @@ const MAX_SIGS_PER_GENERATION = 2500;
 
 const MAX_TRADE_AGE_MS = 30 * 60_000; // Keep 30 min of trades
 
+// Concurrency gate for trade enrichment — limits parallel getParsedTransaction calls
+let activeEnrichments = 0;
+const MAX_CONCURRENT_ENRICHMENTS = 3;
+const enrichmentQueue: (() => void)[] = [];
+
+function acquireEnrichmentSlot(): Promise<void> {
+  if (activeEnrichments < MAX_CONCURRENT_ENRICHMENTS) {
+    activeEnrichments++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => enrichmentQueue.push(resolve));
+}
+
+function releaseEnrichmentSlot() {
+  const next = enrichmentQueue.shift();
+  if (next) {
+    next(); // hand the slot to the next waiter
+  } else {
+    activeEnrichments--;
+  }
+}
+
 export function recordTrade(trade: TradeEvent) {
   let trades = tradeHistory.get(trade.mint);
   if (!trades) {
@@ -152,19 +174,25 @@ function handleSwapLog(mint: string, logInfo: Logs) {
 }
 
 async function enrichAndRecord(mint: string, signature: string) {
-  // Small delay to let the transaction finalize
-  await new Promise(r => setTimeout(r, 1500));
+  // Wait for a concurrency slot before hitting RPC
+  await acquireEnrichmentSlot();
+  try {
+    // Small delay to let the transaction finalize
+    await new Promise(r => setTimeout(r, 1500));
 
-  const trade = await enrichTradeFromTx(mint, signature);
-  if (trade) {
-    recordTrade(trade);
-    log.debug('Enriched trade recorded', {
-      mint,
-      side: trade.side,
-      sol: trade.amountSol.toFixed(4),
-      wallet: trade.wallet.slice(0, 8) + '...',
-      price: trade.pricePerToken.toExponential(3),
-    });
+    const trade = await enrichTradeFromTx(mint, signature);
+    if (trade) {
+      recordTrade(trade);
+      log.debug('Enriched trade recorded', {
+        mint,
+        side: trade.side,
+        sol: trade.amountSol.toFixed(4),
+        wallet: trade.wallet.slice(0, 8) + '...',
+        price: trade.pricePerToken.toExponential(3),
+      });
+    }
+  } finally {
+    releaseEnrichmentSlot();
   }
 }
 
