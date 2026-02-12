@@ -52,6 +52,14 @@ const LIQUIDITY_TTL = 30_000; // 30s
 const tokenPriceCache = new Map<string, { priceSol: number; priceUsd: number; fetchedAt: number }>();
 const liquidityCache = new Map<string, { liquidityUsd: number; fetchedAt: number }>();
 
+function extractUsdPrice(entry: any): number {
+  if (!entry) return 0;
+  if (typeof entry.usdPrice === 'number') return entry.usdPrice;
+  if (typeof entry.price === 'number') return entry.price;
+  if (typeof entry.price === 'string') return parseFloat(entry.price);
+  return 0;
+}
+
 async function getSolPrice(): Promise<number> {
   if (Date.now() - SOL_PRICE_CACHE.fetchedAt < SOL_PRICE_TTL && SOL_PRICE_CACHE.price > 0) {
     return SOL_PRICE_CACHE.price;
@@ -59,9 +67,10 @@ async function getSolPrice(): Promise<number> {
 
   try {
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
-    const res = await fetch(`https://api.jup.ag/price/v2?ids=${SOL_MINT}`);
-    const json = await res.json() as { data: Record<string, { price: string }> };
-    const price = parseFloat(json.data[SOL_MINT]?.price || '0');
+    const res = await fetch(`https://lite-api.jup.ag/price/v3?ids=${SOL_MINT}`);
+    const json = await res.json() as any;
+    const entry = json.data?.[SOL_MINT] ?? json[SOL_MINT];
+    const price = extractUsdPrice(entry);
     if (price > 0) {
       SOL_PRICE_CACHE.price = price;
       SOL_PRICE_CACHE.fetchedAt = Date.now();
@@ -80,12 +89,12 @@ async function getTokenPrice(mint: string): Promise<{ priceSol: number; priceUsd
   }
 
   try {
-    const SOL_MINT = 'So11111111111111111111111111111111111111112';
-    const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}&vsToken=${SOL_MINT}`);
-    const json = await res.json() as { data: Record<string, { price: string }> };
-    const priceSol = parseFloat(json.data[mint]?.price || '0');
+    const res = await fetch(`https://lite-api.jup.ag/price/v3?ids=${mint}`);
+    const json = await res.json() as any;
+    const entry = json.data?.[mint] ?? json[mint];
+    const priceUsd = extractUsdPrice(entry);
     const solPrice = await getSolPrice();
-    const priceUsd = priceSol * solPrice;
+    const priceSol = solPrice > 0 ? priceUsd / solPrice : 0;
     tokenPriceCache.set(mint, { priceSol, priceUsd, fetchedAt: Date.now() });
     return { priceSol, priceUsd };
   } catch (err) {
@@ -234,7 +243,7 @@ export async function fetchPoolLiquidity(mint: string): Promise<number> {
     // Get a quote for a small amount to check if pool exists and has depth
     const amountLamports = 1_000_000_000; // 1 SOL
     const res = await fetch(
-      `https://quote-api.jup.ag/v6/quote?inputMint=${SOL_MINT}&outputMint=${mint}&amount=${amountLamports}&slippageBps=300`
+      `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${mint}&amount=${amountLamports}&slippageBps=300`
     );
     const json = await res.json() as {
       outAmount?: string;
