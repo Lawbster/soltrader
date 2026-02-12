@@ -46,6 +46,7 @@ sol-trader/
 - [x] Core utils: RPC connection (Helius WebSocket), wallet, logger, config loader
 - [x] Token monitor: listen for pump.fun new launches + Raydium new pairs
 - [x] Store token snapshots (price, volume, holders over time)
+- [x] Snapshot batching + token cleanup to reduce RPC load
 
 ### Phase 2: Analysis & Filtering
 - [ ] Developer wallet history check (has this wallet rugged before?)
@@ -69,7 +70,7 @@ sol-trader/
 - [x] Performance metrics tracker (win rate, profit factor, Sharpe, drawdown, etc.)
 - [x] Metrics persisted to data/metrics.json, summary on shutdown
 - [x] Go-live gates checklist (docs/LIVE_GATES.md)
-- [x] Test harness with vitest (3 safety tests)
+- [x] Test harness with vitest (8 safety tests)
 - [ ] Run for 14 days collecting data, evaluate go-live gates
 
 ### Phase 5: Live Trading

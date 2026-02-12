@@ -1,5 +1,5 @@
 import { config, createLogger, getPublicKey } from './utils';
-import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, TokenLaunch } from './monitor';
+import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch } from './monitor';
 import {
   fetchTokenData, fetchPoolLiquidity,
   subscribeToTokenTrades, unsubscribeFromToken,
@@ -23,10 +23,12 @@ const log = createLogger('main');
 
 const SNAPSHOT_INTERVAL_MS = 60_000;
 const SAVE_INTERVAL_MS = 5 * 60_000;
-const ANALYSIS_INTERVAL_MS = 15_000;
+const ANALYSIS_INTERVAL_MS = 30_000;
 const POSITION_UPDATE_INTERVAL_MS = 5_000;
 const FIVE_MINUTES_MS = 5 * 60_000;
 const TEN_MINUTES_MS = 10 * 60_000;
+const CLEANUP_INTERVAL_MS = 5 * 60_000;
+const MAX_PENDING_TOKENS = 500;
 
 // Tokens waiting for their age window before analysis
 const pendingTokens = new Map<string, TokenLaunch>();
@@ -64,6 +66,18 @@ async function cleanupToken(mint: string) {
   pendingTokens.delete(mint);
   lpSnapshots.delete(mint);
   await unsubscribeFromToken(mint);
+}
+
+async function prunePendingTokens(maxAgeMs: number): Promise<number> {
+  const cutoff = Date.now() - maxAgeMs;
+  let pruned = 0;
+  for (const [mint, launch] of pendingTokens) {
+    if (launch.detectedAt < cutoff) {
+      await cleanupToken(mint);
+      pruned++;
+    }
+  }
+  return pruned;
 }
 
 async function analyzeCandidate(mint: string, launch: TokenLaunch) {
@@ -115,7 +129,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
 // Round-robin index so we cycle through all candidates over time
 let analysisOffset = 0;
-const MAX_CANDIDATES_PER_CYCLE = 5;
+const MAX_CANDIDATES_PER_CYCLE = 3;
 
 async function analysisLoop() {
   const mints = Array.from(pendingTokens.keys());
@@ -166,6 +180,10 @@ async function main() {
 
   monitor.onTokenLaunch((launch) => {
     if (!launch.mint) return;
+    if (pendingTokens.size >= MAX_PENDING_TOKENS) {
+      log.warn('Pending token cap reached, skipping', { mint: launch.mint, cap: MAX_PENDING_TOKENS });
+      return;
+    }
 
     log.info('TOKEN LAUNCH', {
       mint: launch.mint,
@@ -204,6 +222,19 @@ async function main() {
     }
   }, SNAPSHOT_INTERVAL_MS);
 
+  const cleanupTimer = setInterval(async () => {
+    try {
+      const maxAgeMs = strategyCfg.universe.tokenAgeMaxMinutes * 60_000;
+      const prunedWatched = pruneOldTokens(maxAgeMs);
+      const prunedPending = await prunePendingTokens(maxAgeMs);
+      if (prunedWatched > 0 || prunedPending > 0) {
+        log.info('Token cleanup', { prunedWatched, prunedPending });
+      }
+    } catch (err) {
+      log.error('Cleanup failed', err);
+    }
+  }, CLEANUP_INTERVAL_MS);
+
   const saveTimer = setInterval(() => {
     try {
       updateDashboardState(pendingTokens.size);
@@ -234,6 +265,7 @@ async function main() {
     clearInterval(analysisTimer);
     clearInterval(positionTimer);
     clearInterval(snapshotTimer);
+    clearInterval(cleanupTimer);
     clearInterval(saveTimer);
     saveSnapshots();
     savePositionHistory();

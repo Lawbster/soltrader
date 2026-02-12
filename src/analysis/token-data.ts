@@ -46,6 +46,11 @@ async function getMintCreationTime(mint: string): Promise<number | null> {
 
 const SOL_PRICE_CACHE = { price: 0, fetchedAt: 0 };
 const SOL_PRICE_TTL = 30_000; // 30s
+const TOKEN_PRICE_TTL = 30_000; // 30s
+const LIQUIDITY_TTL = 30_000; // 30s
+
+const tokenPriceCache = new Map<string, { priceSol: number; priceUsd: number; fetchedAt: number }>();
+const liquidityCache = new Map<string, { liquidityUsd: number; fetchedAt: number }>();
 
 async function getSolPrice(): Promise<number> {
   if (Date.now() - SOL_PRICE_CACHE.fetchedAt < SOL_PRICE_TTL && SOL_PRICE_CACHE.price > 0) {
@@ -69,13 +74,20 @@ async function getSolPrice(): Promise<number> {
 }
 
 async function getTokenPrice(mint: string): Promise<{ priceSol: number; priceUsd: number }> {
+  const cached = tokenPriceCache.get(mint);
+  if (cached && Date.now() - cached.fetchedAt < TOKEN_PRICE_TTL) {
+    return { priceSol: cached.priceSol, priceUsd: cached.priceUsd };
+  }
+
   try {
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     const res = await fetch(`https://api.jup.ag/price/v2?ids=${mint}&vsToken=${SOL_MINT}`);
     const json = await res.json() as { data: Record<string, { price: string }> };
     const priceSol = parseFloat(json.data[mint]?.price || '0');
     const solPrice = await getSolPrice();
-    return { priceSol, priceUsd: priceSol * solPrice };
+    const priceUsd = priceSol * solPrice;
+    tokenPriceCache.set(mint, { priceSol, priceUsd, fetchedAt: Date.now() });
+    return { priceSol, priceUsd };
   } catch (err) {
     log.error('Failed to fetch token price', { mint, error: err });
     return { priceSol: 0, priceUsd: 0 };
@@ -213,6 +225,11 @@ export async function fetchTokenData(
 export async function fetchPoolLiquidity(mint: string): Promise<number> {
   // Query Jupiter for route to estimate liquidity depth
   try {
+    const cached = liquidityCache.get(mint);
+    if (cached && Date.now() - cached.fetchedAt < LIQUIDITY_TTL) {
+      return cached.liquidityUsd;
+    }
+
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
     // Get a quote for a small amount to check if pool exists and has depth
     const amountLamports = 1_000_000_000; // 1 SOL
@@ -236,6 +253,7 @@ export async function fetchPoolLiquidity(mint: string): Promise<number> {
 
     const solPrice = await getSolPrice();
     const estimatedLiquidityUsd = (solPrice / (impact / 100)) * 2; // x2 for both sides
+    liquidityCache.set(mint, { liquidityUsd: estimatedLiquidityUsd, fetchedAt: Date.now() });
     return estimatedLiquidityUsd;
   } catch (err) {
     log.error('Failed to fetch pool liquidity', { mint, error: err });

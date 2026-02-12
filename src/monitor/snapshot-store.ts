@@ -9,6 +9,10 @@ const DATA_DIR = path.resolve(__dirname, '../../data');
 // In-memory tracking of tokens we're watching
 const watchedTokens = new Map<string, { launch: TokenLaunch; snapshots: TokenSnapshot[] }>();
 
+// Round-robin offset for batched snapshotting
+let snapshotOffset = 0;
+const MAX_SNAPSHOTS_PER_CYCLE = 3;
+
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -62,13 +66,39 @@ export async function takeSnapshot(mint: string): Promise<TokenSnapshot | null> 
 
 export async function snapshotAll() {
   const mints = Array.from(watchedTokens.keys());
-  log.info(`Taking snapshots for ${mints.length} tracked tokens`);
+  if (mints.length === 0) return;
 
-  for (const mint of mints) {
-    await takeSnapshot(mint);
-    // Small delay to avoid rate limiting
-    await new Promise(r => setTimeout(r, 200));
+  const batch: string[] = [];
+  for (let i = 0; i < Math.min(MAX_SNAPSHOTS_PER_CYCLE, mints.length); i++) {
+    const idx = (snapshotOffset + i) % mints.length;
+    batch.push(mints[idx]);
   }
+  snapshotOffset = (snapshotOffset + MAX_SNAPSHOTS_PER_CYCLE) % Math.max(mints.length, 1);
+
+  log.debug(`Snapshotting ${batch.length}/${mints.length} tracked tokens`);
+
+  for (const mint of batch) {
+    await takeSnapshot(mint);
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+/** Remove a token from tracking */
+export function untrackToken(mint: string) {
+  watchedTokens.delete(mint);
+}
+
+/** Remove tokens older than maxAgeMs. Returns number of pruned tokens. */
+export function pruneOldTokens(maxAgeMs: number): number {
+  const cutoff = Date.now() - maxAgeMs;
+  let pruned = 0;
+  for (const [mint, data] of watchedTokens) {
+    if (data.launch.detectedAt < cutoff) {
+      watchedTokens.delete(mint);
+      pruned++;
+    }
+  }
+  return pruned;
 }
 
 export function saveSnapshots() {
