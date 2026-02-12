@@ -14,6 +14,56 @@ export class TokenMonitor {
   private subscriptionIds: number[] = [];
   private running = false;
 
+  // Dedup: don't re-process the same signature or re-emit the same mint
+  private seenSignatures = new Set<string>();
+  private previousSignatures = new Set<string>();
+  private seenMints = new Set<string>();
+  private previousMints = new Set<string>();
+  private static readonly MAX_SIGS_PER_GEN = 2000;
+  private static readonly MAX_MINTS_PER_GEN = 1000;
+
+  // Concurrency gate for Raydium enrichment (heavy RPC call)
+  private activeEnrichments = 0;
+  private static readonly MAX_CONCURRENT_ENRICHMENTS = 2;
+  private enrichmentQueue: (() => void)[] = [];
+
+  private isDuplicateSignature(sig: string): boolean {
+    if (this.seenSignatures.has(sig) || this.previousSignatures.has(sig)) return true;
+    this.seenSignatures.add(sig);
+    if (this.seenSignatures.size >= TokenMonitor.MAX_SIGS_PER_GEN) {
+      this.previousSignatures = this.seenSignatures;
+      this.seenSignatures = new Set();
+    }
+    return false;
+  }
+
+  private isDuplicateMint(mint: string): boolean {
+    if (this.seenMints.has(mint) || this.previousMints.has(mint)) return true;
+    this.seenMints.add(mint);
+    if (this.seenMints.size >= TokenMonitor.MAX_MINTS_PER_GEN) {
+      this.previousMints = this.seenMints;
+      this.seenMints = new Set();
+    }
+    return false;
+  }
+
+  private acquireEnrichmentSlot(): Promise<void> {
+    if (this.activeEnrichments < TokenMonitor.MAX_CONCURRENT_ENRICHMENTS) {
+      this.activeEnrichments++;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => this.enrichmentQueue.push(resolve));
+  }
+
+  private releaseEnrichmentSlot() {
+    const next = this.enrichmentQueue.shift();
+    if (next) {
+      next();
+    } else {
+      this.activeEnrichments--;
+    }
+  }
+
   onTokenLaunch(handler: TokenEventHandler) {
     this.handlers.push(handler);
   }
@@ -75,8 +125,9 @@ export class TokenMonitor {
     const isCreate = logs.some(l => l.includes(PUMPFUN_CREATE_DISCRIMINATOR));
     if (!isCreate) return;
 
-    // Extract mint address from account keys in logs
-    // pump.fun create logs include the mint as one of the referenced accounts
+    // Dedup by signature first
+    if (this.isDuplicateSignature(logInfo.signature)) return;
+
     const mint = this.extractMintFromLogs(logs, 'pumpfun');
     if (!mint) {
       log.debug('pump.fun create detected but could not extract mint', {
@@ -84,6 +135,9 @@ export class TokenMonitor {
       });
       return;
     }
+
+    // Dedup by mint — don't re-emit already-known tokens
+    if (this.isDuplicateMint(mint)) return;
 
     const launch: TokenLaunch = {
       mint,
@@ -103,7 +157,9 @@ export class TokenMonitor {
     const isInit = logs.some(l => l.includes(RAYDIUM_INIT_DISCRIMINATOR));
     if (!isInit) return;
 
-    // For Raydium, we'll fetch the transaction to get full account details
+    // Dedup by signature — same tx can fire multiple log events
+    if (this.isDuplicateSignature(logInfo.signature)) return;
+
     const launch: TokenLaunch = {
       mint: '', // Will be enriched by fetching the tx
       source: 'raydium',
@@ -111,7 +167,7 @@ export class TokenMonitor {
       detectedAt: Date.now(),
     };
 
-    log.info('New Raydium pool detected', { sig: logInfo.signature });
+    log.debug('Raydium pool detected, queuing enrichment', { sig: logInfo.signature });
     this.enrichRaydiumLaunch(launch);
   }
 
@@ -135,7 +191,11 @@ export class TokenMonitor {
   }
 
   private async enrichRaydiumLaunch(launch: TokenLaunch) {
+    await this.acquireEnrichmentSlot();
     try {
+      // Small delay to spread out RPC calls
+      await new Promise(r => setTimeout(r, 1000));
+
       const conn = getConnection();
       const tx = await conn.getParsedTransaction(launch.signature, {
         maxSupportedTransactionVersion: 0,
@@ -143,14 +203,11 @@ export class TokenMonitor {
       });
 
       if (!tx?.meta) {
-        log.warn('Could not fetch Raydium tx for enrichment', { sig: launch.signature });
-        this.emit(launch); // Emit anyway, downstream can handle missing mint
-        return;
+        log.debug('Could not fetch Raydium tx for enrichment', { sig: launch.signature });
+        return; // Don't emit with empty mint
       }
 
       // Raydium initialize instruction puts the token mints in the account keys
-      // Account layout: [amm, authority, openOrders, lpMint, coinMint, pcMint, ...]
-      // coinMint (index 4) is typically the new token, pcMint (index 5) is SOL/USDC
       const accountKeys = tx.transaction.message.accountKeys;
       const SOL_MINT = 'So11111111111111111111111111111111111111112';
       const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
@@ -159,7 +216,6 @@ export class TokenMonitor {
       for (const key of accountKeys) {
         const addr = key.pubkey.toBase58();
         if (addr !== SOL_MINT && addr !== USDC_MINT) {
-          // Verify it's a mint by checking if it appears in token balance changes
           const preTokenBalances = tx.meta.preTokenBalances || [];
           const postTokenBalances = tx.meta.postTokenBalances || [];
           const allMints = [
@@ -175,7 +231,7 @@ export class TokenMonitor {
       }
 
       if (!launch.mint) {
-        // Fallback: just grab the first non-standard mint from token balances
+        // Fallback: grab the first non-standard mint from token balances
         const postBalances = tx.meta.postTokenBalances || [];
         for (const bal of postBalances) {
           if (bal.mint !== SOL_MINT && bal.mint !== USDC_MINT) {
@@ -185,16 +241,21 @@ export class TokenMonitor {
         }
       }
 
-      if (launch.mint) {
-        log.info('Raydium launch enriched', { mint: launch.mint, sig: launch.signature });
-      } else {
-        log.warn('Could not extract mint from Raydium tx', { sig: launch.signature });
+      if (!launch.mint) {
+        log.debug('Could not extract mint from Raydium tx', { sig: launch.signature });
+        return; // Don't emit with empty mint
       }
 
+      // Dedup by mint — don't re-emit already-known tokens
+      if (this.isDuplicateMint(launch.mint)) return;
+
+      log.info('Raydium launch enriched', { mint: launch.mint, sig: launch.signature });
       this.emit(launch);
     } catch (err) {
-      log.error('Failed to enrich Raydium launch', { sig: launch.signature, error: err });
-      this.emit(launch);
+      log.debug('Failed to enrich Raydium launch', { sig: launch.signature, error: err });
+      // Don't emit on failure — no point emitting with empty mint
+    } finally {
+      this.releaseEnrichmentSlot();
     }
   }
 }
