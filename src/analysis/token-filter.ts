@@ -5,23 +5,25 @@ import { TokenData, TradeWindow, FilterResult } from './types';
 const log = createLogger('filter');
 
 // Section 1: Tradable Universe filters
-export function filterUniverse(token: TokenData): FilterResult {
+export function filterUniverse(token: TokenData, isWatchlist = false): FilterResult {
   const cfg = loadStrategyConfig().universe;
 
-  if (token.tokenAgeMins < cfg.tokenAgeMinMinutes) {
-    return { passed: false, reason: `Too young: ${Math.round(token.tokenAgeMins)}m < ${cfg.tokenAgeMinMinutes}m` };
-  }
+  if (!isWatchlist) {
+    if (token.tokenAgeMins < cfg.tokenAgeMinMinutes) {
+      return { passed: false, reason: `Too young: ${Math.round(token.tokenAgeMins)}m < ${cfg.tokenAgeMinMinutes}m` };
+    }
 
-  if (token.tokenAgeMins > cfg.tokenAgeMaxMinutes) {
-    return { passed: false, reason: `Too old: ${Math.round(token.tokenAgeMins)}m > ${cfg.tokenAgeMaxMinutes}m` };
-  }
+    if (token.tokenAgeMins > cfg.tokenAgeMaxMinutes) {
+      return { passed: false, reason: `Too old: ${Math.round(token.tokenAgeMins)}m > ${cfg.tokenAgeMaxMinutes}m` };
+    }
 
-  if (token.mcapUsd < cfg.mcapMinUsd) {
-    return { passed: false, reason: `Mcap too low: $${Math.round(token.mcapUsd)} < $${cfg.mcapMinUsd}` };
-  }
+    if (token.mcapUsd < cfg.mcapMinUsd) {
+      return { passed: false, reason: `Mcap too low: $${Math.round(token.mcapUsd)} < $${cfg.mcapMinUsd}` };
+    }
 
-  if (token.mcapUsd > cfg.mcapMaxUsd) {
-    return { passed: false, reason: `Mcap too high: $${Math.round(token.mcapUsd)} > $${cfg.mcapMaxUsd}` };
+    if (token.mcapUsd > cfg.mcapMaxUsd) {
+      return { passed: false, reason: `Mcap too high: $${Math.round(token.mcapUsd)} > $${cfg.mcapMaxUsd}` };
+    }
   }
 
   if (token.liquidityUsd < cfg.minLiquidityUsd) {
@@ -44,7 +46,12 @@ export function filterUniverse(token: TokenData): FilterResult {
 }
 
 // Section 2: Entry signal filters (requires trade window data + LP context)
-export function filterEntry(token: TokenData, window: TradeWindow, lpChange10mPct?: number): FilterResult {
+export function filterEntry(
+  token: TokenData,
+  window: TradeWindow,
+  lpChange10mPct?: number,
+  indicators?: { rsi?: number; connorsRsi?: number }
+): FilterResult {
   const cfg = loadStrategyConfig();
   const entry = cfg.entry;
   const universe = cfg.universe;
@@ -84,18 +91,45 @@ export function filterEntry(token: TokenData, window: TradeWindow, lpChange10mPc
     return { passed: false, reason: `LP dropped ${lpChange10mPct.toFixed(1)}% in 10m (limit: ${entry.maxLpChange10mPct}%)` };
   }
 
+  // Indicators
+  if (entry.indicators?.enabled) {
+    if (entry.indicators.rsi.enabled) {
+      if (indicators?.rsi === undefined) {
+        return { passed: false, reason: 'RSI unavailable (insufficient candles)' };
+      }
+      if (indicators.rsi > entry.indicators.rsi.oversold) {
+        return { passed: false, reason: `RSI ${indicators.rsi.toFixed(1)} > ${entry.indicators.rsi.oversold}` };
+      }
+    }
+
+    if (entry.indicators.connors.enabled) {
+      if (indicators?.connorsRsi === undefined) {
+        return { passed: false, reason: 'Connors RSI unavailable (insufficient candles)' };
+      }
+      if (indicators.connorsRsi > entry.indicators.connors.oversold) {
+        return { passed: false, reason: `Connors RSI ${indicators.connorsRsi.toFixed(1)} > ${entry.indicators.connors.oversold}` };
+      }
+    }
+  }
+
   return { passed: true };
 }
 
 // Combined: run universe + entry filters
-export function filterToken(token: TokenData, window: TradeWindow, lpChange10mPct?: number): FilterResult {
-  const universeResult = filterUniverse(token);
+export function filterToken(
+  token: TokenData,
+  window: TradeWindow,
+  lpChange10mPct?: number,
+  indicators?: { rsi?: number; connorsRsi?: number },
+  isWatchlist = false
+): FilterResult {
+  const universeResult = filterUniverse(token, isWatchlist);
   if (!universeResult.passed) {
     log.debug('Universe filter rejected', { mint: token.mint, reason: universeResult.reason });
     return universeResult;
   }
 
-  const entryResult = filterEntry(token, window, lpChange10mPct);
+  const entryResult = filterEntry(token, window, lpChange10mPct, indicators);
   if (!entryResult.passed) {
     log.debug('Entry filter rejected', { mint: token.mint, reason: entryResult.reason });
     return entryResult;

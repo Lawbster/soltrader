@@ -137,6 +137,7 @@ export function getStats() {
     sources: {
       pumpfun: Array.from(watchedTokens.values()).filter(t => t.launch.source === 'pumpfun').length,
       raydium: Array.from(watchedTokens.values()).filter(t => t.launch.source === 'raydium').length,
+      watchlist: Array.from(watchedTokens.values()).filter(t => t.launch.source === 'watchlist').length,
     },
   };
 }

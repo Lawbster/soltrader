@@ -38,7 +38,9 @@ export function evaluateEntry(
   token: TokenData,
   window: TradeWindow,
   portfolio: PortfolioState,
-  lpChange10mPct?: number
+  lpChange10mPct?: number,
+  indicators?: { rsi?: number; connorsRsi?: number },
+  isWatchlist = false
 ): EntrySignal {
   const cfg = loadStrategyConfig();
 
@@ -73,7 +75,7 @@ export function evaluateEntry(
   }
 
   // Hard filters (universe + entry + LP stability)
-  const filterResult = filterToken(token, window, lpChange10mPct);
+  const filterResult = filterToken(token, window, lpChange10mPct, indicators, isWatchlist);
   if (!filterResult.passed) {
     return {
       mint: token.mint,

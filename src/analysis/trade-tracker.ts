@@ -13,7 +13,7 @@ let currentSigs = new Set<string>();
 let previousSigs = new Set<string>();
 const MAX_SIGS_PER_GENERATION = 2500;
 
-const MAX_TRADE_AGE_MS = 30 * 60_000; // Keep 30 min of trades
+const MAX_TRADE_AGE_MS = 120 * 60_000; // Keep 2 hours of trades
 
 // Concurrency gate for trade enrichment — limits parallel getParsedTransaction calls
 let activeEnrichments = 0;
@@ -108,6 +108,10 @@ export function getTradeWindow(mint: string, windowMs: number): TradeWindow {
     vwap,
     return5mPct,
   };
+}
+
+export function getTradesForMint(mint: string): TradeEvent[] {
+  return tradeHistory.get(mint) || [];
 }
 
 export async function subscribeToTokenTrades(mint: string) {

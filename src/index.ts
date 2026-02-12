@@ -1,7 +1,7 @@
 import { config, createLogger, getPublicKey } from './utils';
-import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch } from './monitor';
+import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch, loadWatchlist } from './monitor';
 import {
-  fetchTokenData, fetchPoolLiquidity,
+  fetchTokenData, fetchPoolLiquidity, getIndicatorSnapshot,
   subscribeToTokenTrades, unsubscribeFromToken,
   getTradeWindow, getActiveSubscriptionCount,
 } from './analysis';
@@ -105,12 +105,26 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   // Get 5-minute trade window
   const window = getTradeWindow(mint, FIVE_MINUTES_MS);
 
+  // Indicators (RSI / Connors RSI)
+  const indicatorsCfg = strategyCfg.entry.indicators;
+  const indicators = indicatorsCfg?.enabled
+    ? getIndicatorSnapshot(mint, {
+      intervalMinutes: indicatorsCfg.candleIntervalMinutes,
+      lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+      rsiPeriod: indicatorsCfg.rsi.period,
+      connorsRsiPeriod: indicatorsCfg.connors.rsiPeriod,
+      connorsStreakRsiPeriod: indicatorsCfg.connors.streakRsiPeriod,
+      connorsPercentRankPeriod: indicatorsCfg.connors.percentRankPeriod,
+    })
+    : undefined;
+
   // Compute 5m volume in USD
   const solPrice = tokenData.priceUsd / (tokenData.priceSol || 1);
   tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
 
   // Evaluate entry (now with LP change data)
-  const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct);
+  const isWatchlist = launch.source === 'watchlist';
+  const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist);
 
   if (signal.passed) {
     log.info('ENTRY SIGNAL', {
@@ -162,11 +176,15 @@ async function analysisLoop() {
 
 async function main() {
   const strategyCfg = loadStrategyConfig();
+  const universeMode = config.universe.mode;
+  const watchlist = loadWatchlist();
   log.info('Sol-Trader starting', {
     strategyVersion: strategyCfg.version,
     paperTrading: config.trading.paperTrading,
     maxPositions: strategyCfg.portfolio.maxConcurrentPositions,
     minScore: strategyCfg.entry.minScoreToTrade,
+    universeMode,
+    watchlistSize: watchlist.length,
   });
 
   const pubkey = getPublicKey();
@@ -176,16 +194,15 @@ async function main() {
   initMetrics();
   await startDashboard();
 
-  const monitor = new TokenMonitor();
-
-  monitor.onTokenLaunch((launch) => {
+  function addTokenToUniverse(launch: TokenLaunch) {
     if (!launch.mint) return;
     if (pendingTokens.size >= MAX_PENDING_TOKENS) {
       log.warn('Pending token cap reached, skipping', { mint: launch.mint, cap: MAX_PENDING_TOKENS });
       return;
     }
+    if (pendingTokens.has(launch.mint)) return;
 
-    log.info('TOKEN LAUNCH', {
+    log.info('TOKEN TRACK', {
       mint: launch.mint,
       source: launch.source,
       sig: launch.signature,
@@ -194,9 +211,35 @@ async function main() {
     trackToken(launch);
     pendingTokens.set(launch.mint, launch);
     subscribeToTokenTrades(launch.mint);
+  }
+
+  const monitor = new TokenMonitor();
+
+  monitor.onTokenLaunch((launch) => {
+    addTokenToUniverse(launch);
   });
 
-  await monitor.start();
+  const useLaunches = universeMode === 'launches' || universeMode === 'both';
+  const useWatchlist = universeMode === 'watchlist' || universeMode === 'both';
+
+  if (useWatchlist && watchlist.length > 0) {
+    for (const mint of watchlist) {
+      addTokenToUniverse({
+        mint,
+        source: 'watchlist',
+        signature: 'watchlist',
+        detectedAt: Date.now(),
+      });
+    }
+  } else if (useWatchlist) {
+    log.warn('Watchlist mode enabled but no mints found');
+  }
+
+  if (useLaunches) {
+    await monitor.start();
+  } else {
+    log.info('Launch monitoring disabled (watchlist-only mode)');
+  }
 
   const analysisTimer = setInterval(async () => {
     try {

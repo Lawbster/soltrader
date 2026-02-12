@@ -21,6 +21,23 @@ export interface StrategyConfig {
     maxLpChange10mPct: number;
     maxSlippagePct: number;
     minScoreToTrade: number;
+    indicators: {
+      enabled: boolean;
+      candleIntervalMinutes: number;
+      candleLookbackMinutes: number;
+      rsi: {
+        enabled: boolean;
+        period: number;
+        oversold: number;
+      };
+      connors: {
+        enabled: boolean;
+        rsiPeriod: number;
+        streakRsiPeriod: number;
+        percentRankPeriod: number;
+        oversold: number;
+      };
+    };
   };
   scoring: {
     weights: {

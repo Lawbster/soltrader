@@ -3,21 +3,38 @@
   "universe": {
     "tokenAgeMinMinutes": 60,
     "tokenAgeMaxMinutes": 360,
-    "mcapMinUsd": 20000,
-    "mcapMaxUsd": 120000,
-    "minLiquidityUsd": 15000,
-    "minVolume5mUsd": 8000,
-    "requireAuthorityRenounced": true,
-    "maxTop10HolderPct": 35
+    "mcapMinUsd": 0,
+    "mcapMaxUsd": 100000000000,
+    "minLiquidityUsd": 0,
+    "minVolume5mUsd": 0,
+    "requireAuthorityRenounced": false,
+    "maxTop10HolderPct": 100
   },
   "entry": {
-    "minReturn5mPct": 6,
-    "minBuySellRatio5m": 1.4,
-    "minUniqueBuyers5m": 25,
-    "maxSingleWalletBuyPct": 12,
+    "minReturn5mPct": -100,
+    "minBuySellRatio5m": 0,
+    "minUniqueBuyers5m": 0,
+    "maxSingleWalletBuyPct": 100,
     "maxLpChange10mPct": -15,
     "maxSlippagePct": 2.0,
-    "minScoreToTrade": 70
+    "minScoreToTrade": 0,
+    "indicators": {
+      "enabled": true,
+      "candleIntervalMinutes": 1,
+      "candleLookbackMinutes": 120,
+      "rsi": {
+        "enabled": false,
+        "period": 3,
+        "oversold": 20
+      },
+      "connors": {
+        "enabled": true,
+        "rsiPeriod": 3,
+        "streakRsiPeriod": 2,
+        "percentRankPeriod": 100,
+        "oversold": 20
+      }
+    }
   },
   "scoring": {
     "weights": {
@@ -35,12 +52,12 @@
     "initialStopPct": 9
   },
   "exits": {
-    "hardStopPct": -9,
-    "tp1": { "targetPct": 12, "sellPct": 50 },
-    "tp2": { "targetPct": 22, "sellPct": 30 },
-    "runner": { "trailingStopPct": 6, "remainingPct": 20 },
-    "timeStopMinutes": 20,
-    "timeStopPnlRangePct": [-3, 6],
+    "hardStopPct": -0.25,
+    "tp1": { "targetPct": 0.5, "sellPct": 100 },
+    "tp2": { "targetPct": 999, "sellPct": 0 },
+    "runner": { "trailingStopPct": 999, "remainingPct": 0 },
+    "timeStopMinutes": 0,
+    "timeStopPnlRangePct": [0, 0],
     "emergencyLpDropPct": -25,
     "emergencyLpDropWindowMinutes": 3
   },

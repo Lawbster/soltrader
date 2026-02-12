@@ -44,6 +44,14 @@ export interface TradeWindow {
   return5mPct: number;
 }
 
+export interface IndicatorSnapshot {
+  mint: string;
+  candleIntervalMinutes: number;
+  candleCount: number;
+  rsi?: number;
+  connorsRsi?: number;
+}
+
 export interface FilterResult {
   passed: boolean;
   reason?: string;

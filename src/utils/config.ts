@@ -14,6 +14,7 @@ function optional(key: string, fallback: string): string {
 }
 
 const isPaperMode = optional('PAPER_TRADING', 'true') === 'true';
+const universeMode = optional('UNIVERSE_MODE', 'launches');
 
 export const config = {
   helius: {
@@ -34,6 +35,10 @@ export const config = {
     discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL || '',
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: process.env.TELEGRAM_CHAT_ID || '',
+  },
+  universe: {
+    mode: universeMode,
+    watchlistMints: optional('WATCHLIST_MINTS', ''),
   },
   // Well-known program IDs
   programs: {

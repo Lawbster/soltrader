@@ -1,6 +1,6 @@
 export interface TokenLaunch {
   mint: string;
-  source: 'pumpfun' | 'raydium';
+  source: 'pumpfun' | 'raydium' | 'watchlist';
   signature: string;
   detectedAt: number; // unix ms
   poolAddress?: string;
