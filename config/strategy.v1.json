@@ -1,0 +1,66 @@
+{
+  "version": "1.0",
+  "universe": {
+    "tokenAgeMinMinutes": 60,
+    "tokenAgeMaxMinutes": 360,
+    "mcapMinUsd": 20000,
+    "mcapMaxUsd": 120000,
+    "minLiquidityUsd": 15000,
+    "minVolume5mUsd": 8000,
+    "requireAuthorityRenounced": true,
+    "maxTop10HolderPct": 35
+  },
+  "entry": {
+    "minReturn5mPct": 6,
+    "minBuySellRatio5m": 1.4,
+    "minUniqueBuyers5m": 25,
+    "maxSingleWalletBuyPct": 12,
+    "maxLpChange10mPct": -15,
+    "maxSlippagePct": 2.0,
+    "minScoreToTrade": 70
+  },
+  "scoring": {
+    "weights": {
+      "momentumStrength": 0.30,
+      "buySellPressure": 0.25,
+      "holderDistribution": 0.20,
+      "liquidityDepth": 0.15,
+      "walletConcentrationRisk": 0.10
+    }
+  },
+  "position": {
+    "riskPerTradePct": 0.75,
+    "maxPositionSol": 1.25,
+    "maxPositionEquityPct": 8,
+    "initialStopPct": 9
+  },
+  "exits": {
+    "hardStopPct": -9,
+    "tp1": { "targetPct": 12, "sellPct": 50 },
+    "tp2": { "targetPct": 22, "sellPct": 30 },
+    "runner": { "trailingStopPct": 6, "remainingPct": 20 },
+    "timeStopMinutes": 20,
+    "timeStopPnlRangePct": [-3, 6],
+    "emergencyLpDropPct": -25,
+    "emergencyLpDropWindowMinutes": 3
+  },
+  "portfolio": {
+    "maxConcurrentPositions": 3,
+    "maxOpenExposurePct": 20,
+    "dailyLossLimitPct": -4,
+    "consecutiveLossLimit": 4,
+    "consecutiveLossCooldownMinutes": 120,
+    "reEntryLockoutHours": 12
+  },
+  "execution": {
+    "maxRouteImpactPct": 2.5,
+    "maxRetries": 2,
+    "simulateBeforeSubmit": true
+  },
+  "paperTrading": {
+    "latencyRangeMs": [300, 1200],
+    "txFailureProbability": 0.05,
+    "slippageSimulation": true,
+    "priorityFeeSimulation": true
+  }
+}
