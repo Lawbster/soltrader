@@ -65,6 +65,7 @@ function recordLpSnapshot(mint: string, liquidityUsd: number) {
 async function cleanupToken(mint: string) {
   pendingTokens.delete(mint);
   lpSnapshots.delete(mint);
+  updateDashboardState(pendingTokens.size);
   await unsubscribeFromToken(mint);
 }
 
@@ -213,6 +214,7 @@ async function main() {
 
     trackToken(launch);
     pendingTokens.set(launch.mint, launch);
+    updateDashboardState(pendingTokens.size);
     subscribeToTokenTrades(launch.mint, launch.poolAddress);
   }
 

@@ -8,6 +8,7 @@ const log = createLogger('trade-tracker');
 const tradeHistory = new Map<string, TradeEvent[]>();
 // Track subscription IDs per token
 const subscriptions = new Map<string, number>();
+const swapLogCounts = new Map<string, number>();
 // Dedup: signatures we've already enriched — two-generation bounded set
 let currentSigs = new Set<string>();
 let previousSigs = new Set<string>();
@@ -127,7 +128,7 @@ export async function subscribeToTokenTrades(mint: string, addressOverride?: str
   );
 
   subscriptions.set(mint, subId);
-  log.debug('Subscribed to trades', { mint, address: mintPubkey.toBase58() });
+  log.info('Subscribed to trades', { mint, address: mintPubkey.toBase58() });
 }
 
 export async function unsubscribeFromToken(mint: string) {
@@ -168,6 +169,12 @@ function handleSwapLog(mint: string, logInfo: Logs) {
   );
 
   if (!isSwap) return;
+
+  const count = (swapLogCounts.get(mint) || 0) + 1;
+  swapLogCounts.set(mint, count);
+  if (count === 1) {
+    log.info('Swap log detected', { mint, sig: logInfo.signature });
+  }
 
   markSigProcessed(logInfo.signature);
 
