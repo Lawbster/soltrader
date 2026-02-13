@@ -66,8 +66,8 @@ export function filterEntry(
     return { passed: false, reason: `5m return ${window.return5mPct.toFixed(1)}% < ${entry.minReturn5mPct}%` };
   }
 
-  // VWAP: current price above VWAP (1m close > VWAP)
-  if (window.vwap > 0 && token.priceSol < window.vwap) {
+  // VWAP: current price above VWAP (momentum filter — skip when indicators drive entry)
+  if (!entry.indicators?.enabled && window.vwap > 0 && token.priceSol < window.vwap) {
     return { passed: false, reason: `Price ${token.priceSol.toExponential(2)} below VWAP ${window.vwap.toExponential(2)}` };
   }
 

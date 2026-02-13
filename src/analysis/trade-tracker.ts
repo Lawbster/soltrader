@@ -189,13 +189,14 @@ async function enrichAndRecord(mint: string, signature: string) {
   // Wait for a concurrency slot before hitting RPC
   await acquireEnrichmentSlot();
   try {
+    log.info('Enrichment started', { mint, sig: signature });
     // Small delay to let the transaction finalize
     await new Promise(r => setTimeout(r, 1500));
 
     const trade = await enrichTradeFromTx(mint, signature);
     if (trade) {
       recordTrade(trade);
-      log.debug('Enriched trade recorded', {
+      log.info('Enriched trade recorded', {
         mint,
         side: trade.side,
         sol: trade.amountSol.toFixed(4),
@@ -209,6 +210,8 @@ async function enrichAndRecord(mint: string, signature: string) {
         log.warn('Trade enrichment returned null', { mint, sig: signature, misses });
       }
     }
+  } catch (err) {
+    log.error('Enrichment failed', { mint, sig: signature, error: err });
   } finally {
     releaseEnrichmentSlot();
   }
@@ -216,7 +219,6 @@ async function enrichAndRecord(mint: string, signature: string) {
 
 export async function enrichTradeFromTx(mint: string, signature: string): Promise<TradeEvent | null> {
   const conn = getConnection();
-  const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
   try {
     const tx = await conn.getParsedTransaction(signature, {
@@ -232,32 +234,32 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
     const pre = tx.meta.preTokenBalances || [];
     const post = tx.meta.postTokenBalances || [];
 
-    // Build owner -> delta maps for target mint and SOL (wSOL) mint
-    const owners = new Set<string>();
-    for (const b of pre) if (b.owner) owners.add(b.owner);
-    for (const b of post) if (b.owner) owners.add(b.owner);
+    // Build per-owner, per-mint delta map — handles any quote (SOL, USDC, USDT, etc.)
+    const deltaMap = new Map<string, Map<string, number>>();
 
-    const tokenDeltaByOwner = new Map<string, number>();
-    const solDeltaByOwner = new Map<string, number>();
-
-    function applyDelta(balance: typeof pre[0], sign: number) {
-      if (!balance.owner) return;
-      const amount = balance.uiTokenAmount.uiAmount || 0;
-      if (balance.mint === mint) {
-        tokenDeltaByOwner.set(balance.owner, (tokenDeltaByOwner.get(balance.owner) || 0) + sign * amount);
-      } else if (balance.mint === SOL_MINT) {
-        solDeltaByOwner.set(balance.owner, (solDeltaByOwner.get(balance.owner) || 0) + sign * amount);
+    function addDelta(owner: string, tokenMint: string, amount: number) {
+      let ownerMap = deltaMap.get(owner);
+      if (!ownerMap) {
+        ownerMap = new Map();
+        deltaMap.set(owner, ownerMap);
       }
+      ownerMap.set(tokenMint, (ownerMap.get(tokenMint) || 0) + amount);
     }
 
-    for (const b of pre) applyDelta(b, -1);
-    for (const b of post) applyDelta(b, +1);
+    for (const b of pre) {
+      if (!b.owner) continue;
+      addDelta(b.owner, b.mint, -(b.uiTokenAmount.uiAmount || 0));
+    }
+    for (const b of post) {
+      if (!b.owner) continue;
+      addDelta(b.owner, b.mint, (b.uiTokenAmount.uiAmount || 0));
+    }
 
-    // Pick owner with largest absolute token delta
+    // Find owner with largest absolute target-mint delta
     let bestOwner = '';
     let bestDelta = 0;
-    for (const owner of owners) {
-      const delta = tokenDeltaByOwner.get(owner) || 0;
+    for (const [owner, mints] of deltaMap) {
+      const delta = mints.get(mint) || 0;
       if (Math.abs(delta) > Math.abs(bestDelta)) {
         bestDelta = delta;
         bestOwner = owner;
@@ -269,31 +271,38 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
       return null;
     }
 
-    const tokenDelta = bestDelta;
-    let amountSol = Math.abs(solDeltaByOwner.get(bestOwner) || 0);
+    // Find the quote: largest absolute delta in any non-target mint for this owner
+    const ownerDeltas = deltaMap.get(bestOwner)!;
+    let quoteAmount = 0;
+    for (const [m, d] of ownerDeltas) {
+      if (m === mint) continue;
+      if (Math.abs(d) > Math.abs(quoteAmount)) {
+        quoteAmount = d;
+      }
+    }
 
-    // Fallback: use signer SOL delta if wSOL not present
-    if (amountSol === 0) {
+    let amountQuote = Math.abs(quoteAmount);
+
+    // Fallback: native SOL balance change (for swaps that don't use wSOL token accounts)
+    if (amountQuote === 0) {
       const signer = tx.transaction.message.accountKeys.find(k => k.signer)?.pubkey.toBase58() || '';
       if (signer) {
         const signerIdx = tx.transaction.message.accountKeys.findIndex(k => k.signer);
         const preSol = (tx.meta.preBalances[signerIdx] || 0) / 1e9;
         const postSol = (tx.meta.postBalances[signerIdx] || 0) / 1e9;
         const fee = tx.meta.fee / 1e9;
-        amountSol = Math.abs((postSol - preSol) + fee);
+        amountQuote = Math.abs((postSol - preSol) + fee);
       }
     }
 
-    if (amountSol === 0) {
-      log.warn('SOL delta is zero for owner', { mint, signature, owner: bestOwner });
+    if (amountQuote === 0) {
+      log.warn('Quote delta is zero', { mint, signature, owner: bestOwner });
       return null;
     }
 
-    // Positive token delta + negative SOL delta = buy
-    // Negative token delta + positive SOL delta = sell
-    const isBuy = tokenDelta > 0;
-    const amountToken = Math.abs(tokenDelta);
-    const pricePerToken = amountToken > 0 ? amountSol / amountToken : 0;
+    const isBuy = bestDelta > 0;
+    const amountToken = Math.abs(bestDelta);
+    const pricePerToken = amountToken > 0 ? amountQuote / amountToken : 0;
 
     return {
       mint,
@@ -302,7 +311,7 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
       side: isBuy ? 'buy' : 'sell',
       wallet: bestOwner,
       amountToken,
-      amountSol,
+      amountSol: amountQuote, // quote amount (SOL, USDC, etc.)
       pricePerToken,
     };
   } catch (err) {
