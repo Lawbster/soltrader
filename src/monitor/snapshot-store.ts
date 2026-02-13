@@ -93,6 +93,7 @@ export function pruneOldTokens(maxAgeMs: number): number {
   const cutoff = Date.now() - maxAgeMs;
   let pruned = 0;
   for (const [mint, data] of watchedTokens) {
+    if (data.launch.source === 'watchlist') continue;
     if (data.launch.detectedAt < cutoff) {
       watchedTokens.delete(mint);
       pruned++;

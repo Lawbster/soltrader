@@ -72,6 +72,7 @@ async function prunePendingTokens(maxAgeMs: number): Promise<number> {
   const cutoff = Date.now() - maxAgeMs;
   let pruned = 0;
   for (const [mint, launch] of pendingTokens) {
+    if (launch.source === 'watchlist') continue;
     if (launch.detectedAt < cutoff) {
       await cleanupToken(mint);
       pruned++;
@@ -89,12 +90,15 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const tokenData = await fetchTokenData(mint, launch.detectedAt);
   if (!tokenData) return;
 
-  // Check age window
-  if (tokenData.tokenAgeMins < strategyCfg.universe.tokenAgeMinMinutes) return;
-  if (tokenData.tokenAgeMins > strategyCfg.universe.tokenAgeMaxMinutes) {
-    await cleanupToken(mint);
-    log.debug('Token aged out, cleaned up', { mint, ageMins: Math.round(tokenData.tokenAgeMins) });
-    return;
+  // Check age window (skip for watchlist)
+  const isWatchlist = launch.source === 'watchlist';
+  if (!isWatchlist) {
+    if (tokenData.tokenAgeMins < strategyCfg.universe.tokenAgeMinMinutes) return;
+    if (tokenData.tokenAgeMins > strategyCfg.universe.tokenAgeMaxMinutes) {
+      await cleanupToken(mint);
+      log.debug('Token aged out, cleaned up', { mint, ageMins: Math.round(tokenData.tokenAgeMins) });
+      return;
+    }
   }
 
   // Enrich with liquidity and track LP over time
@@ -123,7 +127,6 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
 
   // Evaluate entry (now with LP change data)
-  const isWatchlist = launch.source === 'watchlist';
   const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist);
 
   if (signal.passed) {
