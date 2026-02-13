@@ -86,4 +86,4 @@ From `config/strategy.v1.json`:
 - `entry.maxSlippagePct = 2.0` **(too high for tight TP/SL)**
 
 ---
-If you want, I can add a short “action checklist” section or adapt this into a Claude handoff template.
+If you want, I can add a short action checklist section or adapt this into a Claude handoff template.

@@ -27,6 +27,8 @@ To reduce token usage:
 5. **Log sparingly**: add temporary logs only when debugging.
 6. **Batch edits**: minimize back‑and‑forth by grouping related changes.
 7. **Use config**: prefer strategy changes in config over code changes.
+8. **Never re-explore your own work**: if you built or modified code in the current session (or a continued session with summary), answer from memory. Do NOT spawn explore agents or re-read files to answer questions about code you already know. The session summary and plan file are your source of truth.
+9. **Answer simple questions directly**: if a yes/no or short explanation suffices, give it. Don't burn tokens on verification reads for things you already understand.
 
 ## Handoff Format (Codex → Claude)
 When Codex hands off work, include:

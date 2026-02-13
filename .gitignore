@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env.example
 data/*.json
 data/*.csv
 *.log
+AGENTS.md
