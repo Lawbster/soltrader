@@ -1,7 +1,8 @@
 import http from 'http';
-import { createLogger } from '../utils';
+import { createLogger, config } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
-import { getPortfolioState, getOpenPositions, getClosedPositions } from '../execution';
+import { fetchPoolLiquidity } from '../analysis/token-data';
+import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact } from '../execution';
 import {
   getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
   buildCloseSeriesFromPrices, fetchTokenPrice,
@@ -52,6 +53,9 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       tp2Hit: p.tp2Hit,
     }));
 
+    const universeMode = config.universe.mode;
+    const tradeCapture = universeMode === 'watchlist' ? 'disabled' : 'active';
+
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       portfolio,
@@ -59,6 +63,8 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       closedCount: getClosedPositions().length,
       tradeSubscriptions: getActiveSubscriptionCount(),
       pendingCandidates: pendingTokenCount,
+      tradeCapture,
+      universeMode,
       timestamp: Date.now(),
     }));
     return;
@@ -106,6 +112,7 @@ async function handleSignals(res: http.ServerResponse) {
     const cfg = loadStrategyConfig();
     const indicatorsCfg = cfg.entry.indicators;
     const watchlist = loadWatchlist();
+    const metrics = getAggregateMetrics();
     const candlesNeeded = (indicatorsCfg?.connors?.percentRankPeriod || 100) + 1;
 
     const signals = await Promise.all(watchlist.map(async (entry) => {
@@ -132,12 +139,37 @@ async function handleSignals(res: http.ServerResponse) {
         source = candleCount > 0 ? 'price-feed' : 'none';
       }
 
-      // Get current price
+      // Get current price and liquidity
       let priceUsd = 0;
+      let priceSol = 0;
+      let liquidityUsd = 0;
       try {
         const p = await fetchTokenPrice(mint);
         priceUsd = p.priceUsd;
+        priceSol = p.priceSol;
       } catch { /* ignore */ }
+      try {
+        liquidityUsd = await fetchPoolLiquidity(mint);
+      } catch { /* ignore */ }
+
+      // Compute effective max position size
+      const solPrice = priceSol > 0 ? priceUsd / priceSol : 0;
+      const posCfg = cfg.position;
+      const totalTrades = metrics.totalTrades;
+      let maxFromLiquidity = Infinity;
+      if (liquidityUsd > 0 && solPrice > 0 && posCfg.liquidityCapPct > 0) {
+        maxFromLiquidity = (liquidityUsd * (posCfg.liquidityCapPct / 100)) / solPrice;
+      }
+      let maxFromSampleGate = Infinity;
+      if (totalTrades < posCfg.sampleSizeGateMinTrades) {
+        maxFromSampleGate = posCfg.sampleSizeGateMaxSol;
+      }
+      const effectiveMaxSol = Math.min(
+        posCfg.maxPositionSol, maxFromLiquidity, maxFromSampleGate
+      );
+
+      const lastImpact = getLastQuotedImpact();
+      const quotedImpact = lastImpact?.mint === mint ? lastImpact.impact : undefined;
 
       return {
         mint,
@@ -150,6 +182,12 @@ async function handleSignals(res: http.ServerResponse) {
         source,
         ready: candleCount >= candlesNeeded,
         oversoldThreshold: indicatorsCfg?.connors?.oversold || 20,
+        liquidityUsd,
+        effectiveMaxSol,
+        maxEntryImpactPct: posCfg.maxEntryImpactPct,
+        quotedImpact,
+        totalTrades,
+        sampleSizeGateMinTrades: posCfg.sampleSizeGateMinTrades,
       };
     }));
 

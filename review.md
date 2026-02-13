@@ -1,64 +1,89 @@
-# Sol-Trader Review (Phase 3 Re-Audit)
+# Sol-Trader Review — Post‑Claude Changes
 
-Date: 2026-02-11
-Scope reviewed: `sol-trader/src`, `sol-trader/config/strategy.v1.json`, `sol-trader/package.json`
-Validation run: `npx tsc --noEmit` (passes)
+Date: 2026-02-13  
+Scope: `config/strategy.v1.json`, `src/strategy/rules.ts`, `src/strategy/strategy-config.ts`, `src/execution/position-manager.ts`, `src/execution/index.ts`, `src/dashboard/server.ts`, `src/dashboard/page.ts`, `src/index.ts`, `src/analysis/indicators.ts`, `src/analysis/price-feed.ts`.
 
-## Findings (Ordered by Severity)
+## Summary
+Claude implemented the core risk‑control recommendations: liquidity‑based size cap, pre‑trade slippage gate, sample‑size gate, and dashboard visibility. The design direction is correct and materially reduces blow‑ups during early validation. The remaining blockers are **trade capture reliability** and **execution economics vs. TP/SL**. The dashboard is now strong enough to operate the system, but it still lacks a hard “trade capture OK/FAIL” indicator.
 
-1. **Critical - Full-exit failures can still close positions as if they were exited.**
-File refs: `sol-trader/src/execution/position-manager.ts:266`, `sol-trader/src/execution/position-manager.ts:291`, `sol-trader/src/execution/position-manager.ts:292`
-Issue: after `executeExit`, position closure is triggered when `sellPct >= 100` regardless of whether the sell transaction succeeded.
-Impact: positions can be marked closed with zero proceeds after a failed exit, corrupting PnL and risk state.
+## What Landed (Verified)
+1) **Liquidity‑based position cap**  
+Config: `position.liquidityCapPct = 0.05` (0.05% of pool liquidity).  
+Logic: `calculatePositionSize(...)` caps size using pool liquidity and SOL price.  
+Files: `config/strategy.v1.json`, `src/strategy/rules.ts`.
 
-2. **High - Trade dedup cache is effectively unbounded (memory growth risk).**
-File refs: `sol-trader/src/analysis/trade-tracker.ts:12`, `sol-trader/src/analysis/trade-tracker.ts:15`, `sol-trader/src/analysis/trade-tracker.ts:136`, `sol-trader/src/analysis/trade-tracker.ts:137`, `sol-trader/src/analysis/trade-tracker.ts:138`
-Issue: `processedSignatures` keeps growing; the "prune" code iterates but never deletes entries.
-Impact: long-running process accumulates signatures indefinitely, raising memory pressure and eventual instability.
+2) **Slippage guard before entry**  
+`openPosition()` now does a pre‑flight Jupiter quote and rejects if `priceImpactPct > maxEntryImpactPct`.  
+Config: `position.maxEntryImpactPct = 0.10`.  
+Files: `src/execution/position-manager.ts`, `config/strategy.v1.json`.
 
-3. **High - Token age is still based on detection time, not on-chain creation time.**
-File refs: `sol-trader/src/analysis/token-data.ts:131`, `sol-trader/src/index.ts:71`
-Issue: `tokenAgeMins` is calculated from `launch.detectedAt`.
-Impact: age filters can be wrong after monitor lag/restarts, causing false accept/reject decisions in the core universe filter.
+3) **Sample‑size gate**  
+Caps size until `totalTrades >= 200`.  
+Config: `sampleSizeGateMinTrades = 200`, `sampleSizeGateMaxSol = 5`.  
+Files: `src/strategy/rules.ts`, `config/strategy.v1.json`.
 
-4. **Medium - Jito integration does not actually apply a tip instruction to the sent swap transaction.**
-File refs: `sol-trader/src/execution/jito-bundle.ts:33`, `sol-trader/src/execution/jito-bundle.ts:45`, `sol-trader/src/execution/jupiter-swap.ts:168`
-Issue: `sendWithJito` submits the already-built swap transaction; `tipLamports` is logged but not attached to tx instructions, and tip helper is unused.
-Impact: inclusion improvement from Jito may be materially weaker than assumed.
+4) **Dashboard visibility**  
+Signal cards now show liquidity, effective max size, max impact, last quoted impact, and sample‑size progress.  
+Files: `src/dashboard/page.ts`, `src/dashboard/server.ts`.
 
-5. **Medium - Asynchronous unsubscribe in token cleanup is not awaited.**
-File refs: `sol-trader/src/index.ts:59`, `sol-trader/src/index.ts:62`
-Issue: `cleanupToken` calls async `unsubscribeFromToken` without awaiting completion.
-Impact: stale listeners can persist temporarily under churn, increasing noisy events and resource usage.
+5) **CRSI price‑feed fallback**  
+CRSI now runs from Jupiter price history if trade data is insufficient.  
+Files: `src/analysis/price-feed.ts`, `src/analysis/indicators.ts`, `src/index.ts`.
 
-6. **Medium - Execution path still has dead/unused logic and imports in critical modules.**
-File refs: `sol-trader/src/execution/jupiter-swap.ts:123`, `sol-trader/src/execution/jito-bundle.ts:6`, `sol-trader/src/execution/jito-bundle.ts:8`, `sol-trader/src/execution/jito-bundle.ts:47`
-Issue: `preBalanceLamports` is unused; `TransactionMessage`, `getConnection`, and `keypair` are unused in Jito path.
-Impact: this is a maintainability smell in high-risk code paths and increases chance of incorrect assumptions lingering.
+## Critical Issues Still Open
+1) **Trade capture still not producing recorded trades**  
+Swap logs are detected, but `Enriched trade recorded` is not emitted. This blocks any trade‑based metrics and can leave CRSI reliant solely on price polls.  
+Impact: metrics remain empty, trade window signals are effectively unusable.
 
-7. **Medium - No automated test target exists for rapidly changing risk/execution logic.**
-File refs: `sol-trader/package.json:6`
-Issue: there is no `test` script or minimal integration checks.
-Impact: regression probability remains high while Phase 3 continues moving quickly.
+2) **TP/SL vs. slippage mismatch**  
+Current TP/SL: `+0.50%` / `-0.25%`.  
+Max slippage is still `entry.maxSlippagePct = 2.0` (200 bps), which is far above your scalper edge.  
+Impact: even with impact guard, execution cost could erase expectancy.
 
-## What Improved Since Last Review
+## Medium Issues / Gaps
+1) **Slippage gate uses price impact only**  
+`priceImpactPct` is not the same as total execution slippage. If fees or route changes occur, this can still leak risk.
 
-1. Amount/unit handling is substantially improved in swap and position tracking (decimal-aware quote parsing and raw-token sell conversion).
-2. LP change guard is now wired into entry filtering and evaluated.
-3. Trade enrichment now uses parsed transactions, improving buyer wallet and price/size quality.
-4. Paper mode private-key handling is improved (ephemeral keypair fallback).
-5. Subscription cleanup path was introduced (`cleanupToken` + `unsubscribeFromToken`).
+2) **Liquidity is polled every analysis tick**  
+`fetchPoolLiquidity()` runs every 30s even in CRSI‑only mode. It adds load without improving signal quality for this simplified strategy.
 
-## Open Questions
+3) **Dashboard doesn’t show CRSI source explicitly**  
+Price‑feed vs. trades is logged but not surfaced as a single clear status banner (“Trade capture OK/FAIL”).
 
-1. Should a failed `sellPct=100` exit always keep the position open and schedule retry, or trigger a dedicated emergency state?
-2. Do you want a bounded LRU for `processedSignatures`, or per-token TTL-based dedup?
-3. Is the target for age filter truly mint creation time (on-chain) versus first-listing time from monitor?
+## Compliments (What’s Strong)
+- The sizing cap + sample‑size gate combination is the right control surface for safe iteration.
+- The dashboard upgrade makes the system operable and observable.
+- The CRSI price‑feed fallback was a smart resilience move, allowing the strategy to run even if trade enrichment is flaky.
 
-## Recommended Priority Fix Order
+## Scenarios to Keep in Mind
+1) **CRSI triggers but trade capture is broken**  
+You’ll see CRSI values and maybe entries, but metrics and trade‑window data remain empty.
 
-1. Fix position close condition so failed full exits cannot close positions.
-2. Implement real pruning for `processedSignatures` (bounded LRU/TTL).
-3. Switch token age source to on-chain mint creation timestamp/slot.
-4. Either wire real Jito tip semantics into tx flow or downgrade Jito claims in docs/status.
-5. Add a thin test harness for exit-state transitions and unit conversions.
+2) **Impact guard passes, but slippage still eats edge**  
+If `entry.maxSlippagePct` stays at 2.0, you can still lose money at your tight TP/SL.
+
+3) **Liquidity shrinks during session**  
+Position cap will reduce size, but if liquidity is volatile you may get frequent entry rejects from impact checks.
+
+## Strategy Going Forward (Pragmatic)
+1) **Fix trade capture or stop relying on it**  
+Either make trade enrichment reliable or fully commit to price‑feed only and strip trade‑window dependencies.
+
+2) **Align slippage cap with TP/SL**  
+If TP is 0.42–0.50%, slippage cap should be ~0.10% or tighter.
+
+3) **Add a dashboard status badge**  
+Trade capture: OK / FAIL.  
+CRSI source: price‑feed / trades.
+
+## Config Notes (Current)
+From `config/strategy.v1.json`:
+- `position.maxPositionSol = 1.25` (still the main cap in practice)
+- `position.maxEntryImpactPct = 0.10`
+- `position.liquidityCapPct = 0.05`
+- `position.sampleSizeGateMinTrades = 200`
+- `position.sampleSizeGateMaxSol = 5`
+- `entry.maxSlippagePct = 2.0` **(too high for tight TP/SL)**
+
+---
+If you want, I can add a short “action checklist” section or adapt this into a Claude handoff template.

@@ -28,6 +28,32 @@ async function executeSell(mint: string, tokenAmountRaw: string, slippageBps: nu
 
 const log = createLogger('positions');
 const DATA_DIR = path.resolve(__dirname, '../../data');
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+// Track last quoted impact for dashboard visibility
+let lastQuotedImpact: { mint: string; impact: number; timestamp: number } | null = null;
+export function getLastQuotedImpact() { return lastQuotedImpact; }
+
+// Pre-flight slippage check via Jupiter quote
+async function checkEntryImpact(mint: string, sizeSol: number): Promise<number | null> {
+  try {
+    const lamports = Math.floor(sizeSol * 1e9).toString();
+    const params = new URLSearchParams({
+      inputMint: SOL_MINT,
+      outputMint: mint,
+      amount: lamports,
+      slippageBps: '100',
+    });
+    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
+    const json = await res.json() as { priceImpactPct?: string; error?: string };
+    if (json.error) return null;
+    const impact = parseFloat(json.priceImpactPct || '0');
+    lastQuotedImpact = { mint, impact, timestamp: Date.now() };
+    return impact;
+  } catch {
+    return null; // Don't block on quote failure
+  }
+}
 
 const openPositions = new Map<string, Position>();
 const closedPositions: Position[] = [];
@@ -123,6 +149,21 @@ export async function openPosition(
   if (exposurePct > cfg.portfolio.maxOpenExposurePct) {
     log.warn('Would exceed max exposure', { exposurePct: exposurePct.toFixed(1) });
     return null;
+  }
+
+  // Slippage guard: pre-flight Jupiter quote to check price impact
+  const maxImpact = cfg.position.maxEntryImpactPct;
+  if (maxImpact > 0) {
+    const impact = await checkEntryImpact(mint, sizeSol);
+    if (impact !== null && impact > maxImpact) {
+      log.warn('Entry rejected: slippage too high', {
+        mint,
+        sizeSol: sizeSol.toFixed(4),
+        quotedImpact: impact.toFixed(4),
+        maxImpact,
+      });
+      return null;
+    }
   }
 
   log.info('Opening position', { mint, sizeSol: sizeSol.toFixed(4) });

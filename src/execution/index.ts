@@ -12,5 +12,6 @@ export {
   getClosedPositions,
   hasOpenPosition,
   savePositionHistory,
+  getLastQuotedImpact,
 } from './position-manager';
 export type { SwapQuote, SwapResult, Position, PositionExit, TradeLog } from './types';

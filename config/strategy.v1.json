@@ -16,7 +16,7 @@
     "minUniqueBuyers5m": 0,
     "maxSingleWalletBuyPct": 100,
     "maxLpChange10mPct": -15,
-    "maxSlippagePct": 2.0,
+    "maxSlippagePct": 0.15,
     "minScoreToTrade": 0,
     "indicators": {
       "enabled": true,
@@ -49,7 +49,11 @@
     "riskPerTradePct": 0.75,
     "maxPositionSol": 1.25,
     "maxPositionEquityPct": 8,
-    "initialStopPct": 9
+    "initialStopPct": 9,
+    "liquidityCapPct": 0.05,
+    "maxEntryImpactPct": 0.10,
+    "sampleSizeGateMinTrades": 200,
+    "sampleSizeGateMaxSol": 5
   },
   "exits": {
     "hardStopPct": -0.25,
@@ -70,7 +74,7 @@
     "reEntryLockoutHours": 12
   },
   "execution": {
-    "maxRouteImpactPct": 2.5,
+    "maxRouteImpactPct": 0.25,
     "maxRetries": 2,
     "simulateBeforeSubmit": true
   },

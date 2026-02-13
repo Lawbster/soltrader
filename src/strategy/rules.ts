@@ -40,7 +40,8 @@ export function evaluateEntry(
   portfolio: PortfolioState,
   lpChange10mPct?: number,
   indicators?: { rsi?: number; connorsRsi?: number },
-  isWatchlist = false
+  isWatchlist = false,
+  totalTrades = 0
 ): EntrySignal {
   const cfg = loadStrategyConfig();
 
@@ -101,8 +102,11 @@ export function evaluateEntry(
     };
   }
 
-  // Position sizing
-  const positionSizeSol = calculatePositionSize(portfolio.equitySol, cfg);
+  // Position sizing — with liquidity cap + sample size gate
+  const solPrice = token.priceSol > 0 ? token.priceUsd / token.priceSol : 0;
+  const positionSizeSol = calculatePositionSize(
+    portfolio.equitySol, cfg, token.liquidityUsd, solPrice, totalTrades
+  );
   const stopLossPct = cfg.position.initialStopPct;
 
   log.info('ENTRY SIGNAL', {
@@ -110,6 +114,8 @@ export function evaluateEntry(
     score: Math.round(scoreResult.total),
     sizeSol: positionSizeSol.toFixed(3),
     stopPct: stopLossPct,
+    liquidityUsd: Math.round(token.liquidityUsd),
+    totalTrades,
   });
 
   return {
@@ -241,7 +247,10 @@ function checkPortfolioLimits(
 
 function calculatePositionSize(
   equitySol: number,
-  cfg: ReturnType<typeof loadStrategyConfig>
+  cfg: ReturnType<typeof loadStrategyConfig>,
+  liquidityUsd: number,
+  solPrice: number,
+  totalTrades: number
 ): number {
   // risk_per_trade / stop_distance
   const riskSol = equitySol * (cfg.position.riskPerTradePct / 100);
@@ -252,14 +261,31 @@ function calculatePositionSize(
   const maxFromEquity = equitySol * (cfg.position.maxPositionEquityPct / 100);
   const maxAbsolute = cfg.position.maxPositionSol;
 
-  const finalSize = Math.min(sizeFromRisk, maxFromEquity, maxAbsolute);
+  // Liquidity cap: trade size ≤ liquidityCapPct% of pool liquidity
+  let maxFromLiquidity = Infinity;
+  if (liquidityUsd > 0 && solPrice > 0 && cfg.position.liquidityCapPct > 0) {
+    const maxPositionUsd = liquidityUsd * (cfg.position.liquidityCapPct / 100);
+    maxFromLiquidity = maxPositionUsd / solPrice;
+  }
+
+  // Sample size gate: cap position until enough trades validate the strategy
+  let maxFromSampleGate = Infinity;
+  if (totalTrades < cfg.position.sampleSizeGateMinTrades) {
+    maxFromSampleGate = cfg.position.sampleSizeGateMaxSol;
+  }
+
+  const finalSize = Math.min(
+    sizeFromRisk, maxFromEquity, maxAbsolute, maxFromLiquidity, maxFromSampleGate
+  );
 
   log.debug('Position size calculated', {
     equitySol,
-    riskSol: riskSol.toFixed(4),
     sizeFromRisk: sizeFromRisk.toFixed(4),
     maxFromEquity: maxFromEquity.toFixed(4),
     maxAbsolute,
+    maxFromLiquidity: maxFromLiquidity === Infinity ? 'N/A' : maxFromLiquidity.toFixed(4),
+    maxFromSampleGate: maxFromSampleGate === Infinity ? 'N/A' : maxFromSampleGate.toFixed(4),
+    totalTrades,
     finalSize: finalSize.toFixed(4),
   });
 

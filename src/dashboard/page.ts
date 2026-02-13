@@ -231,6 +231,8 @@ export function getDashboardHtml(): string {
   <div class="badges">
     <span class="badge-pill badge-watchlist">WATCHLIST</span>
     <span class="badge-pill badge-paper" id="modeLabel">PAPER</span>
+    <span class="badge-pill" id="crsiSourceBadge" style="background:#1a2a3a;color:#58a6ff;border:1px solid #1f6feb;">CRSI: --</span>
+    <span class="badge-pill" id="tradeCaptBadge" style="background:#1c1c1c;color:#6e7681;border:1px solid #30363d;">TRADES: --</span>
   </div>
 </div>
 
@@ -323,6 +325,7 @@ async function fetchAll() {
     renderPerformance(metrics);
     renderTrades(trades);
     renderSystem(status, metrics, signals);
+    renderBadges(status, signals);
     document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
   } catch (err) {
     console.error('Dashboard fetch failed:', err);
@@ -369,6 +372,14 @@ function renderSignals(signals) {
       '<div style="margin-top:8px">' +
         '<div class="signal-row"><span class="label">Oversold threshold</span><span>' + s.oversoldThreshold + '</span></div>' +
         '<div class="signal-row"><span class="label">Price points</span><span>' + s.pricePoints + '</span></div>' +
+      '</div>' +
+      '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
+        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position Sizing</div>' +
+        '<div class="signal-row"><span class="label">Pool liquidity</span><span>' + (s.liquidityUsd > 0 ? '$' + Number(s.liquidityUsd).toLocaleString('en-US', {maximumFractionDigits:0}) : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Max position</span><span class="blue">' + (s.effectiveMaxSol !== undefined ? fmt(s.effectiveMaxSol, 2) + ' SOL' : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Max impact</span><span>' + (s.maxEntryImpactPct !== undefined ? s.maxEntryImpactPct + '%' : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Last quoted impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Sample size gate</span><span class="' + (s.totalTrades < s.sampleSizeGateMinTrades ? 'yellow' : 'green') + '">' + s.totalTrades + ' / ' + s.sampleSizeGateMinTrades + ' trades</span></div>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -541,6 +552,27 @@ function renderSystem(status, metrics, signals) {
   el.innerHTML = cards.map(c =>
     '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div></div>'
   ).join('');
+}
+
+function renderBadges(status, signals) {
+  // CRSI source badge
+  const srcBadge = document.getElementById('crsiSourceBadge');
+  const source = signals && signals.length > 0 ? signals[0].source : 'none';
+  srcBadge.textContent = 'CRSI: ' + source.toUpperCase();
+  if (source === 'price-feed') {
+    srcBadge.style.background = '#1a3a2a'; srcBadge.style.color = '#3fb950'; srcBadge.style.borderColor = '#238636';
+  } else {
+    srcBadge.style.background = '#1c1c1c'; srcBadge.style.color = '#6e7681'; srcBadge.style.borderColor = '#30363d';
+  }
+  // Trade capture badge
+  const tcBadge = document.getElementById('tradeCaptBadge');
+  const tc = status.tradeCapture || 'unknown';
+  tcBadge.textContent = 'TRADES: ' + tc.toUpperCase();
+  if (tc === 'active') {
+    tcBadge.style.background = '#1a3a2a'; tcBadge.style.color = '#3fb950'; tcBadge.style.borderColor = '#238636';
+  } else {
+    tcBadge.style.background = '#1c1c1c'; tcBadge.style.color = '#6e7681'; tcBadge.style.borderColor = '#30363d';
+  }
 }
 
 // Initial fetch + auto-refresh every 30s

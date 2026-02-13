@@ -128,8 +128,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const solPrice = tokenData.priceUsd / (tokenData.priceSol || 1);
   tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
 
-  // Evaluate entry (now with LP change data)
-  const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist);
+  // Evaluate entry (now with LP change data + trade count for sample size gate)
+  const totalTrades = getAggregateMetrics().totalTrades;
+  const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist, totalTrades);
 
   if (signal.passed) {
     log.info('ENTRY SIGNAL', {
@@ -142,7 +143,10 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     });
 
     const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
-    await openPosition(mint, signal.positionSizeSol, slippageBps);
+    const pos = await openPosition(mint, signal.positionSizeSol, slippageBps);
+    if (!pos) {
+      log.warn('Position not opened despite entry signal', { mint });
+    }
   }
 }
 
@@ -216,7 +220,11 @@ async function main() {
     trackToken(launch);
     pendingTokens.set(launch.mint, launch);
     updateDashboardState(pendingTokens.size);
-    subscribeToTokenTrades(launch.mint, launch.poolAddress);
+    // Skip trade subscriptions for watchlist tokens — CRSI runs from price-feed,
+    // all trade-window filters are at floor values, saves WSS + RPC budget
+    if (launch.source !== 'watchlist') {
+      subscribeToTokenTrades(launch.mint, launch.poolAddress);
+    }
   }
 
   const monitor = new TokenMonitor();

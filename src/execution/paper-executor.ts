@@ -42,9 +42,12 @@ async function getQuoteEstimate(
       amount: amountRaw,
       slippageBps: slippageBps.toString(),
     });
-    const res = await fetch(`https://quote-api.jup.ag/v6/quote?${params}`);
+    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
     const json = await res.json() as Record<string, unknown>;
-    if (json.error || !json.outAmount) return null;
+    if (json.error || !json.outAmount) {
+      log.warn('Quote failed', { error: json.error, inputMint, outputMint });
+      return null;
+    }
     return {
       outAmount: json.outAmount as string,
       priceImpactPct: parseFloat(json.priceImpactPct as string || '0'),
@@ -102,7 +105,7 @@ export async function paperBuyToken(
 
   // Apply simulated slippage on top of quote (real market would slip more)
   if (paperCfg.slippageSimulation) {
-    const slipFactor = 1 - randomInRange(0.001, 0.01); // 0.1-1% additional slippage
+    const slipFactor = 1 - randomInRange(0.0001, 0.0005); // 0.01-0.05% additional slippage
     tokenAmountRaw = BigInt(Math.floor(Number(tokenAmountRaw) * slipFactor));
   }
 
@@ -185,7 +188,7 @@ export async function paperSellToken(
 
   // Apply simulated slippage
   if (paperCfg.slippageSimulation) {
-    const slipFactor = 1 - randomInRange(0.001, 0.01);
+    const slipFactor = 1 - randomInRange(0.0001, 0.0005); // 0.01-0.05% additional slippage
     solOutLamports = BigInt(Math.floor(Number(solOutLamports) * slipFactor));
   }
 
