@@ -114,11 +114,11 @@ export function getTradesForMint(mint: string): TradeEvent[] {
   return tradeHistory.get(mint) || [];
 }
 
-export async function subscribeToTokenTrades(mint: string) {
+export async function subscribeToTokenTrades(mint: string, addressOverride?: string) {
   if (subscriptions.has(mint)) return;
 
   const conn = getConnection();
-  const mintPubkey = new PublicKey(mint);
+  const mintPubkey = new PublicKey(addressOverride || mint);
 
   const subId = conn.onLogs(
     mintPubkey,
@@ -127,7 +127,7 @@ export async function subscribeToTokenTrades(mint: string) {
   );
 
   subscriptions.set(mint, subId);
-  log.debug('Subscribed to trades', { mint });
+  log.debug('Subscribed to trades', { mint, address: mintPubkey.toBase58() });
 }
 
 export async function unsubscribeFromToken(mint: string) {

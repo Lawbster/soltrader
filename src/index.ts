@@ -1,5 +1,5 @@
 import { config, createLogger, getPublicKey } from './utils';
-import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch, loadWatchlist } from './monitor';
+import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch, loadWatchlist, WatchlistEntry } from './monitor';
 import {
   fetchTokenData, fetchPoolLiquidity, getIndicatorSnapshot,
   subscribeToTokenTrades, unsubscribeFromToken,
@@ -210,7 +210,7 @@ async function main() {
 
     trackToken(launch);
     pendingTokens.set(launch.mint, launch);
-    subscribeToTokenTrades(launch.mint);
+    subscribeToTokenTrades(launch.mint, launch.poolAddress);
   }
 
   const monitor = new TokenMonitor();
@@ -223,12 +223,15 @@ async function main() {
   const useWatchlist = universeMode === 'watchlist' || universeMode === 'both';
 
   if (useWatchlist && watchlist.length > 0) {
-    for (const mint of watchlist) {
+    for (const entry of watchlist) {
+      const mint = entry.mint;
+      const pool = entry.pool;
       addTokenToUniverse({
         mint,
         source: 'watchlist',
         signature: 'watchlist',
         detectedAt: Date.now(),
+        poolAddress: pool,
       });
     }
   } else if (useWatchlist) {
