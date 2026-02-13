@@ -9,6 +9,7 @@ const tradeHistory = new Map<string, TradeEvent[]>();
 // Track subscription IDs per token
 const subscriptions = new Map<string, number>();
 const swapLogCounts = new Map<string, number>();
+const enrichMissCounts = new Map<string, number>();
 // Dedup: signatures we've already enriched — two-generation bounded set
 let currentSigs = new Set<string>();
 let previousSigs = new Set<string>();
@@ -201,6 +202,12 @@ async function enrichAndRecord(mint: string, signature: string) {
         wallet: trade.wallet.slice(0, 8) + '...',
         price: trade.pricePerToken.toExponential(3),
       });
+    } else {
+      const misses = (enrichMissCounts.get(mint) || 0) + 1;
+      enrichMissCounts.set(mint, misses);
+      if (misses <= 3) {
+        log.warn('Trade enrichment returned null', { mint, sig: signature, misses });
+      }
     }
   } finally {
     releaseEnrichmentSlot();
@@ -216,10 +223,16 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
       commitment: 'confirmed',
     });
 
-    if (!tx?.meta) return null;
+    if (!tx?.meta) {
+      log.warn('Parsed transaction missing meta', { mint, signature });
+      return null;
+    }
 
     const signer = tx.transaction.message.accountKeys.find(k => k.signer)?.pubkey.toBase58() || '';
-    if (!signer) return null;
+    if (!signer) {
+      log.warn('No signer found in transaction', { mint, signature });
+      return null;
+    }
 
     // SOL balance change for the signer
     const signerIdx = tx.transaction.message.accountKeys.findIndex(k => k.signer);
@@ -251,7 +264,10 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
       }
     }
 
-    if (tokenDelta === 0) return null;
+    if (tokenDelta === 0) {
+      log.warn('Token delta is zero for signer', { mint, signature, signer });
+      return null;
+    }
 
     // Positive token delta + negative SOL delta = buy
     // Negative token delta + positive SOL delta = sell
