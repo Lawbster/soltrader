@@ -2,7 +2,11 @@ import http from 'http';
 import { createLogger } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
 import { getPortfolioState, getOpenPositions, getClosedPositions } from '../execution';
-import { getActiveSubscriptionCount } from '../analysis';
+import {
+  getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
+  buildCloseSeriesFromPrices, fetchTokenPrice,
+} from '../analysis';
+import { loadWatchlist } from '../monitor';
 import { getDashboardHtml } from './page';
 
 const log = createLogger('dashboard');
@@ -14,20 +18,6 @@ let pendingTokenCount = 0;
 
 export function updateDashboardState(pending: number) {
   pendingTokenCount = pending;
-}
-
-function getGatesStatus() {
-  const m = getAggregateMetrics();
-  const cfg = loadStrategyConfig();
-
-  return {
-    minTrades: { required: 120, current: m.totalTrades, passed: m.totalTrades >= 120 },
-    profitFactor: { required: 1.25, current: m.profitFactor, passed: m.profitFactor >= 1.25 },
-    winRate: { required: 50, current: m.winRate, passed: m.winRate >= 50 },
-    avgWinLoss: { required: 1.35, current: m.avgWinLossRatio, passed: m.avgWinLossRatio >= 1.35 },
-    maxDrawdown: { required: 10, current: m.maxDrawdownPct, passed: m.maxDrawdownPct <= 10 },
-    execFailRate: { required: 3, current: m.executionFailureRate, passed: m.executionFailureRate <= 3 },
-  };
 }
 
 function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
@@ -45,12 +35,6 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   if (url === '/api/trades') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(getTradeMetrics()));
-    return;
-  }
-
-  if (url === '/api/gates') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(getGatesStatus()));
     return;
   }
 
@@ -92,6 +76,20 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     return;
   }
 
+  // CRSI signal status for each watchlist token
+  if (url === '/api/signals') {
+    handleSignals(res);
+    return;
+  }
+
+  // Price chart data for a watchlist token
+  if (url.startsWith('/api/price-chart')) {
+    const params = new URL(url, 'http://localhost').searchParams;
+    const mint = params.get('mint');
+    handlePriceChart(res, mint);
+    return;
+  }
+
   // Serve dashboard HTML
   if (url === '/' || url === '/index.html') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -101,6 +99,93 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
+}
+
+async function handleSignals(res: http.ServerResponse) {
+  try {
+    const cfg = loadStrategyConfig();
+    const indicatorsCfg = cfg.entry.indicators;
+    const watchlist = loadWatchlist();
+    const candlesNeeded = (indicatorsCfg?.connors?.percentRankPeriod || 100) + 1;
+
+    const signals = await Promise.all(watchlist.map(async (entry) => {
+      const mint = entry.mint;
+      const pricePoints = getPriceHistoryCount(mint);
+
+      let crsi: number | undefined;
+      let rsi: number | undefined;
+      let candleCount = 0;
+      let source = 'none';
+
+      if (indicatorsCfg?.enabled) {
+        const snap = getIndicatorSnapshot(mint, {
+          intervalMinutes: indicatorsCfg.candleIntervalMinutes,
+          lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+          rsiPeriod: indicatorsCfg.rsi.period,
+          connorsRsiPeriod: indicatorsCfg.connors.rsiPeriod,
+          connorsStreakRsiPeriod: indicatorsCfg.connors.streakRsiPeriod,
+          connorsPercentRankPeriod: indicatorsCfg.connors.percentRankPeriod,
+        });
+        crsi = snap.connorsRsi;
+        rsi = snap.rsi;
+        candleCount = snap.candleCount;
+        source = candleCount > 0 ? 'price-feed' : 'none';
+      }
+
+      // Get current price
+      let priceUsd = 0;
+      try {
+        const p = await fetchTokenPrice(mint);
+        priceUsd = p.priceUsd;
+      } catch { /* ignore */ }
+
+      return {
+        mint,
+        crsi,
+        rsi,
+        priceUsd,
+        candleCount,
+        candlesNeeded,
+        pricePoints,
+        source,
+        ready: candleCount >= candlesNeeded,
+        oversoldThreshold: indicatorsCfg?.connors?.oversold || 20,
+      };
+    }));
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(signals));
+  } catch (err) {
+    log.error('Failed to get signals', { error: err });
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to get signals' }));
+  }
+}
+
+function handlePriceChart(res: http.ServerResponse, mint: string | null) {
+  const watchlist = loadWatchlist();
+  const targetMint = mint || watchlist[0]?.mint;
+
+  if (!targetMint) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify([]));
+    return;
+  }
+
+  const intervalMs = 60_000; // 1-minute candles
+  const lookbackMs = 120 * 60_000; // 2 hours
+  const closes = buildCloseSeriesFromPrices(targetMint, intervalMs, lookbackMs);
+
+  // Build time series — each entry is 1 minute apart from now backwards
+  const now = Date.now();
+  const startTime = now - lookbackMs;
+  const points = closes.map((price, i) => ({
+    time: startTime + i * intervalMs,
+    price,
+  }));
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(points));
 }
 
 export function startDashboard(): Promise<void> {

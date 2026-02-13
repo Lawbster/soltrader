@@ -82,7 +82,8 @@ async function getSolPrice(): Promise<number> {
   }
 }
 
-async function getTokenPrice(mint: string): Promise<{ priceSol: number; priceUsd: number }> {
+/** Lightweight price fetch — Jupiter only, no RPC calls */
+export async function fetchTokenPrice(mint: string): Promise<{ priceSol: number; priceUsd: number }> {
   const cached = tokenPriceCache.get(mint);
   if (cached && Date.now() - cached.fetchedAt < TOKEN_PRICE_TTL) {
     return { priceSol: cached.priceSol, priceUsd: cached.priceUsd };
@@ -116,7 +117,7 @@ export async function fetchTokenData(
     const [mintInfo, largestAccounts, priceData] = await Promise.all([
       conn.getParsedAccountInfo(mintPubkey),
       conn.getTokenLargestAccounts(mintPubkey),
-      getTokenPrice(mint),
+      fetchTokenPrice(mint),
     ]);
 
     // Parse mint account data

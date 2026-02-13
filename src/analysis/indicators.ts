@@ -1,5 +1,9 @@
 import { TradeEvent, IndicatorSnapshot } from './types';
 import { getTradesForMint } from './trade-tracker';
+import { buildCloseSeriesFromPrices } from './price-feed';
+import { createLogger } from '../utils';
+
+const log = createLogger('indicators');
 
 export interface IndicatorOptions {
   intervalMinutes: number;
@@ -109,10 +113,34 @@ function computeConnorsRsi(values: number[], rsiPeriod: number, streakRsiPeriod:
 }
 
 export function getIndicatorSnapshot(mint: string, options: IndicatorOptions): IndicatorSnapshot {
-  const trades = getTradesForMint(mint);
   const intervalMs = options.intervalMinutes * 60_000;
   const lookbackMs = options.lookbackMinutes * 60_000;
-  const closes = buildCloseSeries(trades, intervalMs, lookbackMs);
+
+  // Try trade-based candles first
+  const trades = getTradesForMint(mint);
+  const tradeCloses = buildCloseSeries(trades, intervalMs, lookbackMs);
+
+  // Use Jupiter price feed if trade-based candles are insufficient
+  // (CRSI needs percentRankPeriod + 1 candles minimum)
+  const minCandles = options.connorsPercentRankPeriod + 1;
+  let closes: number[];
+  let source: string;
+
+  if (tradeCloses.length >= minCandles) {
+    closes = tradeCloses;
+    source = 'trades';
+  } else {
+    const priceCloses = buildCloseSeriesFromPrices(mint, intervalMs, lookbackMs);
+    if (priceCloses.length > tradeCloses.length) {
+      closes = priceCloses;
+      source = 'price-feed';
+    } else {
+      closes = tradeCloses;
+      source = 'trades';
+    }
+  }
+
+  log.debug('Indicator candles', { mint, source, candles: closes.length, needed: minCandles });
 
   const rsi = computeRsi(closes, options.rsiPeriod);
   const connorsRsi = computeConnorsRsi(

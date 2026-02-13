@@ -1,9 +1,10 @@
 import { config, createLogger, getPublicKey } from './utils';
 import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch, loadWatchlist, WatchlistEntry } from './monitor';
 import {
-  fetchTokenData, fetchPoolLiquidity, getIndicatorSnapshot,
+  fetchTokenData, fetchTokenPrice, fetchPoolLiquidity, getIndicatorSnapshot,
   subscribeToTokenTrades, unsubscribeFromToken,
   getTradeWindow, getActiveSubscriptionCount,
+  recordPrice, getPriceHistoryCount,
 } from './analysis';
 import {
   loadStrategyConfig, evaluateEntry,
@@ -249,6 +250,23 @@ async function main() {
     log.info('Launch monitoring disabled (watchlist-only mode)');
   }
 
+  // Dedicated price poll for watchlist tokens — feeds CRSI candle builder
+  // Runs every 30s so we get ~2 price points per 1-minute candle
+  const PRICE_POLL_INTERVAL_MS = 30_000;
+  const pricePollTimer = setInterval(async () => {
+    if (!useWatchlist || watchlist.length === 0) return;
+    for (const entry of watchlist) {
+      try {
+        const { priceUsd } = await fetchTokenPrice(entry.mint);
+        if (priceUsd > 0) {
+          recordPrice(entry.mint, priceUsd);
+        }
+      } catch (err) {
+        log.debug('Price poll failed', { mint: entry.mint, error: err });
+      }
+    }
+  }, PRICE_POLL_INTERVAL_MS);
+
   const analysisTimer = setInterval(async () => {
     try {
       await analysisLoop();
@@ -295,10 +313,16 @@ async function main() {
       const portfolio = getPortfolioState();
       const stats = getStats();
       const metrics = getAggregateMetrics();
+      // Include price history counts for watchlist tokens
+      const priceHistoryCounts: Record<string, number> = {};
+      for (const entry of watchlist) {
+        priceHistoryCounts[entry.mint.slice(0, 8)] = getPriceHistoryCount(entry.mint);
+      }
       log.info('Status', {
         ...stats,
         pendingCandidates: pendingTokens.size,
         tradeSubscriptions: getActiveSubscriptionCount(),
+        priceHistory: priceHistoryCounts,
         openPositions: portfolio.openPositions,
         equitySol: portfolio.equitySol.toFixed(4),
         dailyPnl: portfolio.dailyPnlPct.toFixed(2) + '%',
@@ -313,6 +337,7 @@ async function main() {
 
   const shutdown = async () => {
     log.info('Shutting down...');
+    clearInterval(pricePollTimer);
     clearInterval(analysisTimer);
     clearInterval(positionTimer);
     clearInterval(snapshotTimer);
