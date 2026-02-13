@@ -4,12 +4,13 @@ import {
   fetchTokenData, fetchTokenPrice, fetchPoolLiquidity, getIndicatorSnapshot,
   subscribeToTokenTrades, unsubscribeFromToken,
   getTradeWindow, getActiveSubscriptionCount,
-  recordPrice, getPriceHistoryCount,
+  recordPrice, getPriceHistoryCount, getPriceHistory, loadPriceHistoryFrom,
 } from './analysis';
 import {
   loadStrategyConfig, evaluateEntry,
   initMetrics, saveMetrics, printMetricsSummary, getAggregateMetrics,
 } from './strategy';
+import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
 import {
   initPortfolio,
   getPortfolioState,
@@ -132,6 +133,19 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const totalTrades = getAggregateMetrics().totalTrades;
   const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist, totalTrades);
 
+  // Log every signal decision (Phase 2)
+  logSignal({
+    mint,
+    crsi: indicators?.connorsRsi,
+    rsi: indicators?.rsi,
+    source: indicators?.candleCount ? 'price-feed' : 'none',
+    candleCount: indicators?.candleCount ?? 0,
+    entryDecision: signal.passed,
+    rejectReason: signal.passed ? '' : (signal.reason || signal.filterResult?.reason || ''),
+    liquidityUsd: tokenData.liquidityUsd,
+    effectiveMaxSol: signal.positionSizeSol,
+  });
+
   if (signal.passed) {
     log.info('ENTRY SIGNAL', {
       mint,
@@ -199,6 +213,12 @@ async function main() {
   const pubkey = getPublicKey();
   log.info('Bot wallet', { address: pubkey.toBase58() });
 
+  // Restore price history from last shutdown (Phase 5: persistence)
+  const snapshot = loadPriceHistorySnapshot();
+  if (snapshot.size > 0) {
+    loadPriceHistoryFrom(snapshot);
+  }
+
   await initPortfolio();
   initMetrics();
   await startDashboard();
@@ -265,9 +285,12 @@ async function main() {
     if (!useWatchlist || watchlist.length === 0) return;
     for (const entry of watchlist) {
       try {
-        const { priceUsd } = await fetchTokenPrice(entry.mint);
+        const pollStart = Date.now();
+        const { priceUsd, priceSol } = await fetchTokenPrice(entry.mint);
+        const pollLatencyMs = Date.now() - pollStart;
         if (priceUsd > 0) {
           recordPrice(entry.mint, priceUsd);
+          logPricePoint(entry.mint, priceUsd, priceSol, 'jupiter', pollLatencyMs);
         }
       } catch (err) {
         log.debug('Price poll failed', { mint: entry.mint, error: err });
@@ -318,6 +341,13 @@ async function main() {
       saveSnapshots();
       savePositionHistory();
       saveMetrics();
+      // Phase 4: export derived candles + Phase 5: persist price history
+      const priceHist = getPriceHistory();
+      savePriceHistory(priceHist);
+      for (const entry of watchlist) {
+        const pts = priceHist.get(entry.mint);
+        if (pts && pts.length > 0) exportCandles(entry.mint, pts);
+      }
       const portfolio = getPortfolioState();
       const stats = getStats();
       const metrics = getAggregateMetrics();
@@ -354,6 +384,7 @@ async function main() {
     saveSnapshots();
     savePositionHistory();
     saveMetrics();
+    savePriceHistory(getPriceHistory());
     printMetricsSummary();
     await stopDashboard();
     await monitor.stop();

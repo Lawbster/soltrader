@@ -78,3 +78,16 @@ export function getPriceHistoryCount(mint: string): number {
 export function clearPriceHistory(mint: string) {
   priceHistory.delete(mint);
 }
+
+export function getPriceHistory(): Map<string, PricePoint[]> {
+  return priceHistory;
+}
+
+export function loadPriceHistoryFrom(data: Map<string, { timestamp: number; price: number }[]>) {
+  for (const [mint, points] of data) {
+    const existing = priceHistory.get(mint);
+    if (existing && existing.length > 0) continue; // Don't overwrite live data
+    priceHistory.set(mint, points);
+    log.info('Restored price history', { mint, points: points.length });
+  }
+}

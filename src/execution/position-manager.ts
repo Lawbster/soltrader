@@ -10,6 +10,7 @@ import { paperBuyToken, paperSellToken } from './paper-executor';
 import { Position, PositionExit, SwapResult } from './types';
 import { checkKillSwitch } from './guards';
 import { recordExecutionAttempt, recordClosedPosition } from '../strategy/metrics';
+import { logExecution } from '../data';
 
 // Route buy/sell through paper executor when in paper mode
 async function executeBuy(mint: string, sizeSol: number, slippageBps: number): Promise<SwapResult> {
@@ -168,8 +169,19 @@ export async function openPosition(
 
   log.info('Opening position', { mint, sizeSol: sizeSol.toFixed(4) });
 
+  const buyStart = Date.now();
   const result = await executeBuy(mint, sizeSol, slippageBps);
   recordExecutionAttempt(result.success);
+  logExecution({
+    mint,
+    side: 'buy',
+    sizeSol: result.solAmount || sizeSol,
+    slippageBps,
+    quotedImpactPct: result.priceImpactPct || 0,
+    result: result.success ? 'success' : 'fail',
+    error: result.error || '',
+    latencyMs: Date.now() - buyStart,
+  });
   if (!result.success) {
     log.error('Buy failed', { mint, error: result.error });
     return null;
@@ -308,8 +320,19 @@ async function executeExit(
     tokensRaw: rawTokensToSell,
   });
 
+  const sellStart = Date.now();
   const result = await executeSell(position.mint, rawTokensToSell, slippageBps);
   recordExecutionAttempt(result.success);
+  logExecution({
+    mint: position.mint,
+    side: 'sell',
+    sizeSol: result.solAmount || 0,
+    slippageBps,
+    quotedImpactPct: result.priceImpactPct || 0,
+    result: result.success ? 'success' : 'fail',
+    error: result.error || '',
+    latencyMs: Date.now() - sellStart,
+  });
 
   const exit: PositionExit = {
     type: exitType,

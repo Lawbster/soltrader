@@ -1,145 +1,77 @@
-# Logging Schema & File Paths
+# Data Logging Implementation Order
 
-This defines the dataset we will collect for 1‑minute pip analysis and CRSI evaluation.
+This is the execution checklist for Claude. Keep it minimal, deterministic, and production-safe.
 
-## Storage Plan
-Daily export + weekly archive.
-- Daily files: per day, per token (candles) and per day (signals/executions)
-- Weekly archive: ZIP/TAR of the last 7 days
+## Goal
+Collect a clean 1-week dataset for CRSI strategy analysis with daily and weekly exports.
 
-All files live under `/opt/sol-trader/data/`.
+## Guiding Rules
+- Raw price points are the source of truth.
+- Do not fake full OHLCV from sparse polls.
+- Keep writes append-only and daily-partitioned.
+- Persist and reload price history so CRSI survives restarts.
 
----
+## Phase 1: Raw Price Points (Must Have First)
+1. Write JSONL price points per token:
+   - Path: `data/prices/<mint>/YYYY-MM-DD.jsonl`
+   - Fields: `ts`, `mint`, `priceUsd`, `priceSol`, `source`, `pollLatencyMs`
+2. Hook into existing 30s price poll loop.
+3. Ensure file rotation by UTC date.
 
-## 1) Candles (CSV)
-**Purpose:** primary time‑aligned dataset for analysis and backtests.  
-**Interval:** 1 minute  
-**File path:**
-```
-data/candles/<mint>/YYYY-MM-DD.csv
-```
+Acceptance:
+- Files are created for active watchlist tokens.
+- File size grows every 30s per token.
 
-**Columns (CSV header):**
-```
-timestamp,open,high,low,close,volume
-```
+## Phase 2: Signal Decision Snapshots
+1. Write JSONL on every strategy evaluation:
+   - Path: `data/signals/YYYY-MM-DD.jsonl`
+   - Fields: `ts`, `mint`, `crsi`, `rsi`, `source`, `candleCount`, `entryDecision`, `rejectReason`, `quotedImpactPct`, `liquidityUsd`, `effectiveMaxSol`
+2. Log both pass and reject decisions.
 
-**Notes**
-- `timestamp` in ms (UTC epoch).
-- `volume` in token units or SOL; pick one and keep consistent (recommend SOL).
+Acceptance:
+- Every analysis cycle produces one line per evaluated token.
 
----
+## Phase 3: Execution Events
+1. Write JSONL for buy/sell attempts and outcomes:
+   - Path: `data/executions/YYYY-MM-DD.jsonl`
+   - Fields: `ts`, `mint`, `side`, `sizeSol`, `slippageBps`, `quotedImpactPct`, `result`, `error`, `latencyMs`
+2. Include both success and failure.
 
-## 2) Signals (JSONL)
-**Purpose:** record every strategy evaluation snapshot.  
-**File path:**
-```
-data/signals/YYYY-MM-DD.jsonl
-```
+Acceptance:
+- Every open/close attempt is recorded once.
 
-**Schema (per line):**
-```json
-{
-  "ts": 0,
-  "mint": "",
-  "source": "price-feed|trades",
-  "crsi": 0,
-  "rsi": 0,
-  "priceUsd": 0,
-  "priceSol": 0,
-  "candles": 0,
-  "candlesNeeded": 0,
-  "oversold": 20,
-  "entryDecision": true,
-  "rejectReason": "",
-  "quotedImpactPct": 0,
-  "liquidityUsd": 0,
-  "effectiveMaxSol": 0,
-  "sampleTrades": 0
-}
-```
+## Phase 4: Derived Candles (Honest Version)
+1. Build 1-minute candles from raw price points:
+   - Path: `data/candles/<mint>/YYYY-MM-DD.csv`
+   - Columns: `timestamp,open,high,low,close,pricePoints`
+2. Do not include `volume` until a real volume source is added.
 
-**Notes**
-- `entryDecision` true/false on every evaluation.
-- If false, set `rejectReason`.
+Acceptance:
+- Candle rows match minute boundaries and derive only from stored price points.
 
----
+## Phase 5: Persistence Across Restart
+1. Persist in-memory price history at interval and on shutdown.
+2. Reload recent history on startup (last 150 min window).
 
-## 3) Executions (JSONL)
-**Purpose:** record actual trade actions (paper or live).  
-**File path:**
-```
-data/executions/YYYY-MM-DD.jsonl
-```
+Acceptance:
+- CRSI readiness does not reset to zero after restart.
 
-**Schema (per line):**
-```json
-{
-  "ts": 0,
-  "mint": "",
-  "side": "buy|sell",
-  "sizeSol": 0,
-  "price": 0,
-  "slippageBps": 0,
-  "quotedImpactPct": 0,
-  "result": "success|fail",
-  "error": ""
-}
-```
+## Phase 6: Exports
+1. Daily pull (VPS -> local) for `prices`, `signals`, `executions`, `candles`.
+2. Weekly archive on VPS:
+   - `tar -czf data/archive-YYYY-WW.tar.gz prices signals executions candles summaries`
+3. Pull weekly archive to local.
 
----
+Acceptance:
+- Daily files sync cleanly.
+- Weekly archive is reproducible and complete.
 
-## 4) Daily Summary (JSON)
-**Purpose:** quick aggregate metrics snapshot.  
-**File path:**
-```
-data/summaries/YYYY-MM-DD.json
-```
+## Rollout Plan
+1. Start with 3 tokens: `POPCAT`, `BONK`, `TRUMP`.
+2. Run 48 hours and verify data integrity.
+3. Expand to full 9-token watchlist.
 
-**Schema:**
-```json
-{
-  "date": "YYYY-MM-DD",
-  "totalTrades": 0,
-  "winRate": 0,
-  "profitFactor": 0,
-  "maxDrawdownPct": 0,
-  "avgWinLoss": 0,
-  "uptimeHours": 0
-}
-```
-
----
-
-## Daily Export (VPS → Local)
-From your local machine:
-```
-scp -r deploy@<server-ip>:/opt/sol-trader/data/candles ./data/candles
-scp deploy@<server-ip>:/opt/sol-trader/data/signals/*.jsonl ./data/signals/
-scp deploy@<server-ip>:/opt/sol-trader/data/executions/*.jsonl ./data/executions/
-scp deploy@<server-ip>:/opt/sol-trader/data/summaries/*.json ./data/summaries/
-```
-
-## Weekly Export (Archive)
-On VPS (weekly):
-```
-cd /opt/sol-trader/data
-tar -czf archive-YYYY-WW.tar.gz candles signals executions summaries
-```
-Then pull:
-```
-scp deploy@<server-ip>:/opt/sol-trader/data/archive-YYYY-WW.tar.gz ./archives/
-```
-
----
-
-## Watchlist Tokens (Current)
-- POPCAT: `7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr`
-- PIPPIN: `Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump`
-- TRUMP: `6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN`
-- BONK: `DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263`
-- PUMP: `pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn`
-- cbBTC: `cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij`
-- ETH (Wormhole): `7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs`
-- RAY: `4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R`
-- JUP: `JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN`
+## Out of Scope (for now)
+- True traded volume in candles.
+- External data providers for OHLCV.
+- Backtest engine changes.
