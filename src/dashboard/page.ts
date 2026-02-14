@@ -98,18 +98,28 @@ export function getDashboardHtml(): string {
     border: 1px solid #21262d;
     border-radius: 8px;
     padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .signal-card:hover { border-color: #58a6ff; }
+  .signal-card.selected { border-color: #58a6ff; border-width: 2px; }
+  .signal-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #c9d1d9;
+    margin-bottom: 2px;
   }
   .signal-mint {
     font-family: 'Consolas', 'Monaco', monospace;
-    font-size: 0.75rem;
-    color: #58a6ff;
+    font-size: 0.65rem;
+    color: #6e7681;
     margin-bottom: 12px;
     display: flex;
     justify-content: space-between;
     align-items: center;
   }
-  .signal-mint a { color: #58a6ff; text-decoration: none; }
-  .signal-mint a:hover { text-decoration: underline; }
+  .signal-mint a { color: #6e7681; text-decoration: none; }
+  .signal-mint a:hover { color: #58a6ff; text-decoration: underline; }
   .crsi-display {
     display: flex;
     align-items: baseline;
@@ -249,7 +259,7 @@ export function getDashboardHtml(): string {
 
 <!-- Price Chart -->
 <div class="chart-container">
-  <h3>Price (1-min candles, 2hr lookback)</h3>
+  <h3 id="chartTitle">Price (1-min candles, 2hr lookback)</h3>
   <canvas id="priceChart"></canvas>
 </div>
 
@@ -296,10 +306,13 @@ export function getDashboardHtml(): string {
 
 <script>
 const API = '';
+let selectedMint = null;
+let signalCache = [];
 function fmt(n, d=2) { return n === Infinity || n === -Infinity ? '--' : Number(n).toFixed(d); }
 function fmtPct(n) { return fmt(n,1) + '%'; }
 function pnlColor(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
 function shortMint(m) { return m.slice(0,4) + '...' + m.slice(-4); }
+function labelFor(s) { return s.label || shortMint(s.mint); }
 function fmtDate(ts) {
   return new Date(ts).toLocaleString('en-GB', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' });
 }
@@ -312,15 +325,20 @@ function crsiColor(v, threshold) {
 
 async function fetchAll() {
   try {
+    const chartParam = selectedMint ? '?mint=' + selectedMint : '';
     const [signals, chart, status, metrics, trades] = await Promise.all([
       fetch(API + '/api/signals').then(r => r.json()),
-      fetch(API + '/api/price-chart').then(r => r.json()),
+      fetch(API + '/api/price-chart' + chartParam).then(r => r.json()),
       fetch(API + '/api/status').then(r => r.json()),
       fetch(API + '/api/metrics').then(r => r.json()),
       fetch(API + '/api/trades').then(r => r.json()),
     ]);
+    signalCache = signals;
     renderSignals(signals);
-    renderPriceChart(chart);
+    const chartLabel = selectedMint
+      ? (signals.find(s => s.mint === selectedMint)?.label || shortMint(selectedMint))
+      : (signals[0]?.label || (signals[0] ? shortMint(signals[0].mint) : ''));
+    renderPriceChart(chart, chartLabel);
     renderPortfolio(status);
     renderPerformance(metrics);
     renderTrades(trades);
@@ -343,7 +361,7 @@ function renderSignals(signals) {
   const srcEl = document.getElementById('signalSource');
   srcEl.textContent = signals[0].source || 'none';
 
-  el.innerHTML = signals.map(s => {
+  el.innerHTML = signals.map((s, i) => {
     const hasCrsi = s.crsi !== undefined && s.crsi !== null;
     const crsiVal = hasCrsi ? fmt(s.crsi, 1) : '--';
     const crsiCls = crsiColor(s.crsi, s.oversoldThreshold);
@@ -357,10 +375,11 @@ function renderSignals(signals) {
       ? '<span class="green" style="font-weight:700;font-size:0.8rem;">OVERSOLD</span>'
       : '';
 
-    return '<div class="signal-card">' +
+    const isSelected = selectedMint ? s.mint === selectedMint : i === 0;
+    return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
+      '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + '</div>' +
       '<div class="signal-mint">' +
-        '<a href="https://solscan.io/token/' + s.mint + '" target="_blank">' + shortMint(s.mint) + '</a>' +
-        signalLabel +
+        '<a href="https://solscan.io/token/' + s.mint + '" target="_blank" onclick="event.stopPropagation();">' + shortMint(s.mint) + '</a>' +
       '</div>' +
       '<div class="crsi-display">' +
         '<div><div class="crsi-label">Connors RSI</div><div class="crsi-value ' + crsiCls + '">' + crsiVal + '</div></div>' +
@@ -385,7 +404,20 @@ function renderSignals(signals) {
   }).join('');
 }
 
-function renderPriceChart(points) {
+function selectToken(mint) {
+  selectedMint = mint;
+  // Re-render cards to update selection highlight
+  renderSignals(signalCache);
+  // Fetch new chart data for selected token
+  fetch(API + '/api/price-chart?mint=' + mint).then(r => r.json()).then(points => {
+    const sig = signalCache.find(s => s.mint === mint);
+    renderPriceChart(points, sig ? labelFor(sig) : shortMint(mint));
+  });
+}
+
+function renderPriceChart(points, tokenLabel) {
+  const titleEl = document.getElementById('chartTitle');
+  titleEl.textContent = (tokenLabel || '') + ' \u2014 Price (1-min candles, 2hr lookback)';
   const canvas = document.getElementById('priceChart');
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
@@ -489,14 +521,16 @@ function renderPortfolio(s) {
   if (s.openPositions.length === 0) {
     posEl.innerHTML = '<div class="no-data">No open positions</div>';
   } else {
-    posEl.innerHTML = s.openPositions.map(p =>
-      '<div class="pos-card">' +
-      '<div><div class="pos-mint">' + shortMint(p.mint) + '</div>' +
+    posEl.innerHTML = s.openPositions.map(p => {
+      const sig = signalCache.find(sc => sc.mint === p.mint);
+      const name = sig ? labelFor(sig) : shortMint(p.mint);
+      return '<div class="pos-card">' +
+      '<div><div class="pos-mint">' + name + '</div>' +
       '<div class="pos-detail">Hold: ' + p.holdTimeMins + 'm | Remaining: ' + fmt(p.remainingPct,0) + '%' +
       (p.tp1Hit ? ' | TP1' : '') + '</div></div>' +
       '<div class="pos-pnl ' + pnlColor(p.pnlPct) + '">' + (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct) + '</div>' +
-      '</div>'
-    ).join('');
+      '</div>';
+    }).join('');
   }
 }
 
@@ -529,9 +563,11 @@ function renderTrades(trades) {
   const sorted = [...trades].reverse();
   el.innerHTML = sorted.map(t => {
     const isWin = t.pnlUsdc > 0;
+    const sig = signalCache.find(sc => sc.mint === t.mint);
+    const name = sig ? labelFor(sig) : shortMint(t.mint);
     return '<tr>' +
       '<td>' + fmtDate(t.exitTime) + '</td>' +
-      '<td><a class="mint-link" href="https://solscan.io/token/' + t.mint + '" target="_blank">' + shortMint(t.mint) + '</a></td>' +
+      '<td><a class="mint-link" href="https://solscan.io/token/' + t.mint + '" target="_blank">' + name + '</a></td>' +
       '<td class="' + pnlColor(t.pnlUsdc) + '">' + (t.pnlUsdc >= 0 ? '+' : '') + fmt(t.pnlUsdc, 4) + '</td>' +
       '<td><span class="badge ' + (isWin ? 'win' : 'loss') + '">' + (t.pnlPct >= 0 ? '+' : '') + fmtPct(t.pnlPct) + '</span></td>' +
       '<td>' + Math.round(t.holdTimeMinutes) + 'm</td>' +

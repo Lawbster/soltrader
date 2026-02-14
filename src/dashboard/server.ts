@@ -170,6 +170,7 @@ async function handleSignals(res: http.ServerResponse) {
 
       return {
         mint,
+        label: entry.label,
         crsi,
         rsi,
         priceUsd,

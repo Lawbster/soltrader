@@ -8,6 +8,7 @@ const DEFAULT_PATH = path.resolve(__dirname, '../../config/watchlist.json');
 export interface WatchlistEntry {
   mint: string;
   pool?: string;
+  label?: string;
 }
 
 function parseMints(raw: string): string[] {
@@ -62,7 +63,8 @@ export function loadWatchlist(filePath = DEFAULT_PATH): WatchlistEntry[] {
               log.warn('Ignoring invalid watchlist entry (pool)', { entry: item });
               continue;
             }
-            entries.set(mint, { mint, pool });
+            const label = typeof item.label === 'string' ? item.label : undefined;
+            entries.set(mint, { mint, pool, label });
           }
         }
       } else {
