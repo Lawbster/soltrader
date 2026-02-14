@@ -74,7 +74,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     const trades = getTradeMetrics();
     let cumPnl = 0;
     const curve = trades.map(t => {
-      cumPnl += t.pnlSol;
+      cumPnl += t.pnlUsdc;
       return { time: t.exitTime, pnl: cumPnl, tradeId: t.id };
     });
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -141,31 +141,28 @@ async function handleSignals(res: http.ServerResponse) {
 
       // Get current price and liquidity
       let priceUsd = 0;
-      let priceSol = 0;
       let liquidityUsd = 0;
       try {
         const p = await fetchTokenPrice(mint);
         priceUsd = p.priceUsd;
-        priceSol = p.priceSol;
       } catch { /* ignore */ }
       try {
         liquidityUsd = await fetchPoolLiquidity(mint);
       } catch { /* ignore */ }
 
-      // Compute effective max position size
-      const solPrice = priceSol > 0 ? priceUsd / priceSol : 0;
+      // Compute effective max position size (USDC)
       const posCfg = cfg.position;
       const totalTrades = metrics.totalTrades;
       let maxFromLiquidity = Infinity;
-      if (liquidityUsd > 0 && solPrice > 0 && posCfg.liquidityCapPct > 0) {
-        maxFromLiquidity = (liquidityUsd * (posCfg.liquidityCapPct / 100)) / solPrice;
+      if (liquidityUsd > 0 && posCfg.liquidityCapPct > 0) {
+        maxFromLiquidity = liquidityUsd * (posCfg.liquidityCapPct / 100);
       }
       let maxFromSampleGate = Infinity;
       if (totalTrades < posCfg.sampleSizeGateMinTrades) {
-        maxFromSampleGate = posCfg.sampleSizeGateMaxSol;
+        maxFromSampleGate = posCfg.sampleSizeGateMaxUsdc;
       }
-      const effectiveMaxSol = Math.min(
-        posCfg.maxPositionSol, maxFromLiquidity, maxFromSampleGate
+      const effectiveMaxUsdc = Math.min(
+        posCfg.maxPositionUsdc, maxFromLiquidity, maxFromSampleGate
       );
 
       const lastImpact = getLastQuotedImpact();
@@ -183,7 +180,7 @@ async function handleSignals(res: http.ServerResponse) {
         ready: candleCount >= candlesNeeded,
         oversoldThreshold: indicatorsCfg?.connors?.oversold || 20,
         liquidityUsd,
-        effectiveMaxSol,
+        effectiveMaxUsdc,
         maxEntryImpactPct: posCfg.maxEntryImpactPct,
         quotedImpact,
         totalTrades,

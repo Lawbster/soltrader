@@ -13,5 +13,6 @@ export {
   hasOpenPosition,
   savePositionHistory,
   getLastQuotedImpact,
+  checkSolReplenish,
 } from './position-manager';
 export type { SwapQuote, SwapResult, Position, PositionExit, TradeLog } from './types';

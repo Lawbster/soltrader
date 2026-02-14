@@ -1,7 +1,7 @@
 export interface SwapQuote {
   inputMint: string;
   outputMint: string;
-  inAmount: string;  // Raw smallest units (lamports / raw token units)
+  inAmount: string;  // Raw smallest units (USDC 1e6 / raw token units)
   outAmount: string; // Raw smallest units
   inputDecimals: number;
   outputDecimals: number;
@@ -14,12 +14,12 @@ export interface SwapQuote {
 export interface SwapResult {
   success: boolean;
   signature?: string;
-  solAmount: number;    // SOL side, always human-readable
+  usdcAmount: number;   // USDC side, always human-readable
   tokenAmount: number;  // Token side, always human-readable (decimal-adjusted)
   tokenAmountRaw: string; // Raw token units for sell calls
   side: 'buy' | 'sell';
   priceImpactPct: number;
-  fee: number;
+  fee: number; // tx fee in SOL (Solana network fee)
   latencyMs: number;
   error?: string;
 }
@@ -28,15 +28,15 @@ export interface Position {
   id: string;
   mint: string;
   entrySignature: string;
-  entryPrice: number; // price per token in SOL
+  entryPrice: number; // price per token in USDC
   entryTime: number;
-  initialSizeSol: number;
+  initialSizeUsdc: number;
   initialTokens: number;
   // Current state
-  remainingSol: number; // notional value remaining
+  remainingUsdc: number; // notional value remaining
   remainingTokens: number;
   remainingPct: number; // % of initial position still held
-  currentPrice: number;
+  currentPrice: number; // price per token in USDC
   currentPnlPct: number;
   peakPnlPct: number;
   // Exit tracking
@@ -53,8 +53,8 @@ export interface PositionExit {
   type: string;
   sellPct: number;
   tokensSold: number;
-  solReceived: number;
-  price: number;
+  usdcReceived: number;
+  price: number; // USDC per token at exit
   signature?: string;
   timestamp: number;
 }

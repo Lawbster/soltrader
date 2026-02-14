@@ -27,7 +27,7 @@ export const config = {
   },
   trading: {
     paperTrading: isPaperMode,
-    maxPositionSol: parseFloat(optional('MAX_POSITION_SOL', '1.0')),
+    maxPositionUsdc: parseFloat(optional('MAX_POSITION_USDC', '250')),
     maxConcurrentPositions: parseInt(optional('MAX_CONCURRENT_POSITIONS', '5')),
     defaultSlippageBps: parseInt(optional('DEFAULT_SLIPPAGE_BPS', '300')),
   },

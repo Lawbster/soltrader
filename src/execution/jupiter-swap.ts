@@ -7,8 +7,10 @@ import { sendWithJito } from './jito-bundle';
 
 const log = createLogger('jupiter');
 
-const SOL_MINT = 'So11111111111111111111111111111111111111112';
+export const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const SOL_DECIMALS = 9;
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDC_DECIMALS = 6;
 const JUPITER_QUOTE_URL = 'https://quote-api.jup.ag/v6/quote';
 const JUPITER_SWAP_URL = 'https://quote-api.jup.ag/v6/swap';
 
@@ -19,6 +21,7 @@ const decimalsCache = new Map<string, number>();
 
 async function getTokenDecimals(mint: string): Promise<number> {
   if (mint === SOL_MINT) return SOL_DECIMALS;
+  if (mint === USDC_MINT) return USDC_DECIMALS;
   const cached = decimalsCache.get(mint);
   if (cached !== undefined) return cached;
 
@@ -56,6 +59,11 @@ export async function getQuote(
     });
 
     const res = await fetch(`${JUPITER_QUOTE_URL}?${params}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      log.error('Jupiter quote HTTP error', { status: res.status, body: body.slice(0, 200) });
+      return null;
+    }
     const json = await res.json() as Record<string, unknown>;
 
     if (json.error) {
@@ -94,12 +102,12 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
   const startTime = Date.now();
   const keypair = getKeypair();
   const conn = getConnection();
-  const isBuy = quote.inputMint === SOL_MINT;
+  const isBuy = quote.inputMint === USDC_MINT;
   const side: 'buy' | 'sell' = isBuy ? 'buy' : 'sell';
 
   const failResult = (error: string): SwapResult => ({
     success: false,
-    solAmount: 0,
+    usdcAmount: 0,
     tokenAmount: 0,
     tokenAmountRaw: '0',
     side,
@@ -188,7 +196,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
 
       // --- Actual fill from on-chain balance deltas ---
       const tokenMint = isBuy ? quote.outputMint : quote.inputMint;
-      let actualSolAmount = rawToHuman(isBuy ? quote.inAmount : quote.outAmount, SOL_DECIMALS);
+      let actualUsdcAmount = rawToHuman(isBuy ? quote.inAmount : quote.outAmount, USDC_DECIMALS);
       let actualTokenAmount = rawToHuman(isBuy ? quote.outAmount : quote.inAmount, isBuy ? quote.outputDecimals : quote.inputDecimals);
       let actualTokenRaw = isBuy ? quote.outAmount : quote.inAmount;
       let actualFee = 0;
@@ -200,21 +208,29 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
         });
 
         if (parsedTx?.meta) {
-          // SOL delta from balance changes (includes fees)
+          // SOL fee from lamport balance changes
           const signerIdx = parsedTx.transaction.message.accountKeys.findIndex(k => k.signer);
           if (signerIdx >= 0) {
-            const preSol = parsedTx.meta.preBalances[signerIdx] / 1e9;
-            const postSol = parsedTx.meta.postBalances[signerIdx] / 1e9;
-            const rawSolDelta = Math.abs(postSol - preSol);
             actualFee = parsedTx.meta.fee / 1e9;
-            actualSolAmount = rawSolDelta - actualFee;
           }
 
-          // Token delta from token balance changes
+          const walletAddr = keypair.publicKey.toBase58();
           const pre = parsedTx.meta.preTokenBalances || [];
           const post = parsedTx.meta.postTokenBalances || [];
-          const walletAddr = keypair.publicKey.toBase58();
 
+          // USDC delta from SPL token balance changes
+          for (const postBal of post) {
+            if (postBal.mint === USDC_MINT && postBal.owner === walletAddr) {
+              const preBal = pre.find(p => p.mint === USDC_MINT && p.owner === walletAddr);
+              const preAmt = preBal?.uiTokenAmount.uiAmount || 0;
+              const postAmt = postBal.uiTokenAmount.uiAmount || 0;
+              const delta = Math.abs(postAmt - preAmt);
+              if (delta > 0) actualUsdcAmount = delta;
+              break;
+            }
+          }
+
+          // Token delta from SPL token balance changes
           for (const postBal of post) {
             if (postBal.mint === tokenMint && postBal.owner === walletAddr) {
               const preBal = pre.find(p => p.mint === tokenMint && p.owner === walletAddr);
@@ -241,7 +257,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
       const result: SwapResult = {
         success: true,
         signature,
-        solAmount: actualSolAmount,
+        usdcAmount: actualUsdcAmount,
         tokenAmount: actualTokenAmount,
         tokenAmountRaw: actualTokenRaw,
         side,
@@ -255,7 +271,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
       log.info('Swap executed', {
         side,
         signature,
-        solAmount: result.solAmount.toFixed(4),
+        usdcAmount: result.usdcAmount.toFixed(2),
         tokenAmount: result.tokenAmount,
         impact: quote.priceImpactPct.toFixed(2),
         fee: actualFee.toFixed(6),
@@ -274,19 +290,19 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
   return result;
 }
 
-// Buy a token with SOL
+// Buy a token with USDC
 export async function buyToken(
   mint: string,
-  solAmount: number,
+  usdcAmount: number,
   slippageBps: number,
   useJito: boolean = false
 ): Promise<SwapResult> {
-  const lamports = Math.floor(solAmount * 1e9).toString();
-  const quote = await getQuote(SOL_MINT, mint, lamports, slippageBps);
+  const rawUsdc = Math.floor(usdcAmount * 1e6).toString();
+  const quote = await getQuote(USDC_MINT, mint, rawUsdc, slippageBps);
   if (!quote) {
     return {
       success: false,
-      solAmount,
+      usdcAmount,
       tokenAmount: 0,
       tokenAmountRaw: '0',
       side: 'buy',
@@ -299,18 +315,18 @@ export async function buyToken(
   return executeSwap(quote, useJito);
 }
 
-// Sell tokens for SOL — takes raw token amount (smallest unit)
+// Sell tokens for USDC — takes raw token amount (smallest unit)
 export async function sellToken(
   mint: string,
   tokenAmountRaw: string,
   slippageBps: number,
   useJito: boolean = false
 ): Promise<SwapResult> {
-  const quote = await getQuote(mint, SOL_MINT, tokenAmountRaw, slippageBps);
+  const quote = await getQuote(mint, USDC_MINT, tokenAmountRaw, slippageBps);
   if (!quote) {
     return {
       success: false,
-      solAmount: 0,
+      usdcAmount: 0,
       tokenAmount: 0,
       tokenAmountRaw: '0',
       side: 'sell',
@@ -323,8 +339,18 @@ export async function sellToken(
   return executeSwap(quote, useJito);
 }
 
+// Get a quote estimate without executing (for paper trading & impact checks)
+export async function getQuoteEstimate(
+  inputMint: string,
+  outputMint: string,
+  amountRaw: string,
+  slippageBps: number
+): Promise<SwapQuote | null> {
+  return getQuote(inputMint, outputMint, amountRaw, slippageBps);
+}
+
 function logTrade(quote: SwapQuote, result: SwapResult) {
-  const isBuy = quote.inputMint === SOL_MINT;
+  const isBuy = quote.inputMint === USDC_MINT;
   const tokenMint = isBuy ? quote.outputMint : quote.inputMint;
   const inHuman = rawToHuman(quote.inAmount, quote.inputDecimals);
   const outHuman = rawToHuman(quote.outAmount, quote.outputDecimals);

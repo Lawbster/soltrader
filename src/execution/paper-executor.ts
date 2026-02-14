@@ -5,13 +5,14 @@ import { SwapResult } from './types';
 
 const log = createLogger('paper');
 
-const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+const USDC_DECIMALS = 6;
 
 // Cache token decimals
 const decimalsCache = new Map<string, number>();
 
 async function getTokenDecimals(mint: string): Promise<number> {
-  if (mint === SOL_MINT) return 9;
+  if (mint === USDC_MINT) return USDC_DECIMALS;
   const cached = decimalsCache.get(mint);
   if (cached !== undefined) return cached;
 
@@ -43,6 +44,10 @@ async function getQuoteEstimate(
       slippageBps: slippageBps.toString(),
     });
     const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
+    if (!res.ok) {
+      log.warn('Quote HTTP error', { status: res.status, inputMint, outputMint });
+      return null;
+    }
     const json = await res.json() as Record<string, unknown>;
     if (json.error || !json.outAmount) {
       log.warn('Quote failed', { error: json.error, inputMint, outputMint });
@@ -64,7 +69,7 @@ function randomInRange(min: number, max: number): number {
 // Simulate buy — uses real Jupiter quotes with realistic degradation
 export async function paperBuyToken(
   mint: string,
-  solAmount: number,
+  usdcAmount: number,
   slippageBps: number
 ): Promise<SwapResult> {
   const cfg = loadStrategyConfig();
@@ -73,7 +78,7 @@ export async function paperBuyToken(
 
   const failResult = (error: string): SwapResult => ({
     success: false,
-    solAmount,
+    usdcAmount,
     tokenAmount: 0,
     tokenAmountRaw: '0',
     side: 'buy',
@@ -94,8 +99,8 @@ export async function paperBuyToken(
   }
 
   // Get real quote for price discovery
-  const lamports = Math.floor(solAmount * 1e9).toString();
-  const quote = await getQuoteEstimate(SOL_MINT, mint, lamports, slippageBps);
+  const rawUsdc = Math.floor(usdcAmount * 1e6).toString();
+  const quote = await getQuoteEstimate(USDC_MINT, mint, rawUsdc, slippageBps);
   if (!quote) {
     return failResult('Failed to get quote for paper trade');
   }
@@ -111,18 +116,16 @@ export async function paperBuyToken(
 
   const tokenAmount = Number(tokenAmountRaw) / Math.pow(10, decimals);
 
-  // Simulated priority fee deduction
+  // Simulated priority fee (in SOL, deducted from SOL balance not USDC)
   let fee = 0;
   if (paperCfg.priorityFeeSimulation) {
-    fee = randomInRange(0.000005, 0.0001); // 5000-100000 lamports
+    fee = randomInRange(0.000005, 0.0001); // 5000-100000 lamports in SOL
   }
-
-  const actualSol = solAmount + fee; // Total cost including fee
 
   const result: SwapResult = {
     success: true,
     signature: `paper-buy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    solAmount: actualSol,
+    usdcAmount,
     tokenAmount,
     tokenAmountRaw: tokenAmountRaw.toString(),
     side: 'buy',
@@ -133,7 +136,7 @@ export async function paperBuyToken(
 
   log.info('PAPER BUY', {
     mint,
-    solSpent: actualSol.toFixed(4),
+    usdcSpent: usdcAmount.toFixed(2),
     tokensReceived: tokenAmount,
     impact: quote.priceImpactPct.toFixed(2),
     simulatedLatency: Math.round(latency),
@@ -158,7 +161,7 @@ export async function paperSellToken(
 
   const failResult = (error: string): SwapResult => ({
     success: false,
-    solAmount: 0,
+    usdcAmount: 0,
     tokenAmount,
     tokenAmountRaw,
     side: 'sell',
@@ -178,33 +181,32 @@ export async function paperSellToken(
     return failResult('Simulated transaction failure');
   }
 
-  // Get real quote for price discovery
-  const quote = await getQuoteEstimate(mint, SOL_MINT, tokenAmountRaw, slippageBps);
+  // Get real quote for price discovery (Token → USDC)
+  const quote = await getQuoteEstimate(mint, USDC_MINT, tokenAmountRaw, slippageBps);
   if (!quote) {
     return failResult('Failed to get quote for paper trade');
   }
 
-  let solOutLamports = BigInt(quote.outAmount);
+  let usdcOutRaw = BigInt(quote.outAmount);
 
   // Apply simulated slippage
   if (paperCfg.slippageSimulation) {
     const slipFactor = 1 - randomInRange(0.0001, 0.0005); // 0.01-0.05% additional slippage
-    solOutLamports = BigInt(Math.floor(Number(solOutLamports) * slipFactor));
+    usdcOutRaw = BigInt(Math.floor(Number(usdcOutRaw) * slipFactor));
   }
 
-  let solAmount = Number(solOutLamports) / 1e9;
+  const usdcAmount = Number(usdcOutRaw) / 1e6;
 
-  // Simulated priority fee deduction
+  // Simulated priority fee (in SOL, not USDC)
   let fee = 0;
   if (paperCfg.priorityFeeSimulation) {
     fee = randomInRange(0.000005, 0.0001);
-    solAmount -= fee;
   }
 
   const result: SwapResult = {
     success: true,
     signature: `paper-sell-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    solAmount,
+    usdcAmount,
     tokenAmount,
     tokenAmountRaw,
     side: 'sell',
@@ -215,7 +217,7 @@ export async function paperSellToken(
 
   log.info('PAPER SELL', {
     mint,
-    solReceived: solAmount.toFixed(4),
+    usdcReceived: usdcAmount.toFixed(2),
     tokensSold: tokenAmount,
     impact: quote.priceImpactPct.toFixed(2),
     simulatedLatency: Math.round(latency),

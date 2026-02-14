@@ -64,7 +64,7 @@ export interface SignalLogEntry {
   rejectReason: string;
   quotedImpactPct?: number;
   liquidityUsd: number;
-  effectiveMaxSol: number;
+  effectiveMaxUsdc: number;
 }
 
 export function logSignal(data: SignalLogEntry) {
@@ -77,7 +77,7 @@ export function logSignal(data: SignalLogEntry) {
 export interface ExecutionLogEntry {
   mint: string;
   side: 'buy' | 'sell';
-  sizeSol: number;
+  sizeUsdc: number;
   slippageBps: number;
   quotedImpactPct: number;
   result: 'success' | 'fail';

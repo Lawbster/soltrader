@@ -11,7 +11,7 @@ export interface EntrySignal {
   passed: boolean;
   filterResult: FilterResult;
   scoreResult: ScoreResult | null;
-  positionSizeSol: number;
+  positionSizeUsdc: number;
   stopLossPct: number;
   reason?: string;
 }
@@ -23,9 +23,9 @@ export interface ExitSignal {
 }
 
 export interface PortfolioState {
-  equitySol: number;
+  equityUsdc: number;
   openPositions: number;
-  openExposureSol: number;
+  openExposureUsdc: number;
   dailyPnlPct: number;
   consecutiveLosses: number;
   lastLossTime: number;
@@ -53,7 +53,7 @@ export function evaluateEntry(
       passed: false,
       filterResult: portfolioCheck,
       scoreResult: null,
-      positionSizeSol: 0,
+      positionSizeUsdc: 0,
       stopLossPct: 0,
       reason: portfolioCheck.reason,
     };
@@ -69,7 +69,7 @@ export function evaluateEntry(
         passed: false,
         filterResult: { passed: false, reason: `Re-entry lockout: ${Math.round(hoursSinceLockout)}h < ${cfg.portfolio.reEntryLockoutHours}h` },
         scoreResult: null,
-        positionSizeSol: 0,
+        positionSizeUsdc: 0,
         stopLossPct: 0,
       };
     }
@@ -83,7 +83,7 @@ export function evaluateEntry(
       passed: false,
       filterResult,
       scoreResult: null,
-      positionSizeSol: 0,
+      positionSizeUsdc: 0,
       stopLossPct: 0,
     };
   }
@@ -96,23 +96,22 @@ export function evaluateEntry(
       passed: false,
       filterResult,
       scoreResult,
-      positionSizeSol: 0,
+      positionSizeUsdc: 0,
       stopLossPct: 0,
       reason: `Score ${Math.round(scoreResult.total)} < ${cfg.entry.minScoreToTrade}`,
     };
   }
 
-  // Position sizing — with liquidity cap + sample size gate
-  const solPrice = token.priceSol > 0 ? token.priceUsd / token.priceSol : 0;
-  const positionSizeSol = calculatePositionSize(
-    portfolio.equitySol, cfg, token.liquidityUsd, solPrice, totalTrades
+  // Position sizing — with liquidity cap + sample size gate (all USDC)
+  const positionSizeUsdc = calculatePositionSize(
+    portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades
   );
   const stopLossPct = cfg.position.initialStopPct;
 
   log.info('ENTRY SIGNAL', {
     mint: token.mint,
     score: Math.round(scoreResult.total),
-    sizeSol: positionSizeSol.toFixed(3),
+    sizeUsdc: positionSizeUsdc.toFixed(2),
     stopPct: stopLossPct,
     liquidityUsd: Math.round(token.liquidityUsd),
     totalTrades,
@@ -123,7 +122,7 @@ export function evaluateEntry(
     passed: true,
     filterResult,
     scoreResult,
-    positionSizeSol,
+    positionSizeUsdc,
     stopLossPct,
   };
 }
@@ -220,8 +219,8 @@ function checkPortfolioLimits(
     return { passed: false, reason: `Max positions: ${portfolio.openPositions}/${cfg.portfolio.maxConcurrentPositions}` };
   }
 
-  const exposurePct = portfolio.equitySol > 0
-    ? (portfolio.openExposureSol / portfolio.equitySol) * 100
+  const exposurePct = portfolio.equityUsdc > 0
+    ? (portfolio.openExposureUsdc / portfolio.equityUsdc) * 100
     : 0;
   if (exposurePct >= cfg.portfolio.maxOpenExposurePct) {
     return { passed: false, reason: `Max exposure: ${exposurePct.toFixed(1)}% >= ${cfg.portfolio.maxOpenExposurePct}%` };
@@ -246,32 +245,30 @@ function checkPortfolioLimits(
 // --- Position Sizing ---
 
 function calculatePositionSize(
-  equitySol: number,
+  equityUsdc: number,
   cfg: ReturnType<typeof loadStrategyConfig>,
   liquidityUsd: number,
-  solPrice: number,
   totalTrades: number
 ): number {
-  // risk_per_trade / stop_distance
-  const riskSol = equitySol * (cfg.position.riskPerTradePct / 100);
+  // risk_per_trade / stop_distance (all in USDC)
+  const riskUsdc = equityUsdc * (cfg.position.riskPerTradePct / 100);
   const stopDistance = cfg.position.initialStopPct / 100;
-  const sizeFromRisk = riskSol / stopDistance;
+  const sizeFromRisk = riskUsdc / stopDistance;
 
   // Cap at max position size and equity percentage
-  const maxFromEquity = equitySol * (cfg.position.maxPositionEquityPct / 100);
-  const maxAbsolute = cfg.position.maxPositionSol;
+  const maxFromEquity = equityUsdc * (cfg.position.maxPositionEquityPct / 100);
+  const maxAbsolute = cfg.position.maxPositionUsdc;
 
-  // Liquidity cap: trade size ≤ liquidityCapPct% of pool liquidity
+  // Liquidity cap: trade size ≤ liquidityCapPct% of pool liquidity (already in USD ≈ USDC)
   let maxFromLiquidity = Infinity;
-  if (liquidityUsd > 0 && solPrice > 0 && cfg.position.liquidityCapPct > 0) {
-    const maxPositionUsd = liquidityUsd * (cfg.position.liquidityCapPct / 100);
-    maxFromLiquidity = maxPositionUsd / solPrice;
+  if (liquidityUsd > 0 && cfg.position.liquidityCapPct > 0) {
+    maxFromLiquidity = liquidityUsd * (cfg.position.liquidityCapPct / 100);
   }
 
   // Sample size gate: cap position until enough trades validate the strategy
   let maxFromSampleGate = Infinity;
   if (totalTrades < cfg.position.sampleSizeGateMinTrades) {
-    maxFromSampleGate = cfg.position.sampleSizeGateMaxSol;
+    maxFromSampleGate = cfg.position.sampleSizeGateMaxUsdc;
   }
 
   const finalSize = Math.min(
@@ -279,14 +276,14 @@ function calculatePositionSize(
   );
 
   log.debug('Position size calculated', {
-    equitySol,
-    sizeFromRisk: sizeFromRisk.toFixed(4),
-    maxFromEquity: maxFromEquity.toFixed(4),
+    equityUsdc,
+    sizeFromRisk: sizeFromRisk.toFixed(2),
+    maxFromEquity: maxFromEquity.toFixed(2),
     maxAbsolute,
-    maxFromLiquidity: maxFromLiquidity === Infinity ? 'N/A' : maxFromLiquidity.toFixed(4),
-    maxFromSampleGate: maxFromSampleGate === Infinity ? 'N/A' : maxFromSampleGate.toFixed(4),
+    maxFromLiquidity: maxFromLiquidity === Infinity ? 'N/A' : maxFromLiquidity.toFixed(2),
+    maxFromSampleGate: maxFromSampleGate === Infinity ? 'N/A' : maxFromSampleGate.toFixed(2),
     totalTrades,
-    finalSize: finalSize.toFixed(4),
+    finalSize: finalSize.toFixed(2),
   });
 
   return finalSize;

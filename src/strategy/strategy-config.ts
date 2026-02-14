@@ -50,13 +50,13 @@ export interface StrategyConfig {
   };
   position: {
     riskPerTradePct: number;
-    maxPositionSol: number;
+    maxPositionUsdc: number;
     maxPositionEquityPct: number;
     initialStopPct: number;
     liquidityCapPct: number;         // max % of pool liquidity per trade (0.05 = 0.05%)
     maxEntryImpactPct: number;       // reject if Jupiter quote impact exceeds this
     sampleSizeGateMinTrades: number; // min trades before allowing large positions
-    sampleSizeGateMaxSol: number;    // position cap until sample size gate clears
+    sampleSizeGateMaxUsdc: number;   // position cap until sample size gate clears
   };
   exits: {
     hardStopPct: number;

@@ -12,9 +12,9 @@ export interface TradeMetric {
   entryTime: number;
   exitTime: number;
   holdTimeMinutes: number;
-  entrySol: number;
-  exitSol: number;
-  pnlSol: number;
+  entryUsdc: number;
+  exitUsdc: number;
+  pnlUsdc: number;
   pnlPct: number;
   exitType: string;
   isPaper: boolean;
@@ -29,7 +29,7 @@ export interface AggregateMetrics {
   avgLossPct: number;
   avgWinLossRatio: number;
   profitFactor: number;
-  totalPnlSol: number;
+  totalPnlUsdc: number;
   maxDrawdownPct: number;
   sharpeRatio: number;
   avgHoldTimeMinutes: number;
@@ -73,10 +73,10 @@ export function recordExecutionAttempt(success: boolean) {
 }
 
 export function recordClosedPosition(position: Position, isPaper: boolean) {
-  const totalSolOut = position.exits.reduce((sum, e) => sum + e.solReceived, 0);
-  const pnlSol = totalSolOut - position.initialSizeSol;
-  const pnlPct = position.initialSizeSol > 0
-    ? (pnlSol / position.initialSizeSol) * 100
+  const totalUsdcOut = position.exits.reduce((sum, e) => sum + e.usdcReceived, 0);
+  const pnlUsdc = totalUsdcOut - position.initialSizeUsdc;
+  const pnlPct = position.initialSizeUsdc > 0
+    ? (pnlUsdc / position.initialSizeUsdc) * 100
     : 0;
 
   const lastExit = position.exits[position.exits.length - 1];
@@ -91,9 +91,9 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     entryTime: position.entryTime,
     exitTime,
     holdTimeMinutes,
-    entrySol: position.initialSizeSol,
-    exitSol: totalSolOut,
-    pnlSol,
+    entryUsdc: position.initialSizeUsdc,
+    exitUsdc: totalUsdcOut,
+    pnlUsdc,
     pnlPct,
     exitType,
     isPaper,
@@ -105,7 +105,7 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     id: position.id,
     mint: position.mint,
     pnlPct: pnlPct.toFixed(1),
-    pnlSol: pnlSol.toFixed(4),
+    pnlUsdc: pnlUsdc.toFixed(2),
     exitType,
     holdMins: Math.round(holdTimeMinutes),
     totalTrades: tradeMetrics.length,
@@ -126,7 +126,7 @@ export function getAggregateMetrics(): AggregateMetrics {
       avgLossPct: 0,
       avgWinLossRatio: 0,
       profitFactor: 0,
-      totalPnlSol: 0,
+      totalPnlUsdc: 0,
       maxDrawdownPct: 0,
       sharpeRatio: 0,
       avgHoldTimeMinutes: 0,
@@ -139,8 +139,8 @@ export function getAggregateMetrics(): AggregateMetrics {
     };
   }
 
-  const wins = trades.filter(t => t.pnlSol > 0);
-  const losses = trades.filter(t => t.pnlSol <= 0);
+  const wins = trades.filter(t => t.pnlUsdc > 0);
+  const losses = trades.filter(t => t.pnlUsdc <= 0);
 
   const winRate = (wins.length / totalTrades) * 100;
 
@@ -155,18 +155,18 @@ export function getAggregateMetrics(): AggregateMetrics {
     ? Math.abs(avgWinPct / avgLossPct)
     : avgWinPct > 0 ? Infinity : 0;
 
-  const totalWinSol = wins.reduce((sum, t) => sum + t.pnlSol, 0);
-  const totalLossSol = Math.abs(losses.reduce((sum, t) => sum + t.pnlSol, 0));
-  const profitFactor = totalLossSol > 0 ? totalWinSol / totalLossSol : totalWinSol > 0 ? Infinity : 0;
+  const totalWinUsdc = wins.reduce((sum, t) => sum + t.pnlUsdc, 0);
+  const totalLossUsdc = Math.abs(losses.reduce((sum, t) => sum + t.pnlUsdc, 0));
+  const profitFactor = totalLossUsdc > 0 ? totalWinUsdc / totalLossUsdc : totalWinUsdc > 0 ? Infinity : 0;
 
-  const totalPnlSol = trades.reduce((sum, t) => sum + t.pnlSol, 0);
+  const totalPnlUsdc = trades.reduce((sum, t) => sum + t.pnlUsdc, 0);
 
   // Max drawdown: track cumulative PnL curve
   let peak = 0;
   let maxDrawdown = 0;
   let cumPnl = 0;
   for (const t of trades) {
-    cumPnl += t.pnlSol;
+    cumPnl += t.pnlUsdc;
     if (cumPnl > peak) peak = cumPnl;
     const drawdown = peak > 0 ? ((peak - cumPnl) / peak) * 100 : 0;
     if (drawdown > maxDrawdown) maxDrawdown = drawdown;
@@ -204,7 +204,7 @@ export function getAggregateMetrics(): AggregateMetrics {
     avgLossPct,
     avgWinLossRatio,
     profitFactor,
-    totalPnlSol,
+    totalPnlUsdc,
     maxDrawdownPct: maxDrawdown,
     sharpeRatio,
     avgHoldTimeMinutes,
@@ -247,7 +247,7 @@ export function printMetricsSummary() {
     winRate: `${m.winRate.toFixed(1)}%`,
     profitFactor: m.profitFactor === Infinity ? 'Inf' : m.profitFactor.toFixed(2),
     avgWinLoss: m.avgWinLossRatio === Infinity ? 'Inf' : m.avgWinLossRatio.toFixed(2),
-    totalPnlSol: m.totalPnlSol.toFixed(4),
+    totalPnlUsdc: m.totalPnlUsdc.toFixed(4),
     maxDrawdown: `${m.maxDrawdownPct.toFixed(1)}%`,
     sharpe: m.sharpeRatio.toFixed(2),
     avgHoldMins: Math.round(m.avgHoldTimeMinutes),

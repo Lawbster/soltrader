@@ -5,7 +5,7 @@ import { getConnection, getKeypair, createLogger, config } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
 import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
-import { buyToken, sellToken } from './jupiter-swap';
+import { buyToken, sellToken, USDC_MINT, SOL_MINT } from './jupiter-swap';
 import { paperBuyToken, paperSellToken } from './paper-executor';
 import { Position, PositionExit, SwapResult } from './types';
 import { checkKillSwitch } from './guards';
@@ -13,11 +13,11 @@ import { recordExecutionAttempt, recordClosedPosition } from '../strategy/metric
 import { logExecution } from '../data';
 
 // Route buy/sell through paper executor when in paper mode
-async function executeBuy(mint: string, sizeSol: number, slippageBps: number): Promise<SwapResult> {
+async function executeBuy(mint: string, sizeUsdc: number, slippageBps: number): Promise<SwapResult> {
   if (config.trading.paperTrading) {
-    return paperBuyToken(mint, sizeSol, slippageBps);
+    return paperBuyToken(mint, sizeUsdc, slippageBps);
   }
-  return buyToken(mint, sizeSol, slippageBps, true);
+  return buyToken(mint, sizeUsdc, slippageBps, true);
 }
 
 async function executeSell(mint: string, tokenAmountRaw: string, slippageBps: number): Promise<SwapResult> {
@@ -29,20 +29,19 @@ async function executeSell(mint: string, tokenAmountRaw: string, slippageBps: nu
 
 const log = createLogger('positions');
 const DATA_DIR = path.resolve(__dirname, '../../data');
-const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // Track last quoted impact for dashboard visibility
 let lastQuotedImpact: { mint: string; impact: number; timestamp: number } | null = null;
 export function getLastQuotedImpact() { return lastQuotedImpact; }
 
-// Pre-flight slippage check via Jupiter quote
-async function checkEntryImpact(mint: string, sizeSol: number): Promise<number | null> {
+// Pre-flight slippage check via Jupiter quote (USDC input)
+async function checkEntryImpact(mint: string, sizeUsdc: number): Promise<number | null> {
   try {
-    const lamports = Math.floor(sizeSol * 1e9).toString();
+    const rawUsdc = Math.floor(sizeUsdc * 1e6).toString();
     const params = new URLSearchParams({
-      inputMint: SOL_MINT,
+      inputMint: USDC_MINT,
       outputMint: mint,
-      amount: lamports,
+      amount: rawUsdc,
       slippageBps: '100',
     });
     const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
@@ -59,9 +58,9 @@ async function checkEntryImpact(mint: string, sizeSol: number): Promise<number |
 const openPositions = new Map<string, Position>();
 const closedPositions: Position[] = [];
 
-// Portfolio tracking
+// Portfolio tracking (USDC denominated)
 let dailyStartEquity = 0;
-let dailyPnlSol = 0;
+let dailyPnlUsdc = 0;
 let consecutiveLosses = 0;
 let lastLossTime = 0;
 const stoppedOutTokens = new Map<string, number>();
@@ -91,43 +90,94 @@ async function getDecimals(mint: string): Promise<number> {
 
 export function getPortfolioState(): PortfolioState {
   // Include unrealized PnL from open positions in equity
-  const openPnlSol = Array.from(openPositions.values()).reduce((sum, p) => {
+  const openPnlUsdc = Array.from(openPositions.values()).reduce((sum, p) => {
     const currentValue = p.remainingTokens * p.currentPrice;
-    const costBasis = (p.remainingTokens / p.initialTokens) * p.initialSizeSol;
+    const costBasis = (p.remainingTokens / p.initialTokens) * p.initialSizeUsdc;
     return sum + (currentValue - costBasis);
   }, 0);
 
-  const equitySol = dailyStartEquity + dailyPnlSol + openPnlSol;
-  const openExposureSol = Array.from(openPositions.values())
+  const equityUsdc = dailyStartEquity + dailyPnlUsdc + openPnlUsdc;
+  const openExposureUsdc = Array.from(openPositions.values())
     .reduce((sum, p) => sum + p.remainingTokens * p.currentPrice, 0);
 
   return {
-    equitySol,
+    equityUsdc,
     openPositions: openPositions.size,
-    openExposureSol,
-    dailyPnlPct: dailyStartEquity > 0 ? ((dailyPnlSol + openPnlSol) / dailyStartEquity) * 100 : 0,
+    openExposureUsdc,
+    dailyPnlPct: dailyStartEquity > 0 ? ((dailyPnlUsdc + openPnlUsdc) / dailyStartEquity) * 100 : 0,
     consecutiveLosses,
     lastLossTime,
     stoppedOutTokens,
   };
 }
 
+// Read USDC SPL token balance for the wallet
+async function getUsdcBalance(): Promise<number> {
+  try {
+    const conn = getConnection();
+    const wallet = getKeypair().publicKey;
+    const usdcMint = new PublicKey(USDC_MINT);
+    const accounts = await conn.getTokenAccountsByOwner(wallet, { mint: usdcMint });
+    if (accounts.value.length === 0) return 0;
+    const data = accounts.value[0].account.data;
+    const parsed = await conn.getParsedAccountInfo(accounts.value[0].pubkey);
+    if (parsed.value?.data && 'parsed' in parsed.value.data) {
+      return parsed.value.data.parsed.info.tokenAmount.uiAmount || 0;
+    }
+    return 0;
+  } catch (err) {
+    log.warn('Failed to read USDC balance', { error: err });
+    return 0;
+  }
+}
+
 export async function initPortfolio() {
-  const conn = getConnection();
-  const balance = await conn.getBalance(getKeypair().publicKey);
-  dailyStartEquity = balance / 1e9;
-  log.info('Portfolio initialized', { equitySol: dailyStartEquity.toFixed(4) });
+  const usdcBalance = await getUsdcBalance();
+  dailyStartEquity = usdcBalance;
+  log.info('Portfolio initialized', { equityUsdc: dailyStartEquity.toFixed(2) });
 }
 
 export function resetDailyStats() {
-  dailyPnlSol = 0;
+  dailyPnlUsdc = 0;
   consecutiveLosses = 0;
   log.info('Daily stats reset');
 }
 
+// SOL auto-replenish: keep enough SOL for tx fees
+export async function checkSolReplenish() {
+  try {
+    const conn = getConnection();
+    const solBalance = await conn.getBalance(getKeypair().publicKey) / 1e9;
+    if (solBalance < 0.1) {
+      log.info('SOL balance low, auto-replenishing', { solBalance: solBalance.toFixed(4) });
+      // Buy ~0.5 SOL worth via Jupiter (USDC → SOL)
+      const { fetchTokenPrice } = await import('../analysis/token-data');
+      const { priceUsd: solPriceUsd } = await fetchTokenPrice(SOL_MINT);
+      const usdcNeeded = 0.5 * solPriceUsd;
+
+      const rawUsdc = Math.floor(usdcNeeded * 1e6).toString();
+      const { getQuote, executeSwap } = await import('./jupiter-swap');
+      const quote = await getQuote(USDC_MINT, SOL_MINT, rawUsdc, 300);
+      if (quote) {
+        if (config.trading.paperTrading) {
+          log.info('PAPER: SOL replenish simulated', { usdcSpent: usdcNeeded.toFixed(2) });
+        } else {
+          const result = await executeSwap(quote);
+          log.info('SOL replenished', {
+            usdcSpent: usdcNeeded.toFixed(2),
+            success: result.success,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    log.warn('SOL replenish check failed', { error: err });
+  }
+}
+
 export async function openPosition(
   mint: string,
-  sizeSol: number,
+  sizeUsdc: number,
   slippageBps: number
 ): Promise<Position | null> {
   const cfg = loadStrategyConfig();
@@ -144,8 +194,8 @@ export async function openPosition(
     return null;
   }
 
-  const exposurePct = portfolio.equitySol > 0
-    ? ((portfolio.openExposureSol + sizeSol) / portfolio.equitySol) * 100
+  const exposurePct = portfolio.equityUsdc > 0
+    ? ((portfolio.openExposureUsdc + sizeUsdc) / portfolio.equityUsdc) * 100
     : 100;
   if (exposurePct > cfg.portfolio.maxOpenExposurePct) {
     log.warn('Would exceed max exposure', { exposurePct: exposurePct.toFixed(1) });
@@ -155,11 +205,11 @@ export async function openPosition(
   // Slippage guard: pre-flight Jupiter quote to check price impact
   const maxImpact = cfg.position.maxEntryImpactPct;
   if (maxImpact > 0) {
-    const impact = await checkEntryImpact(mint, sizeSol);
+    const impact = await checkEntryImpact(mint, sizeUsdc);
     if (impact !== null && impact > maxImpact) {
       log.warn('Entry rejected: slippage too high', {
         mint,
-        sizeSol: sizeSol.toFixed(4),
+        sizeUsdc: sizeUsdc.toFixed(2),
         quotedImpact: impact.toFixed(4),
         maxImpact,
       });
@@ -167,15 +217,15 @@ export async function openPosition(
     }
   }
 
-  log.info('Opening position', { mint, sizeSol: sizeSol.toFixed(4) });
+  log.info('Opening position', { mint, sizeUsdc: sizeUsdc.toFixed(2) });
 
   const buyStart = Date.now();
-  const result = await executeBuy(mint, sizeSol, slippageBps);
+  const result = await executeBuy(mint, sizeUsdc, slippageBps);
   recordExecutionAttempt(result.success);
   logExecution({
     mint,
     side: 'buy',
-    sizeSol: result.solAmount || sizeSol,
+    sizeUsdc: result.usdcAmount || sizeUsdc,
     slippageBps,
     quotedImpactPct: result.priceImpactPct || 0,
     result: result.success ? 'success' : 'fail',
@@ -187,8 +237,8 @@ export async function openPosition(
     return null;
   }
 
-  // entryPrice = SOL spent / tokens received (both human-readable, decimal-adjusted)
-  const entryPrice = result.tokenAmount > 0 ? result.solAmount / result.tokenAmount : 0;
+  // entryPrice = USDC spent / tokens received (USDC per token)
+  const entryPrice = result.tokenAmount > 0 ? result.usdcAmount / result.tokenAmount : 0;
 
   const position: Position = {
     id: `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -196,9 +246,9 @@ export async function openPosition(
     entrySignature: result.signature || '',
     entryPrice,
     entryTime: Date.now(),
-    initialSizeSol: result.solAmount,
+    initialSizeUsdc: result.usdcAmount,
     initialTokens: result.tokenAmount,
-    remainingSol: result.solAmount,
+    remainingUsdc: result.usdcAmount,
     remainingTokens: result.tokenAmount,
     remainingPct: 100,
     currentPrice: entryPrice,
@@ -215,7 +265,7 @@ export async function openPosition(
   log.info('Position opened', {
     id: position.id,
     mint,
-    solSpent: result.solAmount.toFixed(4),
+    usdcSpent: result.usdcAmount.toFixed(2),
     tokensReceived: result.tokenAmount,
     entryPrice: entryPrice.toExponential(4),
     fee: result.fee.toFixed(6),
@@ -241,9 +291,10 @@ async function updatePosition(position: Position) {
   const cfg = loadStrategyConfig();
 
   const tokenData = await fetchTokenData(position.mint, position.entryTime);
-  if (!tokenData || tokenData.priceSol <= 0) return;
+  if (!tokenData || tokenData.priceUsd <= 0) return;
 
-  position.currentPrice = tokenData.priceSol;
+  // Use priceUsd as the USDC price (USDC ≈ $1)
+  position.currentPrice = tokenData.priceUsd;
 
   const pnlPct = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
   position.currentPnlPct = pnlPct;
@@ -251,8 +302,8 @@ async function updatePosition(position: Position) {
     position.peakPnlPct = pnlPct;
   }
 
-  // Update remaining notional SOL value
-  position.remainingSol = position.remainingTokens * position.currentPrice;
+  // Update remaining notional USDC value
+  position.remainingUsdc = position.remainingTokens * position.currentPrice;
 
   // Track LP for emergency exit
   const liq = await fetchPoolLiquidity(position.mint);
@@ -326,7 +377,7 @@ async function executeExit(
   logExecution({
     mint: position.mint,
     side: 'sell',
-    sizeSol: result.solAmount || 0,
+    sizeUsdc: result.usdcAmount || 0,
     slippageBps,
     quotedImpactPct: result.priceImpactPct || 0,
     result: result.success ? 'success' : 'fail',
@@ -338,7 +389,7 @@ async function executeExit(
     type: exitType,
     sellPct,
     tokensSold: result.success ? result.tokenAmount : 0,
-    solReceived: result.success ? result.solAmount : 0,
+    usdcReceived: result.success ? result.usdcAmount : 0,
     price: position.currentPrice,
     signature: result.signature,
     timestamp: Date.now(),
@@ -348,7 +399,7 @@ async function executeExit(
 
   if (result.success) {
     position.remainingTokens -= result.tokenAmount;
-    position.remainingSol = position.remainingTokens * position.currentPrice;
+    position.remainingUsdc = position.remainingTokens * position.currentPrice;
     position.remainingPct = position.initialTokens > 0
       ? (position.remainingTokens / position.initialTokens) * 100
       : 0;
@@ -364,7 +415,7 @@ async function executeExit(
     log.info('Exit executed', {
       mint: position.mint,
       type: exitType,
-      solReceived: result.solAmount.toFixed(4),
+      usdcReceived: result.usdcAmount.toFixed(2),
       remainingPct: position.remainingPct.toFixed(0),
     });
   } else {
@@ -387,12 +438,12 @@ function closePosition(position: Position, reason: string) {
   position.status = 'closed';
   position.closeReason = reason;
 
-  const totalSolOut = position.exits.reduce((sum, e) => sum + e.solReceived, 0);
-  const pnlSol = totalSolOut - position.initialSizeSol;
+  const totalUsdcOut = position.exits.reduce((sum, e) => sum + e.usdcReceived, 0);
+  const pnlUsdc = totalUsdcOut - position.initialSizeUsdc;
 
-  dailyPnlSol += pnlSol;
+  dailyPnlUsdc += pnlUsdc;
 
-  if (pnlSol < 0) {
+  if (pnlUsdc < 0) {
     consecutiveLosses++;
     lastLossTime = Date.now();
     stoppedOutTokens.set(position.mint, Date.now());
@@ -411,10 +462,10 @@ function closePosition(position: Position, reason: string) {
     id: position.id,
     mint: position.mint,
     reason,
-    pnlSol: pnlSol.toFixed(4),
+    pnlUsdc: pnlUsdc.toFixed(2),
     pnlPct: position.currentPnlPct.toFixed(1),
     holdTime: `${Math.round((Date.now() - position.entryTime) / 60_000)}m`,
-    dailyPnl: dailyPnlSol.toFixed(4),
+    dailyPnl: dailyPnlUsdc.toFixed(2),
     consecutiveLosses,
   });
 }
@@ -443,10 +494,10 @@ export function savePositionHistory() {
     stats: {
       totalTrades: closedPositions.length,
       wins: closedPositions.filter(p => {
-        const pnl = p.exits.reduce((s, e) => s + e.solReceived, 0) - p.initialSizeSol;
+        const pnl = p.exits.reduce((s, e) => s + e.usdcReceived, 0) - p.initialSizeUsdc;
         return pnl > 0;
       }).length,
-      dailyPnlSol,
+      dailyPnlUsdc,
       consecutiveLosses,
     },
   };

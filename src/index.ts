@@ -18,6 +18,7 @@ import {
   updatePositions,
   hasOpenPosition,
   savePositionHistory,
+  checkSolReplenish,
 } from './execution';
 import { startDashboard, stopDashboard, updateDashboardState } from './dashboard';
 
@@ -143,21 +144,21 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     entryDecision: signal.passed,
     rejectReason: signal.passed ? '' : (signal.reason || signal.filterResult?.reason || ''),
     liquidityUsd: tokenData.liquidityUsd,
-    effectiveMaxSol: signal.positionSizeSol,
+    effectiveMaxUsdc: signal.positionSizeUsdc,
   });
 
   if (signal.passed) {
     log.info('ENTRY SIGNAL', {
       mint,
       score: signal.scoreResult ? Math.round(signal.scoreResult.total) : 0,
-      sizeSol: signal.positionSizeSol.toFixed(4),
+      sizeUsdc: signal.positionSizeUsdc.toFixed(2),
       mcap: Math.round(tokenData.mcapUsd),
       liq: Math.round(tokenData.liquidityUsd),
       lpChange10m: lpChange10mPct?.toFixed(1),
     });
 
     const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
-    const pos = await openPosition(mint, signal.positionSizeSol, slippageBps);
+    const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps);
     if (!pos) {
       log.warn('Position not opened despite entry signal', { mint });
     }
@@ -314,6 +315,15 @@ async function main() {
     }
   }, POSITION_UPDATE_INTERVAL_MS);
 
+  // SOL auto-replenish check every 5 minutes
+  const solReplenishTimer = setInterval(async () => {
+    try {
+      await checkSolReplenish();
+    } catch (err) {
+      log.error('SOL replenish check failed', err);
+    }
+  }, SAVE_INTERVAL_MS);
+
   const snapshotTimer = setInterval(async () => {
     try {
       await snapshotAll();
@@ -362,7 +372,7 @@ async function main() {
         tradeSubscriptions: getActiveSubscriptionCount(),
         priceHistory: priceHistoryCounts,
         openPositions: portfolio.openPositions,
-        equitySol: portfolio.equitySol.toFixed(4),
+        equityUsdc: portfolio.equityUsdc.toFixed(2),
         dailyPnl: portfolio.dailyPnlPct.toFixed(2) + '%',
         totalTrades: metrics.totalTrades,
         winRate: metrics.totalTrades > 0 ? metrics.winRate.toFixed(1) + '%' : 'N/A',
@@ -378,6 +388,7 @@ async function main() {
     clearInterval(pricePollTimer);
     clearInterval(analysisTimer);
     clearInterval(positionTimer);
+    clearInterval(solReplenishTimer);
     clearInterval(snapshotTimer);
     clearInterval(cleanupTimer);
     clearInterval(saveTimer);

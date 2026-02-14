@@ -31,7 +31,7 @@ export function validateQuote(quote: SwapQuote): GuardResult {
   }
 
   // Output amount sanity — must be non-zero
-  if (BigInt(quote.outAmount) <= 0n) {
+  if (!quote.outAmount || BigInt(quote.outAmount) <= 0n) {
     return {
       passed: false,
       reason: 'Quote returned zero output amount',

@@ -376,7 +376,7 @@ function renderSignals(signals) {
       '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
         '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position Sizing</div>' +
         '<div class="signal-row"><span class="label">Pool liquidity</span><span>' + (s.liquidityUsd > 0 ? '$' + Number(s.liquidityUsd).toLocaleString('en-US', {maximumFractionDigits:0}) : '--') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Max position</span><span class="blue">' + (s.effectiveMaxSol !== undefined ? fmt(s.effectiveMaxSol, 2) + ' SOL' : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Max position</span><span class="blue">' + (s.effectiveMaxUsdc !== undefined ? fmt(s.effectiveMaxUsdc, 2) + ' USDC' : '--') + '</span></div>' +
         '<div class="signal-row"><span class="label">Max impact</span><span>' + (s.maxEntryImpactPct !== undefined ? s.maxEntryImpactPct + '%' : '--') + '</span></div>' +
         '<div class="signal-row"><span class="label">Last quoted impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
         '<div class="signal-row"><span class="label">Sample size gate</span><span class="' + (s.totalTrades < s.sampleSizeGateMinTrades ? 'yellow' : 'green') + '">' + s.totalTrades + ' / ' + s.sampleSizeGateMinTrades + ' trades</span></div>' +
@@ -476,7 +476,7 @@ function renderPriceChart(points) {
 function renderPortfolio(s) {
   const el = document.getElementById('portfolio');
   const cards = [
-    { label: 'Equity', value: fmt(s.portfolio.equitySol, 4) + ' SOL', cls: 'blue' },
+    { label: 'Equity', value: fmt(s.portfolio.equityUsdc, 2) + ' USDC', cls: 'blue' },
     { label: 'Open Positions', value: s.openPositions.length, cls: '' },
     { label: 'Daily PnL', value: fmtPct(s.portfolio.dailyPnlPct), cls: pnlColor(s.portfolio.dailyPnlPct) },
     { label: 'Closed Trades', value: s.closedCount, cls: '' },
@@ -510,7 +510,7 @@ function renderPerformance(m) {
     { label: 'Total Trades', value: m.totalTrades, cls: 'blue' },
     { label: 'Win Rate', value: fmtPct(m.winRate), cls: m.winRate >= 50 ? 'green' : 'red' },
     { label: 'Profit Factor', value: fmt(m.profitFactor), cls: m.profitFactor >= 1.25 ? 'green' : 'red' },
-    { label: 'Total PnL', value: fmt(m.totalPnlSol, 4) + ' SOL', cls: pnlColor(m.totalPnlSol) },
+    { label: 'Total PnL', value: fmt(m.totalPnlUsdc, 2) + ' USDC', cls: pnlColor(m.totalPnlUsdc) },
     { label: 'Max Drawdown', value: fmtPct(m.maxDrawdownPct), cls: m.maxDrawdownPct <= 10 ? 'green' : 'red' },
     { label: 'Sharpe Ratio', value: fmt(m.sharpeRatio), cls: m.sharpeRatio > 0 ? 'green' : 'red' },
   ];
@@ -528,11 +528,11 @@ function renderTrades(trades) {
   }
   const sorted = [...trades].reverse();
   el.innerHTML = sorted.map(t => {
-    const isWin = t.pnlSol > 0;
+    const isWin = t.pnlUsdc > 0;
     return '<tr>' +
       '<td>' + fmtDate(t.exitTime) + '</td>' +
       '<td><a class="mint-link" href="https://solscan.io/token/' + t.mint + '" target="_blank">' + shortMint(t.mint) + '</a></td>' +
-      '<td class="' + pnlColor(t.pnlSol) + '">' + (t.pnlSol >= 0 ? '+' : '') + fmt(t.pnlSol, 4) + '</td>' +
+      '<td class="' + pnlColor(t.pnlUsdc) + '">' + (t.pnlUsdc >= 0 ? '+' : '') + fmt(t.pnlUsdc, 4) + '</td>' +
       '<td><span class="badge ' + (isWin ? 'win' : 'loss') + '">' + (t.pnlPct >= 0 ? '+' : '') + fmtPct(t.pnlPct) + '</span></td>' +
       '<td>' + Math.round(t.holdTimeMinutes) + 'm</td>' +
       '<td>' + t.exitType + '</td>' +

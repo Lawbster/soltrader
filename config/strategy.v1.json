@@ -47,17 +47,17 @@
   },
   "position": {
     "riskPerTradePct": 0.75,
-    "maxPositionSol": 1.25,
+    "maxPositionUsdc": 250,
     "maxPositionEquityPct": 8,
-    "initialStopPct": 9,
+    "initialStopPct": 0.8,
     "liquidityCapPct": 0.05,
     "maxEntryImpactPct": 0.10,
     "sampleSizeGateMinTrades": 200,
-    "sampleSizeGateMaxSol": 5
+    "sampleSizeGateMaxUsdc": 50
   },
   "exits": {
-    "hardStopPct": -0.25,
-    "tp1": { "targetPct": 0.5, "sellPct": 100 },
+    "hardStopPct": -0.8,
+    "tp1": { "targetPct": 1.2, "sellPct": 100 },
     "tp2": { "targetPct": 999, "sellPct": 0 },
     "runner": { "trailingStopPct": 999, "remainingPct": 0 },
     "timeStopMinutes": 0,
