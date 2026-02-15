@@ -361,7 +361,7 @@ async function executeExit(
   // Convert human-readable token amount to raw for Jupiter
   const decimals = await getDecimals(position.mint);
   const rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
-  const slippageBps = cfg.entry.maxSlippagePct * 100;
+  const slippageBps = config.trading.defaultSlippageBps;
 
   log.info('Executing exit', {
     mint: position.mint,
