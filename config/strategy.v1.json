@@ -62,7 +62,7 @@
     "runner": { "trailingStopPct": 999, "remainingPct": 0 },
     "timeStopMinutes": 0,
     "timeStopPnlRangePct": [0, 0],
-    "emergencyLpDropPct": -25,
+    "emergencyLpDropPct": -999,
     "emergencyLpDropWindowMinutes": 3
   },
   "portfolio": {
