@@ -21,12 +21,14 @@ export function validateQuote(quote: SwapQuote): GuardResult {
     };
   }
 
-  // Slippage sanity check — quote slippage should match our config
-  const maxSlippageBps = cfg.entry.maxSlippagePct * 100;
-  if (quote.slippageBps > maxSlippageBps) {
+  // Slippage sanity check — the quote carries whatever BPS we requested,
+  // so validate against a reasonable upper bound (not the entry filter threshold).
+  // Sells use 300 BPS, entries use ~15 BPS — accept both.
+  const DEFAULT_MAX_SLIPPAGE_BPS = 300;
+  if (quote.slippageBps > DEFAULT_MAX_SLIPPAGE_BPS) {
     return {
       passed: false,
-      reason: `Slippage ${quote.slippageBps}bps > max ${maxSlippageBps}bps`,
+      reason: `Slippage ${quote.slippageBps}bps > max ${DEFAULT_MAX_SLIPPAGE_BPS}bps`,
     };
   }
 
