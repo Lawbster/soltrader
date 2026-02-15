@@ -5,3 +5,5 @@ dist/
 *.log
 AGENTS.md
 .env*
+fixlater.md
+review.md

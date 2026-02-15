@@ -526,7 +526,7 @@ function renderPortfolio(s) {
       const name = sig ? labelFor(sig) : shortMint(p.mint);
       return '<div class="pos-card">' +
       '<div><div class="pos-mint">' + name + '</div>' +
-      '<div class="pos-detail">Hold: ' + p.holdTimeMins + 'm | Remaining: ' + fmt(p.remainingPct,0) + '%' +
+      '<div class="pos-detail">Entry: $' + fmt(p.entryPrice, p.entryPrice < 0.01 ? 6 : p.entryPrice < 1 ? 4 : 2) + ' | Hold: ' + p.holdTimeMins + 'm | Remaining: ' + fmt(p.remainingPct,0) + '%' +
       (p.tp1Hit ? ' | TP1' : '') + '</div></div>' +
       '<div class="pos-pnl ' + pnlColor(p.pnlPct) + '">' + (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct) + '</div>' +
       '</div>';

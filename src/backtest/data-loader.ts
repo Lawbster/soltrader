@@ -29,7 +29,11 @@ export function loadPrices(mint: string): PricePoint[] {
     const content = fs.readFileSync(path.join(dir, file), 'utf-8');
     for (const line of content.split('\n')) {
       if (!line.trim()) continue;
-      points.push(JSON.parse(line) as PricePoint);
+      try {
+        points.push(JSON.parse(line) as PricePoint);
+      } catch {
+        // Skip malformed JSONL lines
+      }
     }
   }
 
@@ -51,14 +55,19 @@ export function loadCandles(mint: string): Candle[] {
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      const [timestamp, open, high, low, close, pricePoints] = line.split(',');
+      const parts = line.split(',');
+      if (parts.length < 6) continue;
+      const [timestamp, open, high, low, close, pricePoints] = parts;
+      const ts = Number(timestamp);
+      const o = Number(open);
+      const h = Number(high);
+      const l = Number(low);
+      const c = Number(close);
+      const pp = Number(pricePoints);
+      if (isNaN(ts) || isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) continue;
       candles.push({
-        timestamp: Number(timestamp),
-        open: Number(open),
-        high: Number(high),
-        low: Number(low),
-        close: Number(close),
-        pricePoints: Number(pricePoints),
+        timestamp: ts, open: o, high: h, low: l, close: c,
+        pricePoints: isNaN(pp) ? 0 : pp,
       });
     }
   }

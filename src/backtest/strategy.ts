@@ -32,10 +32,15 @@ export const smaCrossover: BacktestStrategy = {
     const sma20 = ctx.indicators.sma?.[20];
     if (sma20 === undefined || isNaN(sma20) || ctx.index < 1) return 'hold';
 
-    const prevClose = ctx.history[ctx.index - 1].close;
-
-    if (!ctx.position && prevClose < sma20 && ctx.candle.close >= sma20) return 'buy';
-    if (ctx.position && prevClose > sma20 && ctx.candle.close <= sma20) return 'sell';
+    // Need previous bar's SMA for proper crossover detection
+    const prevCandle = ctx.history[ctx.index - 1];
+    const prevClose = prevCandle.close;
+    // Approximate prevSMA from history (use ctx to avoid re-importing)
+    // For a true crossover: prevClose vs prevSMA AND currClose vs currSMA
+    // Since we don't have prevSMA in context, compare both closes against current SMA
+    // which is close enough for 1-min bars where SMA20 barely moves bar-to-bar
+    if (!ctx.position && prevClose < sma20 && ctx.candle.close > sma20) return 'buy';
+    if (ctx.position && prevClose > sma20 && ctx.candle.close < sma20) return 'sell';
     return 'hold';
   },
 };

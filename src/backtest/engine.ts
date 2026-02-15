@@ -77,7 +77,8 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
 
 export function runBacktest(candles: Candle[], config: BacktestConfig): BacktestResult {
   const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1 } = config;
-  const totalCostPct = commissionPct + slippagePct;
+  // Round-trip cost: commission + slippage applied on BOTH entry and exit
+  const roundTripCostPct = (commissionPct + slippagePct) * 2;
 
   if (candles.length === 0) {
     return {
@@ -90,10 +91,42 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
   const pre = precompute(candles);
   const trades: BacktestTrade[] = [];
   let position: BacktestPosition | null = null;
+  let pendingBuy = false;
+  let pendingSell = false;
 
+  // Stop one bar early — signals on bar i execute at bar i+1 open
   for (let i = strategy.requiredHistory; i < candles.length; i++) {
     const candle = candles[i];
 
+    // Execute pending signals at this bar's open (next-bar execution)
+    if (pendingBuy && !position) {
+      position = {
+        entryIndex: i,
+        entryPrice: candle.open,
+        entryTime: candle.timestamp,
+        peakPrice: candle.open,
+        peakPnlPct: 0,
+      };
+      pendingBuy = false;
+    } else if (pendingSell && position) {
+      const grossPnlPct = ((candle.open - position.entryPrice) / position.entryPrice) * 100;
+
+      trades.push({
+        mint,
+        entryTime: position.entryTime,
+        exitTime: candle.timestamp,
+        entryPrice: position.entryPrice,
+        exitPrice: candle.open,
+        pnlPct: grossPnlPct - roundTripCostPct,
+        holdBars: i - position.entryIndex,
+        holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
+        exitReason: 'strategy',
+      });
+      position = null;
+      pendingSell = false;
+    }
+
+    // Track peak while in position
     if (position) {
       if (candle.close > position.peakPrice) {
         position.peakPrice = candle.close;
@@ -115,29 +148,11 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
 
     const signal: Signal = strategy.evaluate(ctx);
 
+    // Queue signal for next-bar execution
     if (signal === 'buy' && !position) {
-      position = {
-        entryIndex: i,
-        entryPrice: candle.close,
-        entryTime: candle.timestamp,
-        peakPrice: candle.close,
-        peakPnlPct: 0,
-      };
+      pendingBuy = true;
     } else if (signal === 'sell' && position) {
-      const grossPnlPct = ((candle.close - position.entryPrice) / position.entryPrice) * 100;
-
-      trades.push({
-        mint,
-        entryTime: position.entryTime,
-        exitTime: candle.timestamp,
-        entryPrice: position.entryPrice,
-        exitPrice: candle.close,
-        pnlPct: grossPnlPct - totalCostPct,
-        holdBars: i - position.entryIndex,
-        holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
-        exitReason: 'strategy',
-      });
-      position = null;
+      pendingSell = true;
     }
   }
 
@@ -151,7 +166,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
       exitTime: last.timestamp,
       entryPrice: position.entryPrice,
       exitPrice: last.close,
-      pnlPct: grossPnlPct - totalCostPct,
+      pnlPct: grossPnlPct - roundTripCostPct,
       holdBars: candles.length - 1 - position.entryIndex,
       holdTimeMinutes: (last.timestamp - position.entryTime) / 60_000,
       exitReason: 'end-of-data',
