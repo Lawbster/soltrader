@@ -4,6 +4,8 @@ import { loadStrategyConfig } from '../strategy/strategy-config';
 import { SwapQuote, SwapResult, TradeLog } from './types';
 import { validateQuote, validateSimulation } from './guards';
 import { sendWithJito } from './jito-bundle';
+import fs from 'fs';
+import path from 'path';
 
 const log = createLogger('jupiter');
 
@@ -355,14 +357,31 @@ function logTrade(quote: SwapQuote, result: SwapResult) {
   const inHuman = rawToHuman(quote.inAmount, quote.inputDecimals);
   const outHuman = rawToHuman(quote.outAmount, quote.outputDecimals);
 
+  const quotePrice = isBuy ? inHuman / outHuman : outHuman / inHuman;
+
+  // Compute actual execution price from on-chain fill
+  let actualPrice = quotePrice;
+  if (result.success && result.tokenAmount > 0 && result.usdcAmount > 0) {
+    actualPrice = result.usdcAmount / result.tokenAmount;
+  }
+
+  // Slippage: for buys, paying more per token = negative (worse).
+  // For sells, receiving less per token = negative (worse).
+  const slippagePct = isBuy
+    ? ((quotePrice - actualPrice) / quotePrice) * 100   // positive = got cheaper than quoted
+    : ((actualPrice - quotePrice) / quotePrice) * 100;   // positive = got more than quoted
+
   const entry: TradeLog = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     mint: tokenMint,
     side: result.side,
     timestamp: Date.now(),
-    quotePrice: isBuy ? inHuman / outHuman : outHuman / inHuman,
+    quotePrice,
+    actualPrice,
+    actualSlippagePct: result.success ? slippagePct : 0,
     expectedSlippage: quote.slippageBps / 100,
     actualFill: result.tokenAmount,
+    usdcAmount: result.usdcAmount,
     txLatencyMs: result.latencyMs,
     fees: result.fee,
     signature: result.signature || '',
@@ -370,6 +389,18 @@ function logTrade(quote: SwapQuote, result: SwapResult) {
     error: result.error,
   };
   tradeLogs.push(entry);
+  persistTradeLog(entry);
+}
+
+function persistTradeLog(entry: TradeLog) {
+  try {
+    const dir = path.resolve(__dirname, '../../data/data/trades');
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `${new Date().toISOString().slice(0, 10)}.jsonl`);
+    fs.appendFileSync(file, JSON.stringify(entry) + '\n');
+  } catch {
+    log.warn('Failed to persist trade log to disk');
+  }
 }
 
 export function getTradeLogs(): TradeLog[] {

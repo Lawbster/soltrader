@@ -64,9 +64,12 @@ export interface TradeLog {
   mint: string;
   side: 'buy' | 'sell';
   timestamp: number;
-  quotePrice: number;
+  quotePrice: number;       // USDC per token from quote
+  actualPrice: number;      // USDC per token from on-chain fill
+  actualSlippagePct: number; // (actualPrice - quotePrice) / quotePrice * 100 (negative = worse fill)
   expectedSlippage: number;
   actualFill: number;
+  usdcAmount: number;       // actual USDC spent/received
   txLatencyMs: number;
   fees: number;
   signature: string;
