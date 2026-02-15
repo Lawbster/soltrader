@@ -53,6 +53,7 @@ export function loadWatchlist(filePath = DEFAULT_PATH): WatchlistEntry[] {
           }
 
           if (item && typeof item === 'object') {
+            if (item.disabled) continue;
             const mint = typeof item.mint === 'string' ? item.mint : '';
             const pool = typeof item.pool === 'string' ? item.pool : undefined;
             if (!isValidMint(mint)) {

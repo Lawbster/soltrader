@@ -9,11 +9,13 @@ interface WatchlistEntry {
   mint: string;
   pool: string;
   label: string;
+  disabled?: boolean;
 }
 
 export function loadTokenList(): WatchlistEntry[] {
   const raw = fs.readFileSync(WATCHLIST_PATH, 'utf-8');
-  return JSON.parse(raw) as WatchlistEntry[];
+  const all = JSON.parse(raw) as WatchlistEntry[];
+  return all.filter(t => !t.disabled);
 }
 
 export function loadPrices(mint: string): PricePoint[] {

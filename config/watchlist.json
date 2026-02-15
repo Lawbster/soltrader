@@ -5,16 +5,6 @@
     "label": "POPCAT"
   },
   {
-    "mint": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
-    "pool": "HxA6SKW5qA4o12fjVgTpXdq2YnZ5Zv1s7SB4FFomsyLM",
-    "label": "cbBTC"
-  },
-  {
-    "mint": "So11111111111111111111111111111111111111112",
-    "pool": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
-    "label": "SOL"
-  },
-  {
     "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
     "pool": "31p1hptjhFo6ZD8oBqkfutNXQKGGPyi7YcEAfsyKW777",
     "label": "BONK"
@@ -23,5 +13,17 @@
     "mint": "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN",
     "pool": "9d9mb8kooFfaD3SctgZtkxQypkshx6ezhbKio89ixyy2",
     "label": "TRUMP"
+  },
+  {
+    "mint": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+    "pool": "HxA6SKW5qA4o12fjVgTpXdq2YnZ5Zv1s7SB4FFomsyLM",
+    "label": "cbBTC",
+    "disabled": true
+  },
+  {
+    "mint": "So11111111111111111111111111111111111111112",
+    "pool": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+    "label": "SOL",
+    "disabled": true
   }
 ]

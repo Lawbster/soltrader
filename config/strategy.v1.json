@@ -56,8 +56,8 @@
     "sampleSizeGateMaxUsdc": 50
   },
   "exits": {
-    "hardStopPct": -1.5,
-    "tp1": { "targetPct": 1.5, "sellPct": 100 },
+    "hardStopPct": -0.45,
+    "tp1": { "targetPct": 0.59, "sellPct": 100 },
     "tp2": { "targetPct": 999, "sellPct": 0 },
     "runner": { "trailingStopPct": 999, "remainingPct": 0 },
     "timeStopMinutes": 0,
