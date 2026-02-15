@@ -24,10 +24,10 @@ import { startDashboard, stopDashboard, updateDashboardState } from './dashboard
 
 const log = createLogger('main');
 
-const SNAPSHOT_INTERVAL_MS = 60_000;
+const SNAPSHOT_INTERVAL_MS = 5 * 60_000;
 const SAVE_INTERVAL_MS = 5 * 60_000;
-const ANALYSIS_INTERVAL_MS = 30_000;
-const POSITION_UPDATE_INTERVAL_MS = 5_000;
+const ANALYSIS_INTERVAL_MS = 60_000;
+const POSITION_UPDATE_INTERVAL_MS = 15_000;
 const FIVE_MINUTES_MS = 5 * 60_000;
 const TEN_MINUTES_MS = 10 * 60_000;
 const CLEANUP_INTERVAL_MS = 5 * 60_000;
@@ -167,7 +167,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
 // Round-robin index so we cycle through all candidates over time
 let analysisOffset = 0;
-const MAX_CANDIDATES_PER_CYCLE = 3;
+const MAX_CANDIDATES_PER_CYCLE = 1;
 
 async function analysisLoop() {
   const mints = Array.from(pendingTokens.keys());
@@ -324,13 +324,14 @@ async function main() {
     }
   }, SAVE_INTERVAL_MS);
 
-  const snapshotTimer = setInterval(async () => {
+  // Skip snapshots in watchlist-only mode — holder data disabled, supply is static
+  const snapshotTimer = universeMode !== 'watchlist' ? setInterval(async () => {
     try {
       await snapshotAll();
     } catch (err) {
       log.error('Snapshot cycle failed', err);
     }
-  }, SNAPSHOT_INTERVAL_MS);
+  }, SNAPSHOT_INTERVAL_MS) : null;
 
   const cleanupTimer = setInterval(async () => {
     try {
@@ -389,7 +390,7 @@ async function main() {
     clearInterval(analysisTimer);
     clearInterval(positionTimer);
     clearInterval(solReplenishTimer);
-    clearInterval(snapshotTimer);
+    if (snapshotTimer) clearInterval(snapshotTimer);
     clearInterval(cleanupTimer);
     clearInterval(saveTimer);
     saveSnapshots();

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getConnection, createLogger } from '../utils';
+import { createLogger } from '../utils';
 import { TokenLaunch, TokenSnapshot } from './types';
 
 const log = createLogger('snapshots');
@@ -28,7 +28,6 @@ export function trackToken(launch: TokenLaunch) {
 }
 
 export async function takeSnapshot(mint: string): Promise<TokenSnapshot | null> {
-  const conn = getConnection();
   const now = Date.now();
 
   try {
@@ -37,18 +36,9 @@ export async function takeSnapshot(mint: string): Promise<TokenSnapshot | null> 
       timestamp: now,
     };
 
-    // Get token supply
-    const mintPubkey = await import('@solana/web3.js').then(m => new m.PublicKey(mint));
-    const supplyInfo = await conn.getTokenSupply(mintPubkey);
-
-    // Get largest token accounts (top holders)
-    const largestAccounts = await conn.getTokenLargestAccounts(mintPubkey);
-    if (largestAccounts.value.length > 0 && supplyInfo.value.uiAmount) {
-      const topHolder = largestAccounts.value[0];
-      const topHolderAmount = topHolder.uiAmount || 0;
-      snapshot.topHolderPct = (topHolderAmount / supplyInfo.value.uiAmount) * 100;
-      snapshot.holders = largestAccounts.value.length; // Approximation from top 20
-    }
+    // Holder data disabled for large-cap watchlist tokens — no RPC needed
+    snapshot.holders = 0;
+    snapshot.topHolderPct = 0;
 
     // Store the snapshot
     const entry = watchedTokens.get(mint);

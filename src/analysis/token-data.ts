@@ -44,6 +44,57 @@ async function getMintCreationTime(mint: string): Promise<number | null> {
   }
 }
 
+// Cache mint metadata — decimals, supply, authority flags barely change for established tokens
+const MINT_METADATA_TTL = 30 * 60_000; // 30 minutes
+interface MintMetadata {
+  decimals: number;
+  totalSupply: number;
+  mintAuthorityRevoked: boolean;
+  freezeAuthorityRevoked: boolean;
+  fetchedAt: number;
+}
+const mintMetadataCache = new Map<string, MintMetadata>();
+
+async function getMintMetadata(mint: string): Promise<MintMetadata | null> {
+  const cached = mintMetadataCache.get(mint);
+  if (cached && Date.now() - cached.fetchedAt < MINT_METADATA_TTL) {
+    return cached;
+  }
+
+  try {
+    const conn = getConnection();
+    const mintPubkey = new PublicKey(mint);
+    const mintInfo = await conn.getParsedAccountInfo(mintPubkey);
+    const mintData = mintInfo.value?.data;
+    if (!mintData || !('parsed' in mintData)) {
+      log.warn('Could not parse mint account', { mint });
+      return null;
+    }
+
+    const info = mintData.parsed.info;
+    const decimals: number = info.decimals;
+    const totalSupply = parseFloat(info.supply) / Math.pow(10, decimals);
+    const meta: MintMetadata = {
+      decimals,
+      totalSupply,
+      mintAuthorityRevoked: info.mintAuthority === null,
+      freezeAuthorityRevoked: info.freezeAuthority === null,
+      fetchedAt: Date.now(),
+    };
+    mintMetadataCache.set(mint, meta);
+    log.debug('Mint metadata refreshed', { mint, decimals, totalSupply: Math.round(totalSupply) });
+    return meta;
+  } catch (err) {
+    // Return stale cache on error rather than failing
+    if (cached) {
+      log.debug('Mint metadata RPC failed, using stale cache', { mint });
+      return cached;
+    }
+    log.error('Failed to fetch mint metadata', { mint, error: err });
+    return null;
+  }
+}
+
 const SOL_PRICE_CACHE = { price: 0, fetchedAt: 0 };
 const SOL_PRICE_TTL = 30_000; // 30s
 const TOKEN_PRICE_TTL = 30_000; // 30s
@@ -108,89 +159,16 @@ export async function fetchTokenData(
   mint: string,
   detectedAt: number
 ): Promise<TokenData | null> {
-  const conn = getConnection();
-
   try {
-    const mintPubkey = new PublicKey(mint);
-
-    // Fetch mint info (authority checks) and token accounts in parallel
-    const [mintInfo, largestAccounts, priceData] = await Promise.all([
-      conn.getParsedAccountInfo(mintPubkey),
-      conn.getTokenLargestAccounts(mintPubkey),
+    // Mint metadata is cached (30-min TTL) — no RPC call on cache hit
+    const [meta, priceData] = await Promise.all([
+      getMintMetadata(mint),
       fetchTokenPrice(mint),
     ]);
 
-    // Parse mint account data
-    const mintData = mintInfo.value?.data;
-    if (!mintData || !('parsed' in mintData)) {
-      log.warn('Could not parse mint account', { mint });
-      return null;
-    }
+    if (!meta) return null;
 
-    const parsed = mintData.parsed;
-    const info = parsed.info;
-    const decimals: number = info.decimals;
-    const totalSupply = parseFloat(info.supply) / Math.pow(10, decimals);
-    const mintAuthorityRevoked = info.mintAuthority === null;
-    const freezeAuthorityRevoked = info.freezeAuthority === null;
-
-    // Holder distribution from top accounts — excluding LP, burn, and system wallets
-    const EXCLUDED_ADDRESSES = new Set([
-      '1111111111111111111111111111111111', // System program
-      '11111111111111111111111111111111',   // System program (short)
-      '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1', // Raydium authority
-      'So11111111111111111111111111111111111111112',     // Wrapped SOL
-    ]);
-    // Also exclude known burn address
-    const BURN_PATTERN = /^1{20,}$/;
-
-    let top10HolderPct = 0;
-    let holderCount = 0;
-    const LP_PROGRAMS = new Set([
-      '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', // Raydium AMM
-      '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1', // Raydium authority
-      '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',  // pump.fun
-    ]);
-
-    if (totalSupply > 0) {
-      // Pre-filter by address, then batch-resolve owners in ONE RPC call
-      const candidates = largestAccounts.value.filter(acc => {
-        if ((acc.uiAmount || 0) <= 0) return false;
-        const addr = acc.address.toBase58();
-        return !EXCLUDED_ADDRESSES.has(addr) && !BURN_PATTERN.test(addr);
-      });
-
-      // Single batch RPC call to resolve all token account owners
-      const filteredAccounts: { amount: number; address: string }[] = [];
-      try {
-        const accountInfos = await conn.getMultipleParsedAccounts(
-          candidates.map(c => c.address)
-        );
-        for (let i = 0; i < candidates.length; i++) {
-          const accData = accountInfos.value[i]?.data;
-          if (accData && 'parsed' in accData) {
-            const owner = accData.parsed.info.owner as string;
-            if (EXCLUDED_ADDRESSES.has(owner) || BURN_PATTERN.test(owner)) continue;
-            if (LP_PROGRAMS.has(owner)) continue;
-          }
-          filteredAccounts.push({
-            amount: candidates[i].uiAmount || 0,
-            address: candidates[i].address.toBase58(),
-          });
-        }
-      } catch {
-        // Fallback: include all candidates without owner filtering
-        for (const c of candidates) {
-          filteredAccounts.push({ amount: c.uiAmount || 0, address: c.address.toBase58() });
-        }
-      }
-
-      holderCount = filteredAccounts.length;
-      const top10Amount = filteredAccounts
-        .slice(0, 10)
-        .reduce((sum, acc) => sum + acc.amount, 0);
-      top10HolderPct = (top10Amount / totalSupply) * 100;
-    }
+    const { decimals, totalSupply, mintAuthorityRevoked, freezeAuthorityRevoked } = meta;
 
     // Market cap
     const mcapUsd = totalSupply * priceData.priceUsd;
@@ -211,8 +189,8 @@ export async function fetchTokenData(
       mcapUsd,
       liquidityUsd: 0, // Needs pool query — enriched separately
       volume5mUsd: 0,  // Computed from trade tracker
-      top10HolderPct,
-      holderCount,
+      top10HolderPct: 0,
+      holderCount: 0,
       tokenAgeMins,
       fetchedAt: Date.now(),
     };
@@ -220,7 +198,6 @@ export async function fetchTokenData(
     log.debug('Token data fetched', {
       mint,
       mcapUsd: Math.round(mcapUsd),
-      top10HolderPct: Math.round(top10HolderPct),
       mintRevoked: mintAuthorityRevoked,
       freezeRevoked: freezeAuthorityRevoked,
     });
