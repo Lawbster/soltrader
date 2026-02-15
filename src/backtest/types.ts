@@ -1,0 +1,107 @@
+export interface PricePoint {
+  ts: number;
+  mint: string;
+  priceUsd: number;
+  priceSol: number;
+  source: string;
+  pollLatencyMs: number;
+}
+
+export interface Candle {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  pricePoints: number;
+}
+
+export interface TokenDataset {
+  mint: string;
+  label: string;
+  candles: Candle[];
+  prices: PricePoint[];
+}
+
+export interface IndicatorValues {
+  rsi?: number;
+  connorsRsi?: number;
+  sma?: Record<number, number>;
+  ema?: Record<number, number>;
+  macd?: { macd: number; signal: number; histogram: number };
+  bollingerBands?: { upper: number; middle: number; lower: number; width: number };
+  atr?: number;
+  vwapProxy?: number;
+  obvProxy?: number;
+}
+
+export type Signal = 'buy' | 'sell' | 'hold';
+
+export interface StrategyContext {
+  candle: Candle;
+  index: number;
+  indicators: IndicatorValues;
+  position: BacktestPosition | null;
+  history: Candle[];
+}
+
+export interface BacktestStrategy {
+  name: string;
+  description: string;
+  requiredHistory: number;
+  evaluate(ctx: StrategyContext): Signal;
+}
+
+export interface BacktestPosition {
+  entryIndex: number;
+  entryPrice: number;
+  entryTime: number;
+  peakPrice: number;
+  peakPnlPct: number;
+}
+
+export interface BacktestTrade {
+  mint: string;
+  entryTime: number;
+  exitTime: number;
+  entryPrice: number;
+  exitPrice: number;
+  pnlPct: number;
+  holdBars: number;
+  holdTimeMinutes: number;
+  exitReason: string;
+}
+
+export interface BacktestConfig {
+  mint: string;
+  label: string;
+  strategy: BacktestStrategy;
+  commissionPct: number;
+  slippagePct: number;
+}
+
+export interface BacktestResult {
+  strategyName: string;
+  mint: string;
+  label: string;
+  trades: BacktestTrade[];
+  totalCandles: number;
+  dateRange: { start: number; end: number };
+}
+
+export interface BacktestMetrics {
+  totalTrades: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  avgWinPct: number;
+  avgLossPct: number;
+  avgWinLossRatio: number;
+  profitFactor: number;
+  totalPnlPct: number;
+  maxDrawdownPct: number;
+  sharpeRatio: number;
+  avgHoldBars: number;
+  avgHoldMinutes: number;
+  tradesPerDay: number;
+}

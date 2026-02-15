@@ -9,7 +9,8 @@
     "start": "tsx src/index.ts",
     "monitor": "tsx src/monitor/index.ts",
     "paper": "tsx src/index.ts --paper",
-    "test": "vitest run"
+    "test": "vitest run",
+    "backtest": "tsx src/backtest/run.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.0",

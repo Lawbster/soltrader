@@ -39,7 +39,7 @@ function buildCloseSeries(trades: TradeEvent[], intervalMs: number, lookbackMs: 
   return series;
 }
 
-function computeRsi(values: number[], period: number): number | null {
+export function computeRsi(values: number[], period: number): number | null {
   if (values.length < period + 1) return null;
 
   let gains = 0;
@@ -66,7 +66,7 @@ function computeRsi(values: number[], period: number): number | null {
   return 100 - 100 / (1 + rs);
 }
 
-function computeStreaks(values: number[]): number[] {
+export function computeStreaks(values: number[]): number[] {
   const streaks: number[] = [];
   let streak = 0;
   for (let i = 1; i < values.length; i++) {
@@ -83,7 +83,7 @@ function computeStreaks(values: number[]): number[] {
   return streaks;
 }
 
-function computePercentRank(values: number[], period: number): number | null {
+export function computePercentRank(values: number[], period: number): number | null {
   if (values.length < period + 1) return null;
 
   const returns: number[] = [];
@@ -98,7 +98,7 @@ function computePercentRank(values: number[], period: number): number | null {
   return (count / window.length) * 100;
 }
 
-function computeConnorsRsi(values: number[], rsiPeriod: number, streakRsiPeriod: number, rankPeriod: number): number | null {
+export function computeConnorsRsi(values: number[], rsiPeriod: number, streakRsiPeriod: number, rankPeriod: number): number | null {
   const priceRsi = computeRsi(values, rsiPeriod);
   if (priceRsi === null) return null;
 

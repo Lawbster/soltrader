@@ -32,7 +32,7 @@
         "rsiPeriod": 3,
         "streakRsiPeriod": 2,
         "percentRankPeriod": 100,
-        "oversold": 20
+        "oversold": 35
       }
     }
   },
@@ -47,7 +47,7 @@
   },
   "position": {
     "riskPerTradePct": 0.75,
-    "maxPositionUsdc": 250,
+    "maxPositionUsdc": 10,
     "maxPositionEquityPct": 8,
     "initialStopPct": 0.8,
     "liquidityCapPct": 0.05,
@@ -56,8 +56,8 @@
     "sampleSizeGateMaxUsdc": 50
   },
   "exits": {
-    "hardStopPct": -0.8,
-    "tp1": { "targetPct": 1.2, "sellPct": 100 },
+    "hardStopPct": -1.5,
+    "tp1": { "targetPct": 1.5, "sellPct": 100 },
     "tp2": { "targetPct": 999, "sellPct": 0 },
     "runner": { "trailingStopPct": 999, "remainingPct": 0 },
     "timeStopMinutes": 0,
@@ -68,7 +68,7 @@
   "portfolio": {
     "maxConcurrentPositions": 3,
     "maxOpenExposurePct": 20,
-    "dailyLossLimitPct": -4,
+    "dailyLossLimitPct": -8,
     "consecutiveLossLimit": 999,
     "consecutiveLossCooldownMinutes": 120,
     "reEntryLockoutHours": 0.0666666667
