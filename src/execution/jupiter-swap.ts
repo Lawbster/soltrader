@@ -11,8 +11,8 @@ export const SOL_MINT = 'So11111111111111111111111111111111111111112';
 const SOL_DECIMALS = 9;
 export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 const USDC_DECIMALS = 6;
-const JUPITER_QUOTE_URL = 'https://quote-api.jup.ag/v6/quote';
-const JUPITER_SWAP_URL = 'https://quote-api.jup.ag/v6/swap';
+const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
+const JUPITER_SWAP_URL = 'https://lite-api.jup.ag/swap/v1/swap';
 
 const tradeLogs: TradeLog[] = [];
 
