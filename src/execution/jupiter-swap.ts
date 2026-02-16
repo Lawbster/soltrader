@@ -141,6 +141,17 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
         }),
       });
 
+      if (!swapRes.ok) {
+        const body = await swapRes.text().catch(() => '');
+        lastError = `Jupiter swap HTTP ${swapRes.status}: ${body.slice(0, 200)}`;
+        log.warn('Jupiter swap HTTP error', { attempt, status: swapRes.status, body: body.slice(0, 200) });
+        // Back off on rate limits before retrying
+        if (swapRes.status === 429 || body.toLowerCase().includes('rate limit')) {
+          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
+        }
+        continue;
+      }
+
       const swapData = await swapRes.json() as {
         swapTransaction?: string;
         error?: string;
