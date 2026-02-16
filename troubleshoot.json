@@ -1,0 +1,130 @@
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+        "context": {
+            "slot": 400610675,
+            "apiVersion": "2.2.7"
+        },
+        "value": [
+            {
+                "pubkey": "2Vx1xsPstkKg5FzjQ5vMhoe7MtBuYQ4Zq39WiLSk6dod",
+                "account": {
+                    "lamports": 2039280,
+                    "data": {
+                        "program": "spl-token",
+                        "parsed": {
+                            "info": {
+                                "isNative": false,
+                                "mint": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+                                "owner": "HVBW9tai5wi6LMUdnQptSyc3JVsWHL6LrBgzao1F4LbX",
+                                "state": "initialized",
+                                "tokenAmount": {
+                                    "amount": "185666611854",
+                                    "decimals": 9,
+                                    "uiAmount": 185.666611854,
+                                    "uiAmountString": "185.666611854"
+                                }
+                            },
+                            "type": "account"
+                        },
+                        "space": 165
+                    },
+                    "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    "executable": false,
+                    "rentEpoch": 18446744073709551615,
+                    "space": 165
+                }
+            }
+        ]
+    }
+}
+
+
+{
+    "portfolio": {
+        "equityUsdc": 150.25959900859405,
+        "openPositions": 2,
+        "openExposureUsdc": 20.12940600859409,
+        "dailyPnlPct": 0.12506338034315662,
+        "consecutiveLosses": 0,
+        "lastLossTime": 0,
+        "stoppedOutTokens": {}
+    },
+    "openPositions": [
+        {
+            "id": "pos-1771225731980-og4aog",
+            "mint": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr",
+            "entryPrice": 0.05379068108231074,
+            "currentPrice": 0.054455773396418945,
+            "pnlPct": 1.2364452368440484,
+            "remainingPct": 100,
+            "holdTimeMins": 75,
+            "tp1Hit": false,
+            "tp2Hit": false
+        },
+        {
+            "id": "pos-1771225973479-5sewwr",
+            "mint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            "entryPrice": 6.614829022699941e-06,
+            "currentPrice": 6.618640146459384e-06,
+            "pnlPct": 0.05761484909685395,
+            "remainingPct": 100,
+            "holdTimeMins": 71,
+            "tp1Hit": false,
+            "tp2Hit": false
+        }
+    ],
+    "closedCount": 1,
+    "tradeSubscriptions": 0,
+    "pendingCandidates": 3,
+    "tradeCapture": "disabled",
+    "universeMode": "watchlist",
+    "timestamp": 1771230250816
+}
+
+NFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:14:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:14:22.147Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:14:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:14:37.145Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:14:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:14:52.233Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:15:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:15:07.150Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:15:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:15:22.150Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:15:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:15:37.256Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:15:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:15:52.153Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:16:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:16:07.160Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:16:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:16:22.161Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:16:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:16:37.172Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:16:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:16:52.185Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:17:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:17:07.185Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:17:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:17:22.298Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:17:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:17:37.196Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:17:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:17:52.198Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:18:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:18:07.320Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:18:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:18:22.210Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:18:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:18:37.222Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:18:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:18:52.222Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:19:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:19:07.224Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:19:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:19:22.239Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:19:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:19:37.235Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:19:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:19:52.304Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:20:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:20:07.270Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:20:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:20:22.254Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:20:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:20:37.347Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:20:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:20:52.324Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:21:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:21:07.265Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:21:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:21:22.267Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:21:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:21:37.338Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:21:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:21:52.278Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:22:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:22:07.289Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:22:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:22:22.342Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:22:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:22:37.299Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:22:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:22:52.300Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:23:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:23:07.397Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:23:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:23:22.314Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:23:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:23:37.326Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:23:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:23:52.341Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:24:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:24:07.337Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:24:22 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:24:22.338Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:24:37 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:24:37.381Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:24:52 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:24:52.350Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}
+Feb 16 08:25:07 ubuntu-4gb-nbg1-1 npm[18324]: {"time":"2026-02-16T08:25:07.362Z","level":"INFO","module":"positions","msg":"Executing exit","data":{"mint":"7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr","type":"tp1","sellPct":100,"tokensHuman":185.905807452,"tokensRaw":"185905807452"}}

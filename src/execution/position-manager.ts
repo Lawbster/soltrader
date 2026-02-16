@@ -71,6 +71,25 @@ const lpHistory = new Map<string, { timestamp: number; liquidityUsd: number }[]>
 // Token decimals cache for raw amount conversions
 const decimalsCache = new Map<string, number>();
 
+// Read actual on-chain SPL token balance (raw lamport amount) for a given mint
+async function getOnChainTokenBalanceRaw(mint: string): Promise<string | null> {
+  try {
+    const conn = getConnection();
+    const wallet = getKeypair().publicKey;
+    const mintPubkey = new PublicKey(mint);
+    const accounts = await conn.getTokenAccountsByOwner(wallet, { mint: mintPubkey });
+    if (accounts.value.length === 0) return '0';
+    const parsed = await conn.getParsedAccountInfo(accounts.value[0].pubkey);
+    if (parsed.value?.data && 'parsed' in parsed.value.data) {
+      return parsed.value.data.parsed.info.tokenAmount.amount as string;
+    }
+    return null;
+  } catch (err) {
+    log.warn('Failed to read on-chain token balance', { mint, error: err });
+    return null;
+  }
+}
+
 async function getDecimals(mint: string): Promise<number> {
   const cached = decimalsCache.get(mint);
   if (cached !== undefined) return cached;
@@ -360,8 +379,23 @@ async function executeExit(
 
   // Convert human-readable token amount to raw for Jupiter
   const decimals = await getDecimals(position.mint);
-  const rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
+  let rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
   const slippageBps = config.trading.defaultSlippageBps;
+
+  // For full exits, use actual on-chain balance to avoid overshoot
+  // (position.remainingTokens may drift from real balance due to rounding/fees)
+  if (sellPct >= 100) {
+    const onChainRaw = await getOnChainTokenBalanceRaw(position.mint);
+    if (onChainRaw && onChainRaw !== '0') {
+      log.info('Full exit: using on-chain balance', {
+        mint: position.mint,
+        positionRaw: rawTokensToSell,
+        onChainRaw,
+        diff: (BigInt(rawTokensToSell) - BigInt(onChainRaw)).toString(),
+      });
+      rawTokensToSell = onChainRaw;
+    }
+  }
 
   log.info('Executing exit', {
     mint: position.mint,
