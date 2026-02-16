@@ -1,4 +1,4 @@
-import { loadCandles, loadTokenList } from './data-loader';
+import { loadCandles, loadTokenList, aggregateCandles } from './data-loader';
 import { STRATEGIES } from './strategy';
 import { runBacktest } from './engine';
 import { printReport, computeMetrics } from './report';
@@ -7,6 +7,7 @@ function main() {
   const args = process.argv.slice(2);
   const strategyFilter = args[0] || null;
   const tokenFilter = args[1] || null;
+  const timeframe = parseInt(args[2] || '1', 10);
 
   const strategyNames = strategyFilter
     ? [strategyFilter]
@@ -34,15 +35,18 @@ function main() {
     process.exit(1);
   }
 
-  console.log(`Running ${strategyNames.length} strategy(s) x ${tokens.length} token(s)\n`);
+  console.log(`Running ${strategyNames.length} strategy(s) x ${tokens.length} token(s) x ${timeframe}-min bars\n`);
 
   const results: Array<{ strategyName: string; label: string; trades: number; winRate: number; totalPnl: number }> = [];
 
   for (const token of tokens) {
-    const candles = loadCandles(token.mint);
+    let candles = loadCandles(token.mint);
     if (candles.length === 0) {
       console.warn(`No candle data for ${token.label} (${token.mint.slice(0, 8)}...)`);
       continue;
+    }
+    if (timeframe > 1) {
+      candles = aggregateCandles(candles, timeframe);
     }
 
     for (const name of strategyNames) {

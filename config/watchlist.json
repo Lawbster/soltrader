@@ -17,13 +17,11 @@
   {
     "mint": "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
     "pool": "HxA6SKW5qA4o12fjVgTpXdq2YnZ5Zv1s7SB4FFomsyLM",
-    "label": "cbBTC",
-    "disabled": true
+    "label": "cbBTC"
   },
   {
     "mint": "So11111111111111111111111111111111111111112",
     "pool": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
-    "label": "SOL",
-    "disabled": true
+    "label": "SOL"
   }
 ]

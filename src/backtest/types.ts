@@ -24,13 +24,15 @@ export interface TokenDataset {
 }
 
 export interface IndicatorValues {
-  rsi?: number;
-  connorsRsi?: number;
+  rsi?: number;          // RSI(14)
+  rsiShort?: number;     // RSI(2) — fast scalping RSI
+  connorsRsi?: number;   // CRSI(3,2,100)
   sma?: Record<number, number>;
   ema?: Record<number, number>;
   macd?: { macd: number; signal: number; histogram: number };
   bollingerBands?: { upper: number; middle: number; lower: number; width: number };
   atr?: number;
+  adx?: number;          // ADX(14) — trend strength
   vwapProxy?: number;
   obvProxy?: number;
 }
@@ -41,14 +43,18 @@ export interface StrategyContext {
   candle: Candle;
   index: number;
   indicators: IndicatorValues;
+  prevIndicators?: IndicatorValues;
   position: BacktestPosition | null;
   history: Candle[];
+  hour: number; // UTC hour 0-23
 }
 
 export interface BacktestStrategy {
   name: string;
   description: string;
   requiredHistory: number;
+  stopLossPct?: number;   // e.g. -0.45 → exit at -0.45% from entry
+  takeProfitPct?: number; // e.g. 0.59 → exit at +0.59% from entry
   evaluate(ctx: StrategyContext): Signal;
 }
 

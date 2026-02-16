@@ -5,19 +5,21 @@ import {
 import { closeSeries, highSeries, lowSeries, volumeSeries } from './data-loader';
 import {
   computeSma, computeEma, computeMacd,
-  computeBollingerBands, computeAtr,
+  computeBollingerBands, computeAtr, computeAdx,
   computeVwapProxy, computeObvProxy,
   computeRsiSeries, computeConnorsRsiSeries,
 } from './indicators';
 
 interface PrecomputedIndicators {
   rsi: (number | null)[];
+  rsiShort: (number | null)[];
   connorsRsi: (number | null)[];
   sma: Record<number, number[]>;
   ema: Record<number, number[]>;
   macd: { macd: number[]; signal: number[]; histogram: number[] };
   bb: { upper: number[]; middle: number[]; lower: number[]; width: number[] };
   atr: number[];
+  adx: number[];
   vwapProxy: number[];
   obvProxy: number[];
 }
@@ -30,6 +32,7 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
 
   return {
     rsi: computeRsiSeries(closes, 14),
+    rsiShort: computeRsiSeries(closes, 2),
     connorsRsi: computeConnorsRsiSeries(closes, 3, 2, 100),
     sma: {
       10: computeSma(closes, 10),
@@ -37,12 +40,14 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
       50: computeSma(closes, 50),
     },
     ema: {
+      9: computeEma(closes, 9),
       12: computeEma(closes, 12),
       26: computeEma(closes, 26),
     },
     macd: computeMacd(closes, 12, 26, 9),
     bb: computeBollingerBands(closes, 20, 2),
     atr: computeAtr(highs, lows, closes, 14),
+    adx: computeAdx(highs, lows, closes, 14),
     vwapProxy: computeVwapProxy(candles),
     obvProxy: computeObvProxy(closes, volumes),
   };
@@ -51,6 +56,7 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
 function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues {
   return {
     rsi: pre.rsi[index] ?? undefined,
+    rsiShort: pre.rsiShort[index] ?? undefined,
     connorsRsi: pre.connorsRsi[index] ?? undefined,
     sma: Object.fromEntries(
       Object.entries(pre.sma).map(([p, arr]) => [Number(p), arr[index]])
@@ -70,6 +76,7 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
       width: pre.bb.width[index],
     },
     atr: isNaN(pre.atr[index]) ? undefined : pre.atr[index],
+    adx: isNaN(pre.adx[index]) ? undefined : pre.adx[index],
     vwapProxy: pre.vwapProxy[index],
     obvProxy: pre.obvProxy[index],
   };
@@ -126,6 +133,55 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
       pendingSell = false;
     }
 
+    // Intra-bar TP/SL check (fires within the bar, before strategy evaluation)
+    if (position) {
+      let closedByTpSl = false;
+
+      // Stop loss (priority over TP — conservative)
+      if (!closedByTpSl && strategy.stopLossPct !== undefined) {
+        const stopPrice = position.entryPrice * (1 + strategy.stopLossPct / 100);
+        if (candle.low <= stopPrice) {
+          trades.push({
+            mint,
+            entryTime: position.entryTime,
+            exitTime: candle.timestamp,
+            entryPrice: position.entryPrice,
+            exitPrice: stopPrice,
+            pnlPct: strategy.stopLossPct - roundTripCostPct,
+            holdBars: i - position.entryIndex,
+            holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
+            exitReason: 'stop-loss',
+          });
+          position = null;
+          pendingBuy = false;
+          pendingSell = false;
+          closedByTpSl = true;
+        }
+      }
+
+      // Take profit
+      if (!closedByTpSl && position && strategy.takeProfitPct !== undefined) {
+        const tpPrice = position.entryPrice * (1 + strategy.takeProfitPct / 100);
+        if (candle.high >= tpPrice) {
+          trades.push({
+            mint,
+            entryTime: position.entryTime,
+            exitTime: candle.timestamp,
+            entryPrice: position.entryPrice,
+            exitPrice: tpPrice,
+            pnlPct: strategy.takeProfitPct - roundTripCostPct,
+            holdBars: i - position.entryIndex,
+            holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
+            exitReason: 'take-profit',
+          });
+          position = null;
+          pendingBuy = false;
+          pendingSell = false;
+          closedByTpSl = true;
+        }
+      }
+    }
+
     // Track peak while in position
     if (position) {
       if (candle.close > position.peakPrice) {
@@ -138,12 +194,17 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     }
 
     const indicators = snapshotAt(pre, i);
+    const prevIndicators = i > 0 ? snapshotAt(pre, i - 1) : undefined;
+    const hour = new Date(candle.timestamp).getUTCHours();
+
     const ctx: StrategyContext = {
       candle,
       index: i,
       indicators,
+      prevIndicators,
       position,
       history: candles,
+      hour,
     };
 
     const signal: Signal = strategy.evaluate(ctx);

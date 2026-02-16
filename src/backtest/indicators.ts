@@ -206,6 +206,69 @@ export function computeObvProxy(closes: number[], volumes: number[]): number[] {
   return result;
 }
 
+/** Average Directional Index (ADX) — measures trend strength (0-100).
+ *  ADX < 25 = ranging/weak trend, ADX > 25 = strong trend. */
+export function computeAdx(
+  highs: number[],
+  lows: number[],
+  closes: number[],
+  period = 14
+): number[] {
+  const len = highs.length;
+  const result: number[] = new Array(len).fill(NaN);
+  if (len < 2 * period + 1) return result;
+
+  // True Range, +DM, -DM
+  const tr: number[] = [highs[0] - lows[0]];
+  const plusDM: number[] = [0];
+  const minusDM: number[] = [0];
+
+  for (let i = 1; i < len; i++) {
+    tr.push(Math.max(
+      highs[i] - lows[i],
+      Math.abs(highs[i] - closes[i - 1]),
+      Math.abs(lows[i] - closes[i - 1])
+    ));
+    const upMove = highs[i] - highs[i - 1];
+    const downMove = lows[i - 1] - lows[i];
+    plusDM.push(upMove > downMove && upMove > 0 ? upMove : 0);
+    minusDM.push(downMove > upMove && downMove > 0 ? downMove : 0);
+  }
+
+  // Initial sums for Wilder smoothing
+  let smoothTr = 0, smoothPlusDM = 0, smoothMinusDM = 0;
+  for (let i = 1; i <= period; i++) {
+    smoothTr += tr[i];
+    smoothPlusDM += plusDM[i];
+    smoothMinusDM += minusDM[i];
+  }
+
+  // DX series
+  const dx: number[] = new Array(len).fill(NaN);
+  for (let i = period; i < len; i++) {
+    if (i > period) {
+      smoothTr = smoothTr - smoothTr / period + tr[i];
+      smoothPlusDM = smoothPlusDM - smoothPlusDM / period + plusDM[i];
+      smoothMinusDM = smoothMinusDM - smoothMinusDM / period + minusDM[i];
+    }
+    const plusDI = smoothTr > 0 ? (smoothPlusDM / smoothTr) * 100 : 0;
+    const minusDI = smoothTr > 0 ? (smoothMinusDM / smoothTr) * 100 : 0;
+    const diSum = plusDI + minusDI;
+    dx[i] = diSum > 0 ? (Math.abs(plusDI - minusDI) / diSum) * 100 : 0;
+  }
+
+  // ADX = Wilder-smoothed DX
+  let adxSum = 0;
+  for (let i = period; i < 2 * period; i++) adxSum += dx[i];
+  result[2 * period - 1] = adxSum / period;
+
+  for (let i = 2 * period; i < len; i++) {
+    result[i] = (result[i - 1] * (period - 1) + dx[i]) / period;
+  }
+
+  return result;
+}
+
 /** Rolling RSI series — returns value at every candle position. */
 export function computeRsiSeries(values: number[], period: number): (number | null)[] {
   const result: (number | null)[] = new Array(values.length).fill(null);

@@ -10,7 +10,8 @@
     "monitor": "tsx src/monitor/index.ts",
     "paper": "tsx src/index.ts --paper",
     "test": "vitest run",
-    "backtest": "tsx src/backtest/run.ts"
+    "backtest": "tsx src/backtest/run.ts",
+    "sweep": "tsx src/backtest/sweep.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.0",

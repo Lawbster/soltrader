@@ -106,3 +106,42 @@ export function lowSeries(candles: Candle[]): number[] {
 export function volumeSeries(candles: Candle[]): number[] {
   return candles.map(c => c.pricePoints);
 }
+
+/** Aggregate 1-min candles into higher timeframe bars.
+ *  intervalMinutes=5 → 5-min candles, intervalMinutes=15 → 15-min, etc. */
+export function aggregateCandles(candles: Candle[], intervalMinutes: number): Candle[] {
+  if (candles.length === 0 || intervalMinutes <= 1) return candles;
+
+  const intervalMs = intervalMinutes * 60_000;
+  const result: Candle[] = [];
+  let bucketStart = Math.floor(candles[0].timestamp / intervalMs) * intervalMs;
+  let open = candles[0].open;
+  let high = candles[0].high;
+  let low = candles[0].low;
+  let close = candles[0].close;
+  let pp = candles[0].pricePoints;
+
+  for (let i = 1; i < candles.length; i++) {
+    const c = candles[i];
+    const bucket = Math.floor(c.timestamp / intervalMs) * intervalMs;
+
+    if (bucket !== bucketStart) {
+      result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp });
+      bucketStart = bucket;
+      open = c.open;
+      high = c.high;
+      low = c.low;
+      close = c.close;
+      pp = c.pricePoints;
+    } else {
+      if (c.high > high) high = c.high;
+      if (c.low < low) low = c.low;
+      close = c.close;
+      pp += c.pricePoints;
+    }
+  }
+
+  // Push final bar
+  result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp });
+  return result;
+}
