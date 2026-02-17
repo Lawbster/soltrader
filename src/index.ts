@@ -1,7 +1,7 @@
 import { config, createLogger, getPublicKey } from './utils';
 import { TokenMonitor, trackToken, snapshotAll, saveSnapshots, getStats, pruneOldTokens, TokenLaunch, loadWatchlist, WatchlistEntry } from './monitor';
 import {
-  fetchTokenData, fetchTokenPrice, fetchPoolLiquidity, getIndicatorSnapshot,
+  fetchTokenData, fetchTokenPricesBatch, fetchPoolLiquidity, getTokenPriceCached, getIndicatorSnapshot,
   subscribeToTokenTrades, unsubscribeFromToken,
   getTradeWindow, getActiveSubscriptionCount,
   recordPrice, getPriceHistoryCount, getPriceHistory, loadPriceHistoryFrom,
@@ -281,21 +281,26 @@ async function main() {
 
   // Dedicated price poll for watchlist tokens — feeds CRSI candle builder
   // Runs every 30s so we get ~2 price points per 1-minute candle
+  // Uses batch API: 1 Jupiter call for all mints instead of 12 individual calls
   const PRICE_POLL_INTERVAL_MS = 30_000;
   const pricePollTimer = setInterval(async () => {
     if (!useWatchlist || watchlist.length === 0) return;
-    for (const entry of watchlist) {
-      try {
-        const pollStart = Date.now();
-        const { priceUsd, priceSol } = await fetchTokenPrice(entry.mint);
-        const pollLatencyMs = Date.now() - pollStart;
+    try {
+      const pollStart = Date.now();
+      const mints = watchlist.map(e => e.mint);
+      await fetchTokenPricesBatch(mints);
+      const pollLatencyMs = Date.now() - pollStart;
+
+      // Read from cache only — never fall back to per-token API calls
+      for (const entry of watchlist) {
+        const { priceUsd, priceSol } = getTokenPriceCached(entry.mint);
         if (priceUsd > 0) {
           recordPrice(entry.mint, priceUsd);
-          logPricePoint(entry.mint, priceUsd, priceSol, 'jupiter', pollLatencyMs);
+          logPricePoint(entry.mint, priceUsd, priceSol, 'jupiter-batch', pollLatencyMs);
         }
-      } catch (err) {
-        log.debug('Price poll failed', { mint: entry.mint, error: err });
       }
+    } catch (err) {
+      log.error('Batch price poll failed', { error: err });
     }
   }, PRICE_POLL_INTERVAL_MS);
 

@@ -1,11 +1,11 @@
 import http from 'http';
 import { createLogger, config } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
-import { fetchPoolLiquidity } from '../analysis/token-data';
+import { getPoolLiquidityCached, getTokenPriceCached } from '../analysis/token-data';
 import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact } from '../execution';
 import {
   getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
-  buildCloseSeriesFromPrices, fetchTokenPrice,
+  buildCloseSeriesFromPrices,
 } from '../analysis';
 import { loadWatchlist } from '../monitor';
 import { getDashboardHtml } from './page';
@@ -107,7 +107,7 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   res.end('Not found');
 }
 
-async function handleSignals(res: http.ServerResponse) {
+function handleSignals(res: http.ServerResponse) {
   try {
     const cfg = loadStrategyConfig();
     const indicatorsCfg = cfg.entry.indicators;
@@ -115,7 +115,7 @@ async function handleSignals(res: http.ServerResponse) {
     const metrics = getAggregateMetrics();
     const candlesNeeded = (indicatorsCfg?.connors?.percentRankPeriod || 100) + 1;
 
-    const signals = await Promise.all(watchlist.map(async (entry) => {
+    const signals = watchlist.map((entry) => {
       const mint = entry.mint;
       const pricePoints = getPriceHistoryCount(mint);
 
@@ -139,16 +139,9 @@ async function handleSignals(res: http.ServerResponse) {
         source = candleCount > 0 ? 'price-feed' : 'none';
       }
 
-      // Get current price and liquidity
-      let priceUsd = 0;
-      let liquidityUsd = 0;
-      try {
-        const p = await fetchTokenPrice(mint);
-        priceUsd = p.priceUsd;
-      } catch { /* ignore */ }
-      try {
-        liquidityUsd = await fetchPoolLiquidity(mint);
-      } catch { /* ignore */ }
+      // Read from cache only — no live Jupiter API calls from dashboard
+      const { priceUsd } = getTokenPriceCached(mint);
+      const liquidityUsd = getPoolLiquidityCached(mint);
 
       // Compute effective max position size (USDC)
       const posCfg = cfg.position;
@@ -187,7 +180,7 @@ async function handleSignals(res: http.ServerResponse) {
         totalTrades,
         sampleSizeGateMinTrades: posCfg.sampleSizeGateMinTrades,
       };
-    }));
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(signals));
