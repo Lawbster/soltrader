@@ -218,14 +218,27 @@ export async function fetchPoolLiquidity(mint: string): Promise<number> {
     }
 
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
-    // Get a quote for a small amount to check if pool exists and has depth
-    const amountLamports = 1_000_000_000; // 1 SOL
+    const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+    // For SOL, quote USDC→SOL instead of SOL→SOL (which Jupiter rejects)
+    const isSol = mint === SOL_MINT;
+    const inputMint = isSol ? USDC_MINT : SOL_MINT;
+    const amount = isSol ? 100_000_000 : 1_000_000_000; // 100 USDC (6 dec) or 1 SOL (9 dec)
+    const quoteValueUsd = isSol ? 100 : 0; // Will compute from SOL price if not SOL
+
     const res = await fetch(
-      `https://lite-api.jup.ag/swap/v1/quote?inputMint=${SOL_MINT}&outputMint=${mint}&amount=${amountLamports}&slippageBps=300`
+      `https://lite-api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${mint}&amount=${amount}&slippageBps=300`
     );
+
+    if (!res.ok) {
+      log.warn('Jupiter liquidity quote HTTP error', { mint, status: res.status });
+      return 0;
+    }
+
     const json = await res.json() as {
       outAmount?: string;
       priceImpactPct?: string;
+      swapUsdValue?: string;
       error?: string;
     };
 
@@ -233,17 +246,27 @@ export async function fetchPoolLiquidity(mint: string): Promise<number> {
       return 0;
     }
 
-    // Estimate liquidity from price impact
-    // If 1 SOL causes X% impact, liquidity ≈ 1 SOL / (impact% / 100)
     const impact = parseFloat(json.priceImpactPct || '0');
-    if (impact <= 0) return 0;
 
-    const solPrice = await getSolPrice();
-    const estimatedLiquidityUsd = (solPrice / (impact / 100)) * 2; // x2 for both sides
+    // If impact is 0 or negligible, liquidity is very deep — use swapUsdValue as lower bound
+    if (impact <= 0) {
+      const swapUsd = parseFloat(json.swapUsdValue || '0');
+      // 0% impact on $84 trade → liquidity is at least $1M+ (conservative floor)
+      const estimatedLiquidityUsd = swapUsd > 0 ? Math.max(swapUsd * 10_000, 1_000_000) : 0;
+      liquidityCache.set(mint, { liquidityUsd: estimatedLiquidityUsd, fetchedAt: Date.now() });
+      return estimatedLiquidityUsd;
+    }
+
+    // Estimate liquidity from price impact
+    const tradeUsd = quoteValueUsd || (await getSolPrice());
+    const estimatedLiquidityUsd = (tradeUsd / (impact / 100)) * 2; // x2 for both sides
     liquidityCache.set(mint, { liquidityUsd: estimatedLiquidityUsd, fetchedAt: Date.now() });
     return estimatedLiquidityUsd;
   } catch (err) {
-    log.error('Failed to fetch pool liquidity', { mint, error: err });
+    log.error('Failed to fetch pool liquidity', {
+      mint,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return 0;
   }
 }
