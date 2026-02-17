@@ -22,15 +22,6 @@ function appendJsonl(subdir: string, filename: string, obj: Record<string, unkno
   fs.appendFileSync(filePath, JSON.stringify(obj) + '\n');
 }
 
-function appendCsv(subdir: string, filename: string, header: string, row: string) {
-  const dir = path.join(DATA_DIR, subdir);
-  ensureDir(dir);
-  const filePath = path.join(dir, filename);
-  if (!fs.existsSync(filePath)) {
-    fs.writeFileSync(filePath, header + '\n');
-  }
-  fs.appendFileSync(filePath, row + '\n');
-}
 
 // --- Phase 1: Raw Price Points ---
 
@@ -109,7 +100,7 @@ export function exportCandles(mint: string, priceHistory: PricePoint[]) {
   const todayPoints = priceHistory.filter(p => p.timestamp >= dayStart && p.timestamp < dayEnd);
   if (todayPoints.length === 0) return;
 
-  // Bucket into 1-minute candles
+  // Bucket into 1-minute candles from current in-memory data
   const buckets = new Map<number, PricePoint[]>();
   for (const p of todayPoints) {
     const bucketTs = Math.floor(p.timestamp / intervalMs) * intervalMs;
@@ -121,25 +112,39 @@ export function exportCandles(mint: string, priceHistory: PricePoint[]) {
     bucket.push(p);
   }
 
-  // Build CSV rows
   const header = 'timestamp,open,high,low,close,pricePoints';
-  const rows: string[] = [];
-  const sortedKeys = Array.from(buckets.keys()).sort((a, b) => a - b);
-  for (const ts of sortedKeys) {
+  const dir = path.join(DATA_DIR, `candles/${mint}`);
+  ensureDir(dir);
+  const filePath = path.join(dir, `${date}.csv`);
+
+  // Load existing candles from disk so we don't lose older data
+  const existing = new Map<number, string>();
+  if (fs.existsSync(filePath)) {
+    const lines = fs.readFileSync(filePath, 'utf-8').split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      const ts = parseInt(line.split(',')[0], 10);
+      if (!isNaN(ts)) existing.set(ts, line);
+    }
+  }
+
+  // Build new candle rows from in-memory data (these are fresher, so they win)
+  for (const ts of buckets.keys()) {
     const points = buckets.get(ts)!;
     const prices = points.map(p => p.price);
     const open = prices[0];
     const close = prices[prices.length - 1];
     const high = Math.max(...prices);
     const low = Math.min(...prices);
-    rows.push(`${ts},${open},${high},${low},${close},${points.length}`);
+    existing.set(ts, `${ts},${open},${high},${low},${close},${points.length}`);
   }
 
-  // Overwrite today's candle file (rebuilt from in-memory data)
-  const dir = path.join(DATA_DIR, `candles/${mint}`);
-  ensureDir(dir);
-  const filePath = path.join(dir, `${date}.csv`);
-  fs.writeFileSync(filePath, header + '\n' + rows.join('\n') + '\n');
+  // Write merged candles sorted by timestamp
+  const sortedRows = Array.from(existing.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, row]) => row);
+  fs.writeFileSync(filePath, header + '\n' + sortedRows.join('\n') + '\n');
 }
 
 // --- Phase 5: Persistence ---
