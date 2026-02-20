@@ -1,8 +1,8 @@
 import http from 'http';
 import { createLogger, config } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
-import { getPoolLiquidityCached, getTokenPriceCached } from '../analysis/token-data';
-import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact } from '../execution';
+import { getPoolLiquidityCached, getTokenPriceCached, fetchTokenPrice } from '../analysis/token-data';
+import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact, getWalletBalances, SOL_MINT } from '../execution';
 import {
   getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
   buildCloseSeriesFromPrices,
@@ -40,33 +40,10 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   }
 
   if (url === '/api/status') {
-    const portfolio = getPortfolioState();
-    const openPositions = Array.from(getOpenPositions().values()).map(p => ({
-      id: p.id,
-      mint: p.mint,
-      entryPrice: p.entryPrice,
-      currentPrice: p.currentPrice,
-      pnlPct: p.currentPnlPct,
-      remainingPct: p.remainingPct,
-      holdTimeMins: Math.round((Date.now() - p.entryTime) / 60_000),
-      tp1Hit: p.tp1Hit,
-      tp2Hit: p.tp2Hit,
-    }));
-
-    const universeMode = config.universe.mode;
-    const tradeCapture = universeMode === 'watchlist' ? 'disabled' : 'active';
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      portfolio,
-      openPositions,
-      closedCount: getClosedPositions().length,
-      tradeSubscriptions: getActiveSubscriptionCount(),
-      pendingCandidates: pendingTokenCount,
-      tradeCapture,
-      universeMode,
-      timestamp: Date.now(),
-    }));
+    handleStatus(res).catch(err => {
+      log.error('Status handler error', { error: err instanceof Error ? err.message : String(err) });
+      if (!res.writableEnded) { res.writeHead(500); res.end('{"error":"Internal"}'); }
+    });
     return;
   }
 
@@ -105,6 +82,44 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
 
   res.writeHead(404, { 'Content-Type': 'text/plain' });
   res.end('Not found');
+}
+
+async function handleStatus(res: http.ServerResponse) {
+  const portfolio = getPortfolioState();
+  const openPositions = Array.from(getOpenPositions().values()).map(p => ({
+    id: p.id,
+    mint: p.mint,
+    entryPrice: p.entryPrice,
+    currentPrice: p.currentPrice,
+    pnlPct: p.currentPnlPct,
+    remainingPct: p.remainingPct,
+    initialSizeUsdc: p.initialSizeUsdc,
+    holdTimeMins: Math.round((Date.now() - p.entryTime) / 60_000),
+    tp1Hit: p.tp1Hit,
+    tp2Hit: p.tp2Hit,
+  }));
+
+  const [walletBalances, solPriceResult] = await Promise.all([
+    getWalletBalances(),
+    fetchTokenPrice(SOL_MINT),
+  ]);
+
+  const universeMode = config.universe.mode;
+  const tradeCapture = universeMode === 'watchlist' ? 'disabled' : 'active';
+
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({
+    portfolio,
+    openPositions,
+    walletBalances,
+    solPriceUsd: solPriceResult.priceUsd,
+    closedCount: getClosedPositions().length,
+    tradeSubscriptions: getActiveSubscriptionCount(),
+    pendingCandidates: pendingTokenCount,
+    tradeCapture,
+    universeMode,
+    timestamp: Date.now(),
+  }));
 }
 
 function handleSignals(res: http.ServerResponse) {

@@ -150,6 +150,28 @@ async function getUsdcBalance(): Promise<number> {
   }
 }
 
+// Cached wallet balances (TTL: 60s) — avoids hammering RPC on 30s dashboard polls
+let walletBalancesCache: { usdc: number; sol: number; cachedAt: number } | null = null;
+const WALLET_BALANCE_TTL_MS = 60_000;
+
+export async function getWalletBalances(): Promise<{ usdc: number; sol: number }> {
+  if (walletBalancesCache && Date.now() - walletBalancesCache.cachedAt < WALLET_BALANCE_TTL_MS) {
+    return { usdc: walletBalancesCache.usdc, sol: walletBalancesCache.sol };
+  }
+  const [usdc, sol] = await Promise.all([
+    getUsdcBalance(),
+    (async () => {
+      try {
+        return await getConnection().getBalance(getKeypair().publicKey) / 1e9;
+      } catch {
+        return walletBalancesCache?.sol ?? 0;
+      }
+    })(),
+  ]);
+  walletBalancesCache = { usdc, sol, cachedAt: Date.now() };
+  return { usdc, sol };
+}
+
 export async function initPortfolio() {
   const usdcBalance = await getUsdcBalance();
   dailyStartEquity = usdcBalance;

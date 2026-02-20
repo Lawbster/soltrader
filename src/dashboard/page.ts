@@ -507,14 +507,44 @@ function renderPriceChart(points, tokenLabel) {
 
 function renderPortfolio(s) {
   const el = document.getElementById('portfolio');
+  const wb = s.walletBalances || {};
+  const solPrice = s.solPriceUsd || 0;
+  const solUsd = (wb.sol || 0) * solPrice;
+  // Compute open positions notional: initialSizeUsdc * remainingPct/100 * (1 + pnlPct/100)
+  const openNotional = (s.openPositions || []).reduce((sum, p) => {
+    return sum + (p.initialSizeUsdc || 0) * (p.remainingPct / 100) * (1 + p.pnlPct / 100);
+  }, 0);
+  const totalEquity = (wb.usdc || 0) + solUsd + openNotional;
+
   const cards = [
-    { label: 'Equity', value: fmt(s.portfolio.equityUsdc, 2) + ' USDC', cls: 'blue' },
-    { label: 'Open Positions', value: s.openPositions.length, cls: '' },
-    { label: 'Daily PnL', value: fmtPct(s.portfolio.dailyPnlPct), cls: pnlColor(s.portfolio.dailyPnlPct) },
-    { label: 'Closed Trades', value: s.closedCount, cls: '' },
+    {
+      label: 'USDC (wallet)',
+      value: fmt(wb.usdc ?? 0, 2) + ' USDC',
+      sub: 'Idle capital',
+      cls: 'blue',
+    },
+    {
+      label: 'SOL (wallet)',
+      value: fmt(wb.sol ?? 0, 3) + ' SOL',
+      sub: solPrice > 0 ? '≈ $' + fmt(solUsd, 2) : '--',
+      cls: 'blue',
+    },
+    {
+      label: 'Open Trades',
+      value: s.openPositions.length,
+      sub: openNotional > 0 ? '≈ $' + fmt(openNotional, 2) + ' notional' : 'No open positions',
+      cls: s.openPositions.length > 0 ? 'yellow' : '',
+    },
+    {
+      label: 'Daily PnL',
+      value: fmtPct(s.portfolio.dailyPnlPct),
+      sub: 'Total equity ≈ $' + fmt(totalEquity, 2),
+      cls: pnlColor(s.portfolio.dailyPnlPct),
+    },
   ];
   el.innerHTML = cards.map(c =>
-    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div></div>'
+    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div>' +
+    (c.sub ? '<div class="sub">' + c.sub + '</div>' : '') + '</div>'
   ).join('');
 
   const posEl = document.getElementById('openPositions');
