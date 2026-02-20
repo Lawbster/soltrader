@@ -11,7 +11,11 @@
     "paper": "tsx src/index.ts --paper",
     "test": "vitest run",
     "backtest": "tsx src/backtest/run.ts",
-    "sweep": "tsx src/backtest/sweep.ts"
+    "sweep": "tsx src/backtest/sweep.ts",
+    "fetch-historical": "tsx scripts/fetch-historical.ts",
+    "fetch-historical:append": "tsx scripts/fetch-historical.ts --append",
+    "daily-qa-report": "tsx scripts/daily-qa-report.ts",
+    "dailyqareport": "tsx scripts/daily-qa-report.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.0",

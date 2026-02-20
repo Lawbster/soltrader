@@ -1,7 +1,7 @@
 import { VersionedTransaction, PublicKey } from '@solana/web3.js';
 import { getConnection, getKeypair, createLogger } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
-import { SwapQuote, SwapResult, TradeLog } from './types';
+import { FillSource, SwapQuote, SwapResult, TradeLog } from './types';
 import { validateQuote, validateSimulation } from './guards';
 import { sendWithJito } from './jito-bundle';
 import fs from 'fs';
@@ -44,6 +44,69 @@ async function getTokenDecimals(mint: string): Promise<number> {
 
 function rawToHuman(raw: string, decimals: number): number {
   return parseInt(raw) / Math.pow(10, decimals);
+}
+
+interface ParsedTokenBalance {
+  accountIndex?: number;
+  mint: string;
+  owner?: string;
+  uiTokenAmount?: {
+    amount?: string;
+  };
+}
+
+function rawTokenAmount(balance: ParsedTokenBalance | undefined): bigint {
+  const amount = balance?.uiTokenAmount?.amount;
+  if (!amount) return 0n;
+  try {
+    return BigInt(amount);
+  } catch {
+    return 0n;
+  }
+}
+
+function extractWalletMintDeltas(
+  preBalances: ParsedTokenBalance[],
+  postBalances: ParsedTokenBalance[],
+  walletAddr: string
+): Map<string, bigint> {
+  const preByKey = new Map<string, ParsedTokenBalance>();
+  const postByKey = new Map<string, ParsedTokenBalance>();
+
+  for (let i = 0; i < preBalances.length; i++) {
+    const b = preBalances[i];
+    const key = typeof b.accountIndex === 'number'
+      ? `idx:${b.accountIndex}`
+      : `${b.mint}:${b.owner || ''}`;
+    preByKey.set(key, b);
+  }
+
+  for (let i = 0; i < postBalances.length; i++) {
+    const b = postBalances[i];
+    const key = typeof b.accountIndex === 'number'
+      ? `idx:${b.accountIndex}`
+      : `${b.mint}:${b.owner || ''}`;
+    postByKey.set(key, b);
+  }
+
+  const keys = new Set<string>([...preByKey.keys(), ...postByKey.keys()]);
+  const deltas = new Map<string, bigint>();
+
+  for (const key of keys) {
+    const pre = preByKey.get(key);
+    const post = postByKey.get(key);
+
+    const mint = post?.mint ?? pre?.mint;
+    const owner = post?.owner ?? pre?.owner;
+    if (!mint || owner !== walletAddr) continue;
+
+    const delta = rawTokenAmount(post) - rawTokenAmount(pre);
+    if (delta === 0n) continue;
+
+    deltas.set(mint, (deltas.get(mint) || 0n) + delta);
+  }
+
+  return deltas;
 }
 
 export async function getQuote(
@@ -116,6 +179,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
     priceImpactPct: quote.priceImpactPct,
     fee: 0,
     latencyMs: Date.now() - startTime,
+    fillSource: 'not_executed',
     error,
   });
 
@@ -213,6 +277,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
       let actualTokenAmount = rawToHuman(isBuy ? quote.outAmount : quote.inAmount, isBuy ? quote.outputDecimals : quote.inputDecimals);
       let actualTokenRaw = isBuy ? quote.outAmount : quote.inAmount;
       let actualFee = 0;
+      let fillSource: FillSource = 'quote_fallback';
 
       try {
         const parsedTx = await conn.getParsedTransaction(signature, {
@@ -228,37 +293,33 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
           }
 
           const walletAddr = keypair.publicKey.toBase58();
-          const pre = parsedTx.meta.preTokenBalances || [];
-          const post = parsedTx.meta.postTokenBalances || [];
+          const pre = (parsedTx.meta.preTokenBalances || []) as ParsedTokenBalance[];
+          const post = (parsedTx.meta.postTokenBalances || []) as ParsedTokenBalance[];
+          const mintDeltas = extractWalletMintDeltas(pre, post, walletAddr);
 
-          // USDC delta from SPL token balance changes
-          for (const postBal of post) {
-            if (postBal.mint === USDC_MINT && postBal.owner === walletAddr) {
-              const preBal = pre.find(p => p.mint === USDC_MINT && p.owner === walletAddr);
-              const preAmt = preBal?.uiTokenAmount.uiAmount || 0;
-              const postAmt = postBal.uiTokenAmount.uiAmount || 0;
-              const delta = Math.abs(postAmt - preAmt);
-              if (delta > 0) actualUsdcAmount = delta;
-              break;
-            }
+          const usdcDeltaRaw = mintDeltas.get(USDC_MINT);
+          if (usdcDeltaRaw !== undefined && usdcDeltaRaw !== 0n) {
+            const usdcAbsRaw = usdcDeltaRaw < 0n ? -usdcDeltaRaw : usdcDeltaRaw;
+            actualUsdcAmount = Number(usdcAbsRaw) / Math.pow(10, USDC_DECIMALS);
           }
 
-          // Token delta from SPL token balance changes
-          for (const postBal of post) {
-            if (postBal.mint === tokenMint && postBal.owner === walletAddr) {
-              const preBal = pre.find(p => p.mint === tokenMint && p.owner === walletAddr);
-              const preAmt = preBal?.uiTokenAmount.uiAmount || 0;
-              const postAmt = postBal.uiTokenAmount.uiAmount || 0;
-              const delta = Math.abs(postAmt - preAmt);
-              if (delta > 0) {
-                actualTokenAmount = delta;
-                const rawPre = BigInt(preBal?.uiTokenAmount.amount || '0');
-                const rawPost = BigInt(postBal.uiTokenAmount.amount);
-                const rawDelta = rawPost > rawPre ? rawPost - rawPre : rawPre - rawPost;
-                actualTokenRaw = rawDelta.toString();
-              }
-              break;
-            }
+          const tokenDeltaRaw = mintDeltas.get(tokenMint);
+          if (tokenDeltaRaw !== undefined && tokenDeltaRaw !== 0n) {
+            const tokenAbsRaw = tokenDeltaRaw < 0n ? -tokenDeltaRaw : tokenDeltaRaw;
+            actualTokenRaw = tokenAbsRaw.toString();
+            actualTokenAmount = rawToHuman(
+              actualTokenRaw,
+              isBuy ? quote.outputDecimals : quote.inputDecimals,
+            );
+          }
+
+          if (
+            usdcDeltaRaw !== undefined &&
+            usdcDeltaRaw !== 0n &&
+            tokenDeltaRaw !== undefined &&
+            tokenDeltaRaw !== 0n
+          ) {
+            fillSource = 'onchain';
           }
         }
       } catch (err) {
@@ -277,7 +338,15 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
         priceImpactPct: quote.priceImpactPct,
         fee: actualFee,
         latencyMs,
+        fillSource,
       };
+
+      if (fillSource !== 'onchain') {
+        log.warn('Swap fill parsed via quote fallback; slippage cost may be unavailable', {
+          side,
+          signature,
+        });
+      }
 
       logTrade(quote, result);
 
@@ -322,6 +391,7 @@ export async function buyToken(
       priceImpactPct: 0,
       fee: 0,
       latencyMs: 0,
+      fillSource: 'not_executed',
       error: 'Failed to get quote',
     };
   }
@@ -346,6 +416,7 @@ export async function sellToken(
       priceImpactPct: 0,
       fee: 0,
       latencyMs: 0,
+      fillSource: 'not_executed',
       error: 'Failed to get quote',
     };
   }
@@ -367,20 +438,44 @@ function logTrade(quote: SwapQuote, result: SwapResult) {
   const tokenMint = isBuy ? quote.outputMint : quote.inputMint;
   const inHuman = rawToHuman(quote.inAmount, quote.inputDecimals);
   const outHuman = rawToHuman(quote.outAmount, quote.outputDecimals);
+  const fillSource: FillSource = result.fillSource || (result.success ? 'quote_fallback' : 'not_executed');
 
   const quotePrice = isBuy ? inHuman / outHuman : outHuman / inHuman;
+  const hasMeasuredFill = (
+    result.success &&
+    fillSource === 'onchain' &&
+    result.tokenAmount > 0 &&
+    result.usdcAmount > 0
+  );
 
-  // Compute actual execution price from on-chain fill
+  // Compute actual execution price from filled amounts when available.
   let actualPrice = quotePrice;
-  if (result.success && result.tokenAmount > 0 && result.usdcAmount > 0) {
+  if (hasMeasuredFill) {
     actualPrice = result.usdcAmount / result.tokenAmount;
   }
 
-  // Slippage: for buys, paying more per token = negative (worse).
-  // For sells, receiving less per token = negative (worse).
-  const slippagePct = isBuy
-    ? ((quotePrice - actualPrice) / quotePrice) * 100   // positive = got cheaper than quoted
-    : ((actualPrice - quotePrice) / quotePrice) * 100;   // positive = got more than quoted
+  // Legacy metric: positive = better than quote, negative = worse than quote.
+  const slippagePctLegacy = hasMeasuredFill
+    ? (
+      isBuy
+        ? ((quotePrice - actualPrice) / quotePrice) * 100
+        : ((actualPrice - quotePrice) / quotePrice) * 100
+    )
+    : 0;
+
+  // Standard metric: positive = worse than quote, negative = better than quote.
+  let slippagePctWorse: number | null = null;
+  let slippageCostUsdc: number | null = null;
+  if (hasMeasuredFill) {
+    slippagePctWorse = isBuy
+      ? ((actualPrice - quotePrice) / quotePrice) * 100
+      : ((quotePrice - actualPrice) / quotePrice) * 100;
+
+    const expectedUsdcAtQuote = result.tokenAmount * quotePrice;
+    slippageCostUsdc = isBuy
+      ? (result.usdcAmount - expectedUsdcAtQuote)
+      : (expectedUsdcAtQuote - result.usdcAmount);
+  }
 
   const entry: TradeLog = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -389,10 +484,13 @@ function logTrade(quote: SwapQuote, result: SwapResult) {
     timestamp: Date.now(),
     quotePrice,
     actualPrice,
-    actualSlippagePct: result.success ? slippagePct : 0,
+    actualSlippagePct: slippagePctLegacy,
+    actualSlippagePctWorse: slippagePctWorse,
+    actualSlippageCostUsdc: slippageCostUsdc,
     expectedSlippage: quote.slippageBps / 100,
     actualFill: result.tokenAmount,
     usdcAmount: result.usdcAmount,
+    fillSource,
     txLatencyMs: result.latencyMs,
     fees: result.fee,
     signature: result.signature || '',

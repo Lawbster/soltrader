@@ -21,6 +21,7 @@ export interface SwapResult {
   priceImpactPct: number;
   fee: number; // tx fee in SOL (Solana network fee)
   latencyMs: number;
+  fillSource?: FillSource;
   error?: string;
 }
 
@@ -66,13 +67,21 @@ export interface TradeLog {
   timestamp: number;
   quotePrice: number;       // USDC per token from quote
   actualPrice: number;      // USDC per token from on-chain fill
-  actualSlippagePct: number; // (actualPrice - quotePrice) / quotePrice * 100 (negative = worse fill)
+  // Legacy sign convention: positive = better than quote, negative = worse.
+  actualSlippagePct: number;
+  // Standard sign convention: positive = worse than quote, negative = better.
+  actualSlippagePctWorse: number | null;
+  // Positive = extra USDC cost vs quote, negative = price improvement savings.
+  actualSlippageCostUsdc: number | null;
   expectedSlippage: number;
   actualFill: number;
   usdcAmount: number;       // actual USDC spent/received
+  fillSource: FillSource;
   txLatencyMs: number;
   fees: number;
   signature: string;
   success: boolean;
   error?: string;
 }
+
+export type FillSource = 'onchain' | 'quote_fallback' | 'not_executed';
