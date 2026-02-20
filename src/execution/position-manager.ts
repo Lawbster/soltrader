@@ -382,18 +382,29 @@ async function executeExit(
   let rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
   const slippageBps = config.trading.defaultSlippageBps;
 
-  // For full exits, use actual on-chain balance to avoid overshoot
-  // (position.remainingTokens may drift from real balance due to rounding/fees)
+  // For full exits, reconcile with on-chain balance to handle fee/rounding dust.
+  // IMPORTANT: cap at the position's tracked amount — never sell MORE than we own
+  // according to the position, which would sell orphaned tokens from prior sessions.
   if (sellPct >= 100) {
     const onChainRaw = await getOnChainTokenBalanceRaw(position.mint);
     if (onChainRaw && onChainRaw !== '0') {
-      log.info('Full exit: using on-chain balance', {
+      const onChainBigInt = BigInt(onChainRaw);
+      const positionBigInt = BigInt(rawTokensToSell);
+      // Use on-chain if LESS (fee dust trimming). Never use if MORE (orphaned tokens).
+      const cappedRaw = onChainBigInt < positionBigInt ? onChainRaw : rawTokensToSell;
+      log.info('Full exit: on-chain balance check', {
         mint: position.mint,
         positionRaw: rawTokensToSell,
         onChainRaw,
-        diff: (BigInt(rawTokensToSell) - BigInt(onChainRaw)).toString(),
+        cappedRaw,
+        orphanedRaw: onChainBigInt > positionBigInt
+          ? (onChainBigInt - positionBigInt).toString()
+          : '0',
+        feeAdjustedRaw: onChainBigInt < positionBigInt
+          ? (positionBigInt - onChainBigInt).toString()
+          : '0',
       });
-      rawTokensToSell = onChainRaw;
+      rawTokensToSell = cappedRaw;
     }
   }
 
