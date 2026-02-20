@@ -316,15 +316,25 @@ export async function openPosition(
   return position;
 }
 
-export async function updatePositions() {
-  if (openPositions.size === 0) return;
+let positionUpdateRunning = false;
 
-  for (const [mint, position] of openPositions) {
-    try {
-      await updatePosition(position);
-    } catch (err) {
-      log.error('Failed to update position', { mint, error: err });
+export async function updatePositions() {
+  if (positionUpdateRunning) {
+    log.debug('Position update already running, skipping cycle');
+    return;
+  }
+  positionUpdateRunning = true;
+  try {
+    if (openPositions.size === 0) return;
+    for (const [mint, position] of openPositions) {
+      try {
+        await updatePosition(position);
+      } catch (err) {
+        log.error('Failed to update position', { mint, error: err });
+      }
     }
+  } finally {
+    positionUpdateRunning = false;
   }
 }
 
@@ -566,10 +576,44 @@ export function savePositionHistory() {
       }).length,
       dailyPnlUsdc,
       consecutiveLosses,
+      lastLossTime,
     },
   };
 
   const filePath = path.join(DATA_DIR, `positions-${new Date().toISOString().split('T')[0]}.json`);
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
   log.info('Position history saved', { path: filePath });
+}
+
+export function loadPositionHistory() {
+  const today = new Date().toISOString().split('T')[0];
+  const filePath = path.join(DATA_DIR, `positions-${today}.json`);
+  if (!fs.existsSync(filePath)) return;
+
+  try {
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    const data = JSON.parse(raw) as {
+      open: Position[];
+      stats: { dailyPnlUsdc: number; consecutiveLosses: number; lastLossTime: number };
+    };
+
+    for (const p of data.open || []) {
+      openPositions.set(p.mint, p);
+    }
+
+    // Restore cooldown state — critical to prevent bypass after restart
+    if (data.stats) {
+      dailyPnlUsdc = data.stats.dailyPnlUsdc ?? 0;
+      consecutiveLosses = data.stats.consecutiveLosses ?? 0;
+      lastLossTime = data.stats.lastLossTime ?? 0;
+    }
+
+    log.info('Position history loaded', {
+      openRestored: openPositions.size,
+      dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
+      consecutiveLosses,
+    });
+  } catch (err) {
+    log.warn('Failed to load position history', { error: err instanceof Error ? err.message : String(err) });
+  }
 }

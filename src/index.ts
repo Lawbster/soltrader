@@ -13,6 +13,7 @@ import {
 import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
 import {
   initPortfolio,
+  loadPositionHistory,
   getPortfolioState,
   openPosition,
   updatePositions,
@@ -221,6 +222,7 @@ async function main() {
   }
 
   await initPortfolio();
+  loadPositionHistory();
   initMetrics();
   await startDashboard();
 
