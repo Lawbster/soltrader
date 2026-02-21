@@ -81,6 +81,7 @@ export interface TradeLog {
   fees: number;
   signature: string;
   success: boolean;
+  tradeType?: 'trade' | 'replenish';
   error?: string;
 }
 

@@ -203,7 +203,7 @@ export async function checkSolReplenish() {
         if (config.trading.paperTrading) {
           log.info('PAPER: SOL replenish simulated', { usdcSpent: usdcNeeded.toFixed(2) });
         } else {
-          const result = await executeSwap(quote);
+          const result = await executeSwap(quote, false, 'replenish');
           log.info('SOL replenished', {
             usdcSpent: usdcNeeded.toFixed(2),
             success: result.success,

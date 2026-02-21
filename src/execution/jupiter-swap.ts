@@ -158,7 +158,7 @@ export async function getQuote(
   }
 }
 
-export async function executeSwap(quote: SwapQuote, useJito: boolean = false): Promise<SwapResult> {
+export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tradeType?: 'trade' | 'replenish'): Promise<SwapResult> {
   const cfg = loadStrategyConfig();
   const startTime = Date.now();
   const keypair = getKeypair();
@@ -289,13 +289,15 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
         }
 
         if (parsedTx?.meta) {
-          // SOL fee from lamport balance changes
-          const signerIdx = parsedTx.transaction.message.accountKeys.findIndex(k => k.signer);
-          if (signerIdx >= 0) {
+          // Use explicit wallet pubkey lookup — unambiguous regardless of signer ordering.
+          const walletAddr = keypair.publicKey.toBase58();
+          const walletIdx = parsedTx.transaction.message.accountKeys.findIndex(
+            k => k.pubkey.toBase58() === walletAddr
+          );
+          if (walletIdx >= 0) {
             actualFee = parsedTx.meta.fee / 1e9;
           }
 
-          const walletAddr = keypair.publicKey.toBase58();
           const pre = (parsedTx.meta.preTokenBalances || []) as ParsedTokenBalance[];
           const post = (parsedTx.meta.postTokenBalances || []) as ParsedTokenBalance[];
           const mintDeltas = extractWalletMintDeltas(pre, post, walletAddr);
@@ -316,11 +318,36 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
             );
           }
 
+          // Native SOL changes appear in lamport balance arrays, not token balance arrays.
+          // Note: meta.fee is only the base fee; priority fees and Jito tips are also
+          // deducted from wallet lamports but not reflected in meta.fee — small known bias.
+          let solFillDetected = false;
+          if (tokenMint === SOL_MINT && walletIdx >= 0 &&
+              parsedTx.meta.preBalances && parsedTx.meta.postBalances) {
+            const preLamports = parsedTx.meta.preBalances[walletIdx];
+            const postLamports = parsedTx.meta.postBalances[walletIdx];
+            const txFeeLamports = parsedTx.meta.fee;
+            if (preLamports !== undefined && postLamports !== undefined) {
+              const lamportDelta = postLamports - preLamports;
+              // Buy (USDC→SOL): postLamports = preLamports + solReceived - txFee
+              //   → solReceived = lamportDelta + txFee
+              // Sell (SOL→USDC): postLamports = preLamports - solSent - txFee
+              //   → solSent = -lamportDelta - txFee
+              const solAmountLamports = isBuy
+                ? lamportDelta + txFeeLamports
+                : -lamportDelta - txFeeLamports;
+              if (solAmountLamports > 0) {
+                actualTokenRaw = solAmountLamports.toString();
+                actualTokenAmount = solAmountLamports / 1e9;
+                solFillDetected = true;
+              }
+            }
+          }
+
           if (
             usdcDeltaRaw !== undefined &&
             usdcDeltaRaw !== 0n &&
-            tokenDeltaRaw !== undefined &&
-            tokenDeltaRaw !== 0n
+            (tokenDeltaRaw !== undefined && tokenDeltaRaw !== 0n || solFillDetected)
           ) {
             fillSource = 'onchain';
           }
@@ -351,7 +378,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
         });
       }
 
-      logTrade(quote, result);
+      logTrade(quote, result, tradeType);
 
       log.info('Swap executed', {
         side,
@@ -436,7 +463,7 @@ export async function getQuoteEstimate(
   return getQuote(inputMint, outputMint, amountRaw, slippageBps);
 }
 
-function logTrade(quote: SwapQuote, result: SwapResult) {
+function logTrade(quote: SwapQuote, result: SwapResult, tradeType?: 'trade' | 'replenish') {
   const isBuy = quote.inputMint === USDC_MINT;
   const tokenMint = isBuy ? quote.outputMint : quote.inputMint;
   const inHuman = rawToHuman(quote.inAmount, quote.inputDecimals);
@@ -498,6 +525,7 @@ function logTrade(quote: SwapQuote, result: SwapResult) {
     fees: result.fee,
     signature: result.signature || '',
     success: result.success,
+    tradeType,
     error: result.error,
   };
   tradeLogs.push(entry);
