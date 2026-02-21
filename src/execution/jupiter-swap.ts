@@ -70,40 +70,36 @@ function extractWalletMintDeltas(
   postBalances: ParsedTokenBalance[],
   walletAddr: string
 ): Map<string, bigint> {
-  const preByKey = new Map<string, ParsedTokenBalance>();
-  const postByKey = new Map<string, ParsedTokenBalance>();
+  // accountIndex is always present in Solana parsed tx responses — use it as the key.
+  const preByIdx = new Map<number, ParsedTokenBalance>();
+  const postByIdx = new Map<number, ParsedTokenBalance>();
 
-  for (let i = 0; i < preBalances.length; i++) {
-    const b = preBalances[i];
-    const key = typeof b.accountIndex === 'number'
-      ? `idx:${b.accountIndex}`
-      : `${b.mint}:${b.owner || ''}`;
-    preByKey.set(key, b);
+  for (const b of preBalances) {
+    if (typeof b.accountIndex === 'number') preByIdx.set(b.accountIndex, b);
+  }
+  for (const b of postBalances) {
+    if (typeof b.accountIndex === 'number') postByIdx.set(b.accountIndex, b);
   }
 
-  for (let i = 0; i < postBalances.length; i++) {
-    const b = postBalances[i];
-    const key = typeof b.accountIndex === 'number'
-      ? `idx:${b.accountIndex}`
-      : `${b.mint}:${b.owner || ''}`;
-    postByKey.set(key, b);
-  }
-
-  const keys = new Set<string>([...preByKey.keys(), ...postByKey.keys()]);
+  const allIndices = new Set<number>([...preByIdx.keys(), ...postByIdx.keys()]);
   const deltas = new Map<string, bigint>();
 
-  for (const key of keys) {
-    const pre = preByKey.get(key);
-    const post = postByKey.get(key);
+  for (const idx of allIndices) {
+    const pre = preByIdx.get(idx);
+    const post = postByIdx.get(idx);
 
     const mint = post?.mint ?? pre?.mint;
+    if (!mint) continue;
+
+    // owner field is optional in some RPC responses; skip entries where it is
+    // absent (cannot confirm ownership without ATA derivation).
     const owner = post?.owner ?? pre?.owner;
-    if (!mint || owner !== walletAddr) continue;
+    if (owner === undefined || owner !== walletAddr) continue;
 
     const delta = rawTokenAmount(post) - rawTokenAmount(pre);
     if (delta === 0n) continue;
 
-    deltas.set(mint, (deltas.get(mint) || 0n) + delta);
+    deltas.set(mint, (deltas.get(mint) ?? 0n) + delta);
   }
 
   return deltas;
@@ -280,10 +276,17 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false): P
       let fillSource: FillSource = 'quote_fallback';
 
       try {
-        const parsedTx = await conn.getParsedTransaction(signature, {
-          maxSupportedTransactionVersion: 0,
-          commitment: 'confirmed',
-        });
+        // Retry loop: getParsedTransaction returns null immediately after confirmation
+        // because Helius's parsed-tx index lags 1–4 s behind raw confirmation.
+        let parsedTx = null;
+        for (let r = 0; r < 5; r++) {
+          if (r > 0) await new Promise(res => setTimeout(res, 1200));
+          parsedTx = await conn.getParsedTransaction(signature, {
+            maxSupportedTransactionVersion: 0,
+            commitment: 'confirmed',
+          });
+          if (parsedTx?.meta) break;
+        }
 
         if (parsedTx?.meta) {
           // SOL fee from lamport balance changes

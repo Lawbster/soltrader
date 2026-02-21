@@ -2,12 +2,27 @@ import { loadCandles, loadTokenList, aggregateCandles } from './data-loader';
 import { STRATEGIES } from './strategy';
 import { runBacktest } from './engine';
 import { printReport, computeMetrics } from './report';
+import { fixedCost, loadEmpiricalCost } from './cost-loader';
 
 function main() {
-  const args = process.argv.slice(2);
-  const strategyFilter = args[0] || null;
-  const tokenFilter = args[1] || null;
-  const timeframe = parseInt(args[2] || '1', 10);
+  const rawArgs = process.argv.slice(2);
+
+  // Extract named flags, leave positional args intact
+  let costMode: 'fixed' | 'empirical' = 'fixed';
+  let fromDate: string | undefined;
+  let toDate: string | undefined;
+  const positional: string[] = [];
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    if (rawArgs[i] === '--cost' && rawArgs[i + 1]) { costMode = rawArgs[++i] as 'fixed' | 'empirical'; }
+    else if (rawArgs[i] === '--from' && rawArgs[i + 1]) { fromDate = rawArgs[++i]; }
+    else if (rawArgs[i] === '--to' && rawArgs[i + 1]) { toDate = rawArgs[++i]; }
+    else { positional.push(rawArgs[i]); }
+  }
+
+  const strategyFilter = positional[0] || null;
+  const tokenFilter = positional[1] || null;
+  const timeframe = parseInt(positional[2] || '1', 10);
 
   const strategyNames = strategyFilter
     ? [strategyFilter]
@@ -19,6 +34,21 @@ function main() {
       console.error(`Available: ${Object.keys(STRATEGIES).join(', ')}`);
       process.exit(1);
     }
+  }
+
+  // Resolve cost config
+  let costCfg = fixedCost();
+  if (costMode === 'empirical') {
+    try {
+      costCfg = loadEmpiricalCost(fromDate, toDate);
+    } catch (err) {
+      console.error(`[WARN] ${err instanceof Error ? err.message : String(err)}`);
+      console.error('[WARN] Falling back to fixed cost model.');
+    }
+  }
+  console.log(`Cost model: ${costCfg.model} (round-trip ${costCfg.roundTripPct.toFixed(3)}%${costCfg.sampleSize ? `, n=${costCfg.sampleSize}` : ''})`);
+  if (fromDate || toDate) {
+    console.log(`Date range: ${fromDate ?? 'all'} → ${toDate ?? 'all'}`);
   }
 
   const allTokens = loadTokenList();
@@ -40,7 +70,7 @@ function main() {
   const results: Array<{ strategyName: string; label: string; trades: number; winRate: number; totalPnl: number }> = [];
 
   for (const token of tokens) {
-    let candles = loadCandles(token.mint);
+    let candles = loadCandles(token.mint, fromDate, toDate);
     if (candles.length === 0) {
       console.warn(`No candle data for ${token.label} (${token.mint.slice(0, 8)}...)`);
       continue;
@@ -54,8 +84,7 @@ function main() {
         mint: token.mint,
         label: token.label,
         strategy: STRATEGIES[name],
-        commissionPct: 0.3,
-        slippagePct: 0.1,
+        roundTripCostPct: costCfg.roundTripPct,
       });
 
       printReport(result);

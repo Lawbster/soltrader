@@ -78,12 +78,19 @@ export interface BacktestTrade {
   exitReason: string;
 }
 
+export interface CostConfig {
+  model: 'fixed' | 'empirical';
+  roundTripPct: number;
+  sampleSize?: number; // empirical only: number of executions used
+}
+
 export interface BacktestConfig {
   mint: string;
   label: string;
   strategy: BacktestStrategy;
-  commissionPct: number;
-  slippagePct: number;
+  commissionPct?: number;     // legacy fallback
+  slippagePct?: number;       // legacy fallback
+  roundTripCostPct?: number;  // overrides commissionPct+slippagePct when set
 }
 
 export interface BacktestResult {

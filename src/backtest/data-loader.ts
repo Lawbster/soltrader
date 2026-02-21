@@ -42,12 +42,18 @@ export function loadPrices(mint: string): PricePoint[] {
   return points.sort((a, b) => a.ts - b.ts);
 }
 
-export function loadCandles(mint: string): Candle[] {
+export function loadCandles(mint: string, fromDate?: string, toDate?: string): Candle[] {
   const dir = path.join(DATA_ROOT, 'candles', mint);
   if (!fs.existsSync(dir)) return [];
 
   const files = fs.readdirSync(dir)
     .filter(f => f.endsWith('.csv'))
+    .filter(f => {
+      const date = f.replace('.csv', '');
+      if (fromDate && date < fromDate) return false;
+      if (toDate && date > toDate) return false;
+      return true;
+    })
     .sort();
 
   const candles: Candle[] = [];

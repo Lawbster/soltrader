@@ -8,10 +8,15 @@
  *   tsx src/backtest/sweep.ts crsi POPCAT 5      # one template x one token x 5-min bars
  */
 
-import { BacktestStrategy, Signal, BacktestTrade, BacktestMetrics } from './types';
+import fs from 'fs';
+import path from 'path';
+import { BacktestStrategy, Signal, BacktestMetrics } from './types';
 import { loadCandles, loadTokenList, aggregateCandles } from './data-loader';
 import { runBacktest } from './engine';
 import { computeMetrics } from './report';
+import { fixedCost, loadEmpiricalCost } from './cost-loader';
+
+const SWEEP_OUT_DIR = path.resolve(__dirname, '../../data/data/sweep-results');
 
 // ── Sweep result type ────────────────────────────────────────────────
 
@@ -241,10 +246,24 @@ function expandGrid(paramGrid: Record<string, number[]>): Record<string, number>
 // ── Main sweep runner ────────────────────────────────────────────────
 
 function main() {
-  const args = process.argv.slice(2);
-  const templateFilter = args[0] || null;
-  const tokenFilter = args[1] || null;
-  const timeframe = parseInt(args[2] || '1', 10);
+  const rawArgs = process.argv.slice(2);
+
+  // Extract named flags, leave positional args intact
+  let costMode: 'fixed' | 'empirical' = 'fixed';
+  let fromDate: string | undefined;
+  let toDate: string | undefined;
+  const positional: string[] = [];
+
+  for (let i = 0; i < rawArgs.length; i++) {
+    if (rawArgs[i] === '--cost' && rawArgs[i + 1]) { costMode = rawArgs[++i] as 'fixed' | 'empirical'; }
+    else if (rawArgs[i] === '--from' && rawArgs[i + 1]) { fromDate = rawArgs[++i]; }
+    else if (rawArgs[i] === '--to' && rawArgs[i + 1]) { toDate = rawArgs[++i]; }
+    else { positional.push(rawArgs[i]); }
+  }
+
+  const templateFilter = positional[0] || null;
+  const tokenFilter = positional[1] || null;
+  const timeframe = parseInt(positional[2] || '1', 10);
 
   const selectedTemplates = templateFilter
     ? templates.filter(t => t.name === templateFilter)
@@ -254,6 +273,17 @@ function main() {
     console.error(`Unknown template: ${templateFilter}`);
     console.error(`Available: ${templates.map(t => t.name).join(', ')}`);
     process.exit(1);
+  }
+
+  // Resolve cost config
+  let costCfg = fixedCost();
+  if (costMode === 'empirical') {
+    try {
+      costCfg = loadEmpiricalCost(fromDate, toDate);
+    } catch (err) {
+      console.error(`[WARN] ${err instanceof Error ? err.message : String(err)}`);
+      console.error('[WARN] Falling back to fixed cost model.');
+    }
   }
 
   const allTokens = loadTokenList();
@@ -275,12 +305,14 @@ function main() {
     totalCombos += expandGrid(tmpl.paramGrid).length;
   }
   console.log(`Sweep: ${selectedTemplates.length} template(s) x ${tokens.length} token(s) x ${timeframe}-min bars`);
+  console.log(`Cost model: ${costCfg.model} (round-trip ${costCfg.roundTripPct.toFixed(3)}%${costCfg.sampleSize ? `, n=${costCfg.sampleSize}` : ''})`);
+  if (fromDate || toDate) console.log(`Date range: ${fromDate ?? 'all'} → ${toDate ?? 'all'}`);
   console.log(`Total parameter combos per token: ${totalCombos}\n`);
 
   const allResults: SweepResult[] = [];
 
   for (const token of tokens) {
-    let candles = loadCandles(token.mint);
+    let candles = loadCandles(token.mint, fromDate, toDate);
     if (candles.length === 0) {
       console.warn(`No data for ${token.label}, skipping`);
       continue;
@@ -300,8 +332,7 @@ function main() {
           mint: token.mint,
           label: token.label,
           strategy,
-          commissionPct: 0.3,
-          slippagePct: 0.1,
+          roundTripCostPct: costCfg.roundTripPct,
         });
         const dateRange = result.dateRange.end - result.dateRange.start;
         const metrics = computeMetrics(result.trades, dateRange);
@@ -392,6 +423,39 @@ function main() {
       `${m.totalTrades}T ${m.winRate.toFixed(0)}%W ${m.totalPnlPct >= 0 ? '+' : ''}${m.totalPnlPct.toFixed(1)}% Sharpe=${m.sharpeRatio.toFixed(2)}`
     );
   }
+
+  // Write all results to CSV
+  fs.mkdirSync(SWEEP_OUT_DIR, { recursive: true });
+  const dateStr = new Date().toISOString().split('T')[0];
+  const outPath = path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min.csv`);
+
+  const csvHeader = 'template,token,timeframe,params,trades,winRate,pnlPct,profitFactor,sharpeRatio,maxDrawdownPct,avgWinLossRatio,avgWinPct,avgLossPct,avgHoldMinutes,tradesPerDay';
+  const csvRows = meaningful.map(r => {
+    const m = r.metrics;
+    const paramStr = Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(' ');
+    const pf = m.profitFactor === Infinity ? '' : m.profitFactor.toFixed(4);
+    const wl = m.avgWinLossRatio === Infinity ? '' : m.avgWinLossRatio.toFixed(4);
+    return [
+      r.templateName,
+      r.token,
+      r.timeframe,
+      `"${paramStr}"`,
+      m.totalTrades,
+      m.winRate.toFixed(2),
+      m.totalPnlPct.toFixed(4),
+      pf,
+      m.sharpeRatio.toFixed(4),
+      m.maxDrawdownPct.toFixed(4),
+      wl,
+      m.avgWinPct.toFixed(4),
+      m.avgLossPct.toFixed(4),
+      m.avgHoldMinutes.toFixed(1),
+      m.tradesPerDay.toFixed(2),
+    ].join(',');
+  });
+
+  fs.writeFileSync(outPath, [csvHeader, ...csvRows].join('\n'), 'utf8');
+  console.log(`\nFull results (${meaningful.length} rows) saved to: ${outPath}`);
 }
 
 main();

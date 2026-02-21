@@ -83,9 +83,9 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
 }
 
 export function runBacktest(candles: Candle[], config: BacktestConfig): BacktestResult {
-  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1 } = config;
-  // Round-trip cost: commission + slippage applied on BOTH entry and exit
-  const roundTripCostPct = (commissionPct + slippagePct) * 2;
+  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct } = config;
+  // Round-trip cost: use explicit override if provided, otherwise derive from commission+slippage
+  const roundTripCost = roundTripCostPct ?? (commissionPct + slippagePct) * 2;
 
   if (candles.length === 0) {
     return {
@@ -124,7 +124,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
         exitTime: candle.timestamp,
         entryPrice: position.entryPrice,
         exitPrice: candle.open,
-        pnlPct: grossPnlPct - roundTripCostPct,
+        pnlPct: grossPnlPct - roundTripCost,
         holdBars: i - position.entryIndex,
         holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
         exitReason: 'strategy',
@@ -147,7 +147,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
             exitTime: candle.timestamp,
             entryPrice: position.entryPrice,
             exitPrice: stopPrice,
-            pnlPct: strategy.stopLossPct - roundTripCostPct,
+            pnlPct: strategy.stopLossPct - roundTripCost,
             holdBars: i - position.entryIndex,
             holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
             exitReason: 'stop-loss',
@@ -169,7 +169,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
             exitTime: candle.timestamp,
             entryPrice: position.entryPrice,
             exitPrice: tpPrice,
-            pnlPct: strategy.takeProfitPct - roundTripCostPct,
+            pnlPct: strategy.takeProfitPct - roundTripCost,
             holdBars: i - position.entryIndex,
             holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
             exitReason: 'take-profit',
@@ -227,7 +227,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
       exitTime: last.timestamp,
       entryPrice: position.entryPrice,
       exitPrice: last.close,
-      pnlPct: grossPnlPct - roundTripCostPct,
+      pnlPct: grossPnlPct - roundTripCost,
       holdBars: candles.length - 1 - position.entryIndex,
       holdTimeMinutes: (last.timestamp - position.entryTime) / 60_000,
       exitReason: 'end-of-data',
