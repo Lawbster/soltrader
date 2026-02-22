@@ -8,6 +8,7 @@ import {
   buildCloseSeriesFromPrices,
 } from '../analysis';
 import { loadWatchlist } from '../monitor';
+import { getLiveTokenStrategy } from '../strategy/live-strategy-map';
 import { getDashboardHtml } from './page';
 
 const log = createLogger('dashboard');
@@ -116,11 +117,18 @@ function handleSignals(res: http.ServerResponse) {
     const indicatorsCfg = cfg.entry.indicators;
     const watchlist = loadWatchlist();
     const metrics = getAggregateMetrics();
-    const candlesNeeded = (indicatorsCfg?.connors?.percentRankPeriod || 100) + 1;
-
     const signals = watchlist.map((entry) => {
       const mint = entry.mint;
       const pricePoints = getPriceHistoryCount(mint);
+
+      const tokenStrategy = getLiveTokenStrategy(mint);
+      const rsiPeriod = tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.rsi.period;
+      const connorsPercentRankPeriod = tokenStrategy
+        ? (tokenStrategy.indicator.kind === 'rsi'
+            ? rsiPeriod + 1
+            : (tokenStrategy.indicator.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
+        : indicatorsCfg.connors.percentRankPeriod;
+      const candlesNeeded = connorsPercentRankPeriod + 1;
 
       let crsi: number | undefined;
       let rsi: number | undefined;
@@ -131,10 +139,10 @@ function handleSignals(res: http.ServerResponse) {
         const snap = getIndicatorSnapshot(mint, {
           intervalMinutes: indicatorsCfg.candleIntervalMinutes,
           lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
-          rsiPeriod: indicatorsCfg.rsi.period,
-          connorsRsiPeriod: indicatorsCfg.connors.rsiPeriod,
-          connorsStreakRsiPeriod: indicatorsCfg.connors.streakRsiPeriod,
-          connorsPercentRankPeriod: indicatorsCfg.connors.percentRankPeriod,
+          rsiPeriod,
+          connorsRsiPeriod: tokenStrategy ? rsiPeriod : indicatorsCfg.connors.rsiPeriod,
+          connorsStreakRsiPeriod: tokenStrategy?.indicator.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
+          connorsPercentRankPeriod,
         });
         crsi = snap.connorsRsi;
         rsi = snap.rsi;
@@ -175,7 +183,7 @@ function handleSignals(res: http.ServerResponse) {
         pricePoints,
         source,
         ready: candleCount >= candlesNeeded,
-        oversoldThreshold: indicatorsCfg?.connors?.oversold || 20,
+        oversoldThreshold: tokenStrategy?.params.entry ?? indicatorsCfg?.connors?.oversold ?? 20,
         liquidityUsd,
         effectiveMaxUsdc,
         maxEntryImpactPct: posCfg.maxEntryImpactPct,
