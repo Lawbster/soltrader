@@ -79,7 +79,7 @@ export function evaluateEntry(
 
   // Hard filters (universe + entry + LP stability).
   // When using per-token strategy, skip the global indicator check — we apply our own below.
-  const indicatorsForFilter = tokenStrategy ? undefined : indicators;
+  const indicatorsForFilter = tokenStrategy ? { rsi: 0, connorsRsi: 0 } : indicators;
   const filterResult = filterToken(token, window, lpChange10mPct, indicatorsForFilter, isWatchlist);
   if (!filterResult.passed) {
     return {
