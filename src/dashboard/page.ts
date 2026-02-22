@@ -198,6 +198,57 @@ export function getDashboardHtml(): string {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .table-header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .subtle-note {
+    font-size: 0.72rem;
+    color: #6e7681;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+  }
+  .table-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .filter-btn {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.72rem;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .filter-btn:hover { border-color: #58a6ff; }
+  .filter-btn.active {
+    background: #1a2a3a;
+    border-color: #1f6feb;
+    color: #58a6ff;
+  }
+  .table-controls input[type="date"],
+  .table-controls select {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 0.75rem;
+  }
+  .table-controls input[type="date"]:focus,
+  .table-controls select:focus {
+    border-color: #58a6ff;
+    outline: none;
   }
   table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
   th {
@@ -229,6 +280,12 @@ export function getDashboardHtml(): string {
 
   section { margin-bottom: 24px; }
   .section-title { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: #c9d1d9; }
+  .section-title.with-subtitle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 </style>
 </head>
 <body>
@@ -274,7 +331,10 @@ export function getDashboardHtml(): string {
 
 <!-- Performance (hidden until trades exist) -->
 <section id="perfSection" style="display:none;">
-  <div class="section-title">Performance</div>
+  <div class="section-title with-subtitle">
+    <span>Performance</span>
+    <span class="subtle-note" id="perfRange">All time</span>
+  </div>
   <div class="grid grid-3" id="perfMetrics"></div>
 </section>
 
@@ -282,8 +342,20 @@ export function getDashboardHtml(): string {
 <section>
   <div class="table-container">
     <div class="table-header">
-      <span>Trade History</span>
-      <span id="tradeCount">0 trades</span>
+      <div class="table-header-left">
+        <span>Trade History</span>
+        <span class="subtle-note" id="tradeRangeLabel">All time</span>
+      </div>
+      <div class="table-controls">
+        <button class="filter-btn active" id="filterAllBtn" onclick="setTradeDateFilter('')">All</button>
+        <button class="filter-btn" id="filterTodayBtn" onclick="setTradeDateFilter(dateKeyFromOffset(0))">Today</button>
+        <button class="filter-btn" id="filterYesterdayBtn" onclick="setTradeDateFilter(dateKeyFromOffset(-1))">Yesterday</button>
+        <select id="tradeMintSelect" onchange="setTradeMintFilter(this.value)">
+          <option value="">All tokens</option>
+        </select>
+        <input type="date" id="tradeDateInput" onchange="setTradeDateFilter(this.value)" />
+        <span id="tradeCount">0 trades</span>
+      </div>
     </div>
     <div style="max-height: 400px; overflow-y: auto;">
       <table>
@@ -308,6 +380,9 @@ export function getDashboardHtml(): string {
 const API = '';
 let selectedMint = null;
 let signalCache = [];
+let latestTrades = [];
+let selectedTradeDate = '';
+let selectedTradeMint = '';
 function fmt(n, d=2) { return n === Infinity || n === -Infinity ? '--' : Number(n).toFixed(d); }
 function fmtPct(n) { return fmt(n,1) + '%'; }
 function pnlColor(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
@@ -321,6 +396,150 @@ function crsiColor(v, threshold) {
   if (v <= threshold) return 'green';
   if (v <= threshold * 2) return 'yellow';
   return 'muted';
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+function toDateKey(ts) {
+  const d = new Date(ts);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function dateKeyFromOffset(offsetDays) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+}
+function formatDateKey(key) {
+  if (!key) return 'All time';
+  const parts = key.split('-').map(Number);
+  if (parts.length !== 3 || parts.some(Number.isNaN)) return 'All time';
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+function tokenNameFromMint(mint) {
+  const sig = signalCache.find(s => s.mint === mint);
+  return sig ? labelFor(sig) : shortMint(mint);
+}
+function formatTradeRangeLabel() {
+  const dateLabel = formatDateKey(selectedTradeDate);
+  const tokenLabel = selectedTradeMint ? tokenNameFromMint(selectedTradeMint) : 'All tokens';
+  return dateLabel + ' · ' + tokenLabel;
+}
+function normalizeTrades(trades) {
+  if (!Array.isArray(trades)) return [];
+  return trades
+    .filter(t =>
+      t &&
+      typeof t.mint === 'string' &&
+      isFiniteNumber(t.exitTime) &&
+      isFiniteNumber(t.pnlUsdc) &&
+      isFiniteNumber(t.pnlPct) &&
+      isFiniteNumber(t.holdTimeMinutes)
+    )
+    .map(t => ({
+      ...t,
+      exitTime: Number(t.exitTime),
+      pnlUsdc: Number(t.pnlUsdc),
+      pnlPct: Number(t.pnlPct),
+      holdTimeMinutes: Number(t.holdTimeMinutes),
+    }));
+}
+function filterTradesByDate(trades) {
+  return trades.filter(t => {
+    if (selectedTradeDate && toDateKey(t.exitTime) !== selectedTradeDate) return false;
+    if (selectedTradeMint && t.mint !== selectedTradeMint) return false;
+    return true;
+  });
+}
+function updateTradeMintOptions(trades) {
+  const select = document.getElementById('tradeMintSelect');
+  if (!select) return;
+  const counts = new Map();
+  for (const t of trades) {
+    counts.set(t.mint, (counts.get(t.mint) || 0) + 1);
+  }
+  const options = Array.from(counts.keys())
+    .map(mint => ({
+      mint,
+      label: tokenNameFromMint(mint),
+      count: counts.get(mint) || 0,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  select.innerHTML = '<option value="">All tokens</option>' +
+    options.map(o => '<option value="' + o.mint + '">' + o.label + ' (' + o.count + ')</option>').join('');
+
+  if (selectedTradeMint && !counts.has(selectedTradeMint)) {
+    selectedTradeMint = '';
+  }
+  select.value = selectedTradeMint;
+}
+function syncTradeFilterButtons() {
+  const allBtn = document.getElementById('filterAllBtn');
+  const todayBtn = document.getElementById('filterTodayBtn');
+  const ydayBtn = document.getElementById('filterYesterdayBtn');
+  const dateInput = document.getElementById('tradeDateInput');
+  const mintSelect = document.getElementById('tradeMintSelect');
+  const today = dateKeyFromOffset(0);
+  const yday = dateKeyFromOffset(-1);
+  if (dateInput) dateInput.value = selectedTradeDate;
+  if (mintSelect) mintSelect.value = selectedTradeMint;
+  if (allBtn) allBtn.classList.toggle('active', !selectedTradeDate);
+  if (todayBtn) todayBtn.classList.toggle('active', selectedTradeDate === today);
+  if (ydayBtn) ydayBtn.classList.toggle('active', selectedTradeDate === yday);
+}
+function setTradeDateFilter(dateKey) {
+  selectedTradeDate = dateKey || '';
+  syncTradeFilterButtons();
+  renderTradePanels();
+}
+function setTradeMintFilter(mint) {
+  selectedTradeMint = mint || '';
+  syncTradeFilterButtons();
+  renderTradePanels();
+}
+function computeTradeStats(trades) {
+  const totalTrades = trades.length;
+  if (totalTrades === 0) {
+    return {
+      totalTrades: 0, winRate: 0, profitFactor: 0, totalPnlUsdc: 0,
+      maxDrawdownPct: 0, sharpeRatio: 0, avgHoldTimeMinutes: 0,
+    };
+  }
+  const wins = trades.filter(t => t.pnlUsdc > 0);
+  const losses = trades.filter(t => t.pnlUsdc <= 0);
+  const winRate = (wins.length / totalTrades) * 100;
+  const totalPnlUsdc = trades.reduce((sum, t) => sum + t.pnlUsdc, 0);
+  const totalWinUsdc = wins.reduce((sum, t) => sum + t.pnlUsdc, 0);
+  const totalLossUsdc = Math.abs(losses.reduce((sum, t) => sum + t.pnlUsdc, 0));
+  const profitFactor = totalLossUsdc > 0 ? totalWinUsdc / totalLossUsdc : (totalWinUsdc > 0 ? Infinity : 0);
+
+  let peak = 0;
+  let maxDrawdownPct = 0;
+  let cumPnl = 0;
+  const chronological = [...trades].sort((a, b) => a.exitTime - b.exitTime);
+  for (const t of chronological) {
+    cumPnl += t.pnlUsdc;
+    if (cumPnl > peak) peak = cumPnl;
+    if (peak > 0) {
+      const dd = ((peak - cumPnl) / peak) * 100;
+      if (dd > maxDrawdownPct) maxDrawdownPct = dd;
+    }
+  }
+
+  const returns = trades.map(t => t.pnlPct / 100);
+  const mean = returns.reduce((sum, r) => sum + r, 0) / returns.length;
+  const variance = returns.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / returns.length;
+  const std = Math.sqrt(variance);
+  const sharpeRatio = std > 0 ? (mean / std) * Math.sqrt(totalTrades) : 0;
+  const avgHoldTimeMinutes = trades.reduce((sum, t) => sum + t.holdTimeMinutes, 0) / totalTrades;
+
+  return { totalTrades, winRate, profitFactor, totalPnlUsdc, maxDrawdownPct, sharpeRatio, avgHoldTimeMinutes };
+}
+function renderTradePanels() {
+  const filtered = filterTradesByDate(latestTrades);
+  renderPerformance(filtered);
+  renderTrades(filtered, latestTrades.length);
 }
 
 async function fetchAll() {
@@ -340,8 +559,10 @@ async function fetchAll() {
       : (signals[0]?.label || (signals[0] ? shortMint(signals[0].mint) : ''));
     renderPriceChart(chart, chartLabel);
     renderPortfolio(status);
-    renderPerformance(metrics);
-    renderTrades(trades);
+    latestTrades = normalizeTrades(trades);
+    updateTradeMintOptions(latestTrades);
+    syncTradeFilterButtons();
+    renderTradePanels();
     renderSystem(status, metrics, signals);
     renderBadges(status, signals);
     document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
@@ -564,33 +785,41 @@ function renderPortfolio(s) {
   }
 }
 
-function renderPerformance(m) {
+function renderPerformance(trades) {
+  const stats = computeTradeStats(trades);
   const section = document.getElementById('perfSection');
-  if (m.totalTrades === 0) { section.style.display = 'none'; return; }
+  const rangeEl = document.getElementById('perfRange');
+  if (rangeEl) rangeEl.textContent = formatTradeRangeLabel();
+  if (stats.totalTrades === 0) { section.style.display = 'none'; return; }
   section.style.display = '';
 
   const el = document.getElementById('perfMetrics');
   const cards = [
-    { label: 'Total Trades', value: m.totalTrades, cls: 'blue' },
-    { label: 'Win Rate', value: fmtPct(m.winRate), cls: m.winRate >= 50 ? 'green' : 'red' },
-    { label: 'Profit Factor', value: fmt(m.profitFactor), cls: m.profitFactor >= 1.25 ? 'green' : 'red' },
-    { label: 'Total PnL', value: fmt(m.totalPnlUsdc, 2) + ' USDC', cls: pnlColor(m.totalPnlUsdc) },
-    { label: 'Max Drawdown', value: fmtPct(m.maxDrawdownPct), cls: m.maxDrawdownPct <= 10 ? 'green' : 'red' },
-    { label: 'Sharpe Ratio', value: fmt(m.sharpeRatio), cls: m.sharpeRatio > 0 ? 'green' : 'red' },
+    { label: 'Total Trades', value: stats.totalTrades, cls: 'blue' },
+    { label: 'Win Rate', value: fmtPct(stats.winRate), cls: stats.winRate >= 50 ? 'green' : 'red' },
+    { label: 'Profit Factor', value: fmt(stats.profitFactor), cls: stats.profitFactor >= 1.25 ? 'green' : 'red' },
+    { label: 'Total PnL', value: fmt(stats.totalPnlUsdc, 2) + ' USDC', cls: pnlColor(stats.totalPnlUsdc) },
+    { label: 'Max Drawdown', value: fmtPct(stats.maxDrawdownPct), cls: stats.maxDrawdownPct <= 10 ? 'green' : 'red' },
+    { label: 'Avg Hold', value: fmt(stats.avgHoldTimeMinutes, 1) + 'm', cls: 'blue' },
   ];
   el.innerHTML = cards.map(c =>
     '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div></div>'
   ).join('');
 }
 
-function renderTrades(trades) {
+function renderTrades(trades, totalTrades) {
   const el = document.getElementById('tradeTable');
-  document.getElementById('tradeCount').textContent = trades.length + ' trades';
+  const total = Number.isFinite(totalTrades) ? totalTrades : trades.length;
+  const hasFilter = !!selectedTradeDate || !!selectedTradeMint;
+  const countText = hasFilter ? (trades.length + ' / ' + total + ' trades') : (total + ' trades');
+  document.getElementById('tradeCount').textContent = countText;
+  const rangeEl = document.getElementById('tradeRangeLabel');
+  if (rangeEl) rangeEl.textContent = formatTradeRangeLabel();
   if (trades.length === 0) {
     el.innerHTML = '<tr><td colspan="6" class="no-data">No trades yet</td></tr>';
     return;
   }
-  const sorted = [...trades].reverse();
+  const sorted = [...trades].sort((a, b) => b.exitTime - a.exitTime);
   el.innerHTML = sorted.map(t => {
     const isWin = t.pnlUsdc > 0;
     const sig = signalCache.find(sc => sc.mint === t.mint);
@@ -642,6 +871,7 @@ function renderBadges(status, signals) {
 }
 
 // Initial fetch + auto-refresh every 30s
+syncTradeFilterButtons();
 fetchAll();
 setInterval(fetchAll, 30000);
 </script>

@@ -3,6 +3,7 @@ import { TokenData, TradeWindow, FilterResult, ScoreResult } from '../analysis/t
 import { filterToken } from '../analysis/token-filter';
 import { scoreToken } from './scoring';
 import { loadStrategyConfig } from './strategy-config';
+import { TokenStrategy } from './live-strategy-map';
 
 const log = createLogger('rules');
 
@@ -41,7 +42,8 @@ export function evaluateEntry(
   lpChange10mPct?: number,
   indicators?: { rsi?: number; connorsRsi?: number },
   isWatchlist = false,
-  totalTrades = 0
+  totalTrades = 0,
+  tokenStrategy?: TokenStrategy
 ): EntrySignal {
   const cfg = loadStrategyConfig();
 
@@ -75,8 +77,10 @@ export function evaluateEntry(
     }
   }
 
-  // Hard filters (universe + entry + LP stability)
-  const filterResult = filterToken(token, window, lpChange10mPct, indicators, isWatchlist);
+  // Hard filters (universe + entry + LP stability).
+  // When using per-token strategy, skip the global indicator check — we apply our own below.
+  const indicatorsForFilter = tokenStrategy ? undefined : indicators;
+  const filterResult = filterToken(token, window, lpChange10mPct, indicatorsForFilter, isWatchlist);
   if (!filterResult.passed) {
     return {
       mint: token.mint,
@@ -102,7 +106,72 @@ export function evaluateEntry(
     };
   }
 
-  // Position sizing — with liquidity cap + sample size gate (all USDC)
+  // Per-token strategy: apply indicator threshold and use per-token size/SL
+  if (tokenStrategy) {
+    const { kind } = tokenStrategy.indicator;
+    const threshold = tokenStrategy.params.entry;
+
+    if (kind === 'rsi') {
+      if (indicators?.rsi === undefined) {
+        return {
+          mint: token.mint, passed: false, filterResult, scoreResult,
+          positionSizeUsdc: 0, stopLossPct: 0,
+          reason: 'RSI unavailable (insufficient candles)',
+        };
+      }
+      if (indicators.rsi > threshold) {
+        return {
+          mint: token.mint, passed: false, filterResult, scoreResult,
+          positionSizeUsdc: 0, stopLossPct: 0,
+          reason: `RSI ${indicators.rsi.toFixed(1)} > ${threshold} (entry threshold)`,
+        };
+      }
+    } else {
+      if (indicators?.connorsRsi === undefined) {
+        return {
+          mint: token.mint, passed: false, filterResult, scoreResult,
+          positionSizeUsdc: 0, stopLossPct: 0,
+          reason: 'CRSI unavailable (insufficient candles)',
+        };
+      }
+      if (indicators.connorsRsi > threshold) {
+        return {
+          mint: token.mint, passed: false, filterResult, scoreResult,
+          positionSizeUsdc: 0, stopLossPct: 0,
+          reason: `CRSI ${indicators.connorsRsi.toFixed(1)} > ${threshold} (entry threshold)`,
+        };
+      }
+    }
+
+    const positionSizeUsdc = Math.min(
+      calculatePositionSize(portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades),
+      tokenStrategy.maxPositionUsdc
+    );
+    const stopLossPct = tokenStrategy.params.sl;
+
+    log.info('ENTRY SIGNAL', {
+      mint: token.mint,
+      label: tokenStrategy.label,
+      kind,
+      rsi: indicators?.rsi?.toFixed(1),
+      crsi: indicators?.connorsRsi?.toFixed(1),
+      threshold,
+      sizeUsdc: positionSizeUsdc.toFixed(2),
+      sl: stopLossPct,
+      tp: tokenStrategy.params.tp,
+    });
+
+    return {
+      mint: token.mint,
+      passed: true,
+      filterResult,
+      scoreResult,
+      positionSizeUsdc,
+      stopLossPct,
+    };
+  }
+
+  // Global strategy: position sizing with liquidity cap + sample size gate
   const positionSizeUsdc = calculatePositionSize(
     portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades
   );

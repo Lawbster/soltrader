@@ -71,7 +71,7 @@ export interface ExecutionLogEntry {
   sizeUsdc: number;
   slippageBps: number;
   quotedImpactPct: number;
-  result: 'success' | 'fail';
+  result: 'success' | 'fail' | 'skipped';
   error: string;
   latencyMs: number;
 }

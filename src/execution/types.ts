@@ -25,6 +25,14 @@ export interface SwapResult {
   error?: string;
 }
 
+export interface StrategyPlan {
+  kind: 'rsi' | 'crsi';
+  entry: number;  // oversold threshold used at entry
+  exit: number;   // overbought threshold (reference from sweep; live exit driven by sl/tp)
+  sl: number;     // stop loss pct (negative, e.g. -5)
+  tp: number;     // take profit pct (positive, e.g. 1)
+}
+
 export interface Position {
   id: string;
   mint: string;
@@ -48,6 +56,7 @@ export interface Position {
   exits: PositionExit[];
   status: 'open' | 'closed';
   closeReason?: string;
+  strategyPlan?: StrategyPlan;
 }
 
 export interface PositionExit {

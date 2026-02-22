@@ -47,18 +47,6 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     return;
   }
 
-  if (url === '/api/equity-curve') {
-    const trades = getTradeMetrics();
-    let cumPnl = 0;
-    const curve = trades.map(t => {
-      cumPnl += t.pnlUsdc;
-      return { time: t.exitTime, pnl: cumPnl, tradeId: t.id };
-    });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(curve));
-    return;
-  }
-
   // CRSI signal status for each watchlist token
   if (url === '/api/signals') {
     handleSignals(res);

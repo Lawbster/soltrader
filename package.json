@@ -15,7 +15,9 @@
     "fetch-historical": "tsx scripts/fetch-historical.ts",
     "fetch-historical:append": "tsx scripts/fetch-historical.ts --append",
     "daily-qa-report": "tsx scripts/daily-qa-report.ts",
-    "dailyqareport": "tsx scripts/daily-qa-report.ts"
+    "dailyqareport": "tsx scripts/daily-qa-report.ts",
+    "sweep-candidates": "tsx scripts/sweep-candidates.ts",
+    "sweepcandidates": "tsx scripts/sweep-candidates.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.0",

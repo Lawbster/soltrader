@@ -7,9 +7,9 @@ import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
 import { buyToken, sellToken, USDC_MINT, SOL_MINT } from './jupiter-swap';
 import { paperBuyToken, paperSellToken } from './paper-executor';
-import { Position, PositionExit, SwapResult } from './types';
+import { Position, PositionExit, SwapResult, StrategyPlan } from './types';
 import { checkKillSwitch } from './guards';
-import { recordExecutionAttempt, recordClosedPosition } from '../strategy/metrics';
+import { recordExecutionAttempt, recordClosedPosition, recordSkip } from '../strategy/metrics';
 import { logExecution } from '../data';
 
 // Route buy/sell through paper executor when in paper mode
@@ -34,8 +34,15 @@ const DATA_DIR = path.resolve(__dirname, '../../data');
 let lastQuotedImpact: { mint: string; impact: number; timestamp: number } | null = null;
 export function getLastQuotedImpact() { return lastQuotedImpact; }
 
+type ImpactCheckResult =
+  | { status: 'ok'; impact: number }
+  | { status: 'transient-fail' }
+  | { status: 'hard-fail'; reason: string };
+
 // Pre-flight slippage check via Jupiter quote (USDC input)
-async function checkEntryImpact(mint: string, sizeUsdc: number): Promise<number | null> {
+async function checkEntryImpact(mint: string, sizeUsdc: number): Promise<ImpactCheckResult> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5_000);
   try {
     const rawUsdc = Math.floor(sizeUsdc * 1e6).toString();
     const params = new URLSearchParams({
@@ -44,14 +51,29 @@ async function checkEntryImpact(mint: string, sizeUsdc: number): Promise<number 
       amount: rawUsdc,
       slippageBps: '100',
     });
-    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
+    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`, { signal: controller.signal });
+    if (!res.ok) {
+      return { status: 'hard-fail', reason: `HTTP ${res.status}` };
+    }
     const json = await res.json() as { priceImpactPct?: string; error?: string };
-    if (json.error) return null;
+    if (json.error) {
+      return { status: 'hard-fail', reason: json.error };
+    }
     const impact = parseFloat(json.priceImpactPct || '0');
     lastQuotedImpact = { mint, impact, timestamp: Date.now() };
-    return impact;
+    consecutiveImpactTransientFails = 0;
+    return { status: 'ok', impact };
   } catch {
-    return null; // Don't block on quote failure
+    consecutiveImpactTransientFails++;
+    if (consecutiveImpactTransientFails >= IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD) {
+      log.warn('Impact check repeatedly failing, Jupiter API may be degraded', {
+        consecutiveFails: consecutiveImpactTransientFails,
+        mint,
+      });
+    }
+    return { status: 'transient-fail' };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
@@ -70,6 +92,16 @@ const lpHistory = new Map<string, { timestamp: number; liquidityUsd: number }[]>
 
 // Token decimals cache for raw amount conversions
 const decimalsCache = new Map<string, number>();
+
+// Capital reservation: USDC committed to in-flight buys
+let reservedUsdc = 0;
+
+// In-flight entry lock: prevents race-condition duplicate entries for the same mint
+const inFlightEntriesByMint = new Set<string>();
+
+// Transient impact-check failure tracking
+let consecutiveImpactTransientFails = 0;
+const IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD = 3;
 
 // Read actual on-chain SPL token balance (raw lamport amount) for a given mint
 async function getOnChainTokenBalanceRaw(mint: string): Promise<string | null> {
@@ -219,7 +251,8 @@ export async function checkSolReplenish() {
 export async function openPosition(
   mint: string,
   sizeUsdc: number,
-  slippageBps: number
+  slippageBps: number,
+  strategyPlan?: StrategyPlan
 ): Promise<Position | null> {
   const cfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
@@ -227,11 +260,13 @@ export async function openPosition(
   const killCheck = checkKillSwitch(portfolio.dailyPnlPct, consecutiveLosses);
   if (!killCheck.passed) {
     log.warn('Kill switch active, not opening position', { reason: killCheck.reason });
+    recordSkip('kill_switch');
     return null;
   }
 
   if (openPositions.size >= cfg.portfolio.maxConcurrentPositions) {
     log.warn('Max concurrent positions reached', { current: openPositions.size });
+    recordSkip('max_positions');
     return null;
   }
 
@@ -240,28 +275,73 @@ export async function openPosition(
     : 100;
   if (exposurePct > cfg.portfolio.maxOpenExposurePct) {
     log.warn('Would exceed max exposure', { exposurePct: exposurePct.toFixed(1) });
+    recordSkip('max_exposure');
     return null;
+  }
+
+  // Capital gate: ensure sufficient USDC available after reservations
+  {
+    const balances = await getWalletBalances();
+    const spendable = balances.usdc - reservedUsdc;
+    if (spendable < sizeUsdc) {
+      log.warn('Entry skipped: insufficient USDC', {
+        mint,
+        required: sizeUsdc.toFixed(2),
+        walletUsdc: balances.usdc.toFixed(2),
+        reservedUsdc: reservedUsdc.toFixed(2),
+        spendable: spendable.toFixed(2),
+      });
+      recordSkip('capital_insufficient');
+      return null;
+    }
   }
 
   // Slippage guard: pre-flight Jupiter quote to check price impact
   const maxImpact = cfg.position.maxEntryImpactPct;
   if (maxImpact > 0) {
-    const impact = await checkEntryImpact(mint, sizeUsdc);
-    if (impact !== null && impact > maxImpact) {
+    const impactResult = await checkEntryImpact(mint, sizeUsdc);
+    if (impactResult.status === 'transient-fail') {
+      log.warn('Entry skipped: impact check transient failure', { mint });
+      recordSkip('impact_transient_fail');
+      return null;
+    }
+    if (impactResult.status === 'hard-fail') {
+      log.warn('Entry skipped: impact check failed', { mint, reason: impactResult.reason });
+      recordSkip('impact_hard_fail');
+      return null;
+    }
+    if (impactResult.impact > maxImpact) {
       log.warn('Entry rejected: slippage too high', {
         mint,
         sizeUsdc: sizeUsdc.toFixed(2),
-        quotedImpact: impact.toFixed(4),
+        quotedImpact: impactResult.impact.toFixed(4),
         maxImpact,
       });
+      recordSkip('impact_too_high');
       return null;
     }
   }
 
+  // In-flight lock: prevent race-condition duplicate entries for same mint
+  if (inFlightEntriesByMint.has(mint)) {
+    log.warn('Entry already in flight for mint, skipping', { mint });
+    recordSkip('entry_in_flight');
+    return null;
+  }
+
   log.info('Opening position', { mint, sizeUsdc: sizeUsdc.toFixed(2) });
 
+  inFlightEntriesByMint.add(mint);
+  reservedUsdc += sizeUsdc;
   const buyStart = Date.now();
-  const result = await executeBuy(mint, sizeUsdc, slippageBps);
+  let result!: SwapResult;
+  try {
+    result = await executeBuy(mint, sizeUsdc, slippageBps);
+  } finally {
+    inFlightEntriesByMint.delete(mint);
+    reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
+  }
+
   recordExecutionAttempt(result.success);
   logExecution({
     mint,
@@ -277,6 +357,9 @@ export async function openPosition(
     log.error('Buy failed', { mint, error: result.error });
     return null;
   }
+
+  // Invalidate balance cache so next check reflects the spend
+  walletBalancesCache = null;
 
   // entryPrice = USDC spent / tokens received (USDC per token)
   const entryPrice = result.tokenAmount > 0 ? result.usdcAmount / result.tokenAmount : 0;
@@ -300,6 +383,7 @@ export async function openPosition(
     stopMovedToBreakeven: false,
     exits: [],
     status: 'open',
+    strategyPlan,
   };
 
   openPositions.set(mint, position);
@@ -375,14 +459,42 @@ async function updatePosition(position: Position) {
 
   const holdTimeMinutes = (Date.now() - position.entryTime) / 60_000;
 
-  const exitSignal = evaluateExit(
-    pnlPct,
-    position.peakPnlPct,
-    holdTimeMinutes,
-    lpChangePct,
-    position.tp1Hit,
-    position.tp2Hit
-  );
+  let exitSignal: ReturnType<typeof evaluateExit>;
+
+  if (position.strategyPlan) {
+    // Per-token strategy: simple SL/TP exit (100% sell, no partial exits)
+    const { sl, tp } = position.strategyPlan;
+    if (lpChangePct < cfg.exits.emergencyLpDropPct) {
+      exitSignal = {
+        type: 'emergency',
+        sellPct: 100,
+        reason: `LP dropped ${lpChangePct.toFixed(1)}% in ${cfg.exits.emergencyLpDropWindowMinutes}m`,
+      };
+    } else if (pnlPct <= sl) {
+      exitSignal = {
+        type: 'hard_stop',
+        sellPct: 100,
+        reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%`,
+      };
+    } else if (pnlPct >= tp) {
+      exitSignal = {
+        type: 'tp1',
+        sellPct: 100,
+        reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%`,
+      };
+    } else {
+      exitSignal = null;
+    }
+  } else {
+    exitSignal = evaluateExit(
+      pnlPct,
+      position.peakPnlPct,
+      holdTimeMinutes,
+      lpChangePct,
+      position.tp1Hit,
+      position.tp2Hit
+    );
+  }
 
   if (!exitSignal) return;
 
@@ -440,6 +552,17 @@ async function executeExit(
     }
   }
 
+  // Guard: after floor() conversion, raw amount may be zero for dust positions
+  if (BigInt(rawTokensToSell) <= 0n) {
+    log.warn('Exit skipped: raw token amount is zero after floor conversion', {
+      mint: position.mint,
+      tokensToSell,
+      rawTokensToSell,
+    });
+    recordSkip('raw_amount_zero');
+    return;
+  }
+
   log.info('Executing exit', {
     mint: position.mint,
     type: exitType,
@@ -475,7 +598,7 @@ async function executeExit(
   position.exits.push(exit);
 
   if (result.success) {
-    position.remainingTokens -= result.tokenAmount;
+    position.remainingTokens = Math.max(0, position.remainingTokens - result.tokenAmount);
     position.remainingUsdc = position.remainingTokens * position.currentPrice;
     position.remainingPct = position.initialTokens > 0
       ? (position.remainingTokens / position.initialTokens) * 100
@@ -586,34 +709,59 @@ export function savePositionHistory() {
 }
 
 export function loadPositionHistory() {
-  const today = new Date().toISOString().split('T')[0];
-  const filePath = path.join(DATA_DIR, `positions-${today}.json`);
-  if (!fs.existsSync(filePath)) return;
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const yesterday = new Date(now.getTime() - 86_400_000).toISOString().split('T')[0];
 
-  try {
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    const data = JSON.parse(raw) as {
-      open: Position[];
-      stats: { dailyPnlUsdc: number; consecutiveLosses: number; lastLossTime: number };
-    };
+  type PositionFile = {
+    open: Position[];
+    stats: { dailyPnlUsdc: number; consecutiveLosses: number; lastLossTime: number };
+  };
 
-    for (const p of data.open || []) {
+  function tryLoadFile(date: string): PositionFile | null {
+    const filePath = path.join(DATA_DIR, `positions-${date}.json`);
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as PositionFile;
+    } catch {
+      return null;
+    }
+  }
+
+  // Try today's file first
+  const todayData = tryLoadFile(today);
+  const isFromToday = todayData !== null && (todayData.open?.length ?? 0) > 0;
+
+  if (isFromToday) {
+    for (const p of todayData!.open) {
       openPositions.set(p.mint, p);
     }
-
-    // Restore cooldown state — critical to prevent bypass after restart
-    if (data.stats) {
-      dailyPnlUsdc = data.stats.dailyPnlUsdc ?? 0;
-      consecutiveLosses = data.stats.consecutiveLosses ?? 0;
-      lastLossTime = data.stats.lastLossTime ?? 0;
+    if (todayData!.stats) {
+      dailyPnlUsdc = todayData!.stats.dailyPnlUsdc ?? 0;
+      consecutiveLosses = todayData!.stats.consecutiveLosses ?? 0;
+      lastLossTime = todayData!.stats.lastLossTime ?? 0;
     }
-
-    log.info('Position history loaded', {
+    log.info('Position history loaded (today)', {
       openRestored: openPositions.size,
       dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
       consecutiveLosses,
     });
-  } catch (err) {
-    log.warn('Failed to load position history', { error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+
+  // Fall back to yesterday's file — restore open positions only, reset daily stats
+  const yesterdayData = tryLoadFile(yesterday);
+  if (yesterdayData && (yesterdayData.open?.length ?? 0) > 0) {
+    for (const p of yesterdayData.open) {
+      openPositions.set(p.mint, p);
+    }
+    // Do NOT restore yesterday's dailyPnlUsdc/consecutiveLosses — start fresh for today
+    dailyPnlUsdc = 0;
+    consecutiveLosses = 0;
+    lastLossTime = 0;
+    log.warn('Position history loaded from yesterday (today file absent/empty)', {
+      openRestored: openPositions.size,
+      date: yesterday,
+    });
   }
 }

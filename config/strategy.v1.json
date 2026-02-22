@@ -47,7 +47,7 @@
   },
   "position": {
     "riskPerTradePct": 0.75,
-    "maxPositionUsdc": 10,
+    "maxPositionUsdc": 15,
     "maxPositionEquityPct": 8,
     "initialStopPct": 0.8,
     "liquidityCapPct": 0.05,

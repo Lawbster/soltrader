@@ -2,7 +2,7 @@
  * Cost model loader for backtest engine.
  *
  * Two modes:
- *   fixed    — legacy (0.3% commission + 0.1% slippage) × 2 = 0.8% round-trip
+ *   fixed    — (0.25% commission + 0.1% slippage) × 2 = 0.70% round-trip
  *   empirical — median(quotedImpactPct) from live execution logs + fixed commission
  *
  * Empirical guard: requires ≥30 successful executions. If not met, throws with
@@ -18,7 +18,7 @@ const EXECUTIONS_DIR = path.join(DATA_ROOT, 'executions');
 const MIN_EMPIRICAL_TRADES = 30;
 const COMMISSION_PER_SIDE_PCT = 0.25; // Jupiter protocol fee (actual base fee for liquid pools)
 
-export function fixedCost(commissionPct = 0.3, slippagePct = 0.1): CostConfig {
+export function fixedCost(commissionPct = 0.25, slippagePct = 0.1): CostConfig {
   return {
     model: 'fixed',
     roundTripPct: (commissionPct + slippagePct) * 2,

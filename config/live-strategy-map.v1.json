@@ -1,0 +1,69 @@
+{
+  "version": "1",
+  "tokens": {
+    "Dfh5DzRgSvvCFDoYc2ciTkMrbDfRKybA4SoFbPmApump": {
+      "label": "PIPPIN",
+      "tier": "core",
+      "maxPositionUsdc": 15,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 35, "exit": 85, "sl": -5, "tp": 1 }
+    },
+    "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn": {
+      "label": "PUMP",
+      "tier": "probe",
+      "maxPositionUsdc": 12,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 }
+    },
+    "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux": {
+      "label": "HNT",
+      "tier": "probe",
+      "maxPositionUsdc": 12,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 }
+    },
+    "So11111111111111111111111111111111111111112": {
+      "label": "SOL",
+      "tier": "probe",
+      "maxPositionUsdc": 10,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 20, "exit": 80, "sl": -3, "tp": 2 }
+    },
+    "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij": {
+      "label": "cbBTC",
+      "tier": "probe",
+      "maxPositionUsdc": 7.5,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 40, "exit": 90, "sl": -3, "tp": 1 }
+    },
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
+      "label": "BONK",
+      "tier": "probe",
+      "maxPositionUsdc": 7.5,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 25, "exit": 75, "sl": -2, "tp": 1 }
+    },
+    "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN": {
+      "label": "TRUMP",
+      "tier": "probe",
+      "maxPositionUsdc": 5,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 15, "exit": 70, "sl": -5, "tp": 1 }
+    },
+    "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr": {
+      "label": "POPCAT",
+      "tier": "probe",
+      "maxPositionUsdc": 5,
+      "enabled": true,
+      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 2 }
+    }
+  }
+}

@@ -119,7 +119,14 @@ export async function getQuote(
       slippageBps: slippageBps.toString(),
     });
 
-    const res = await fetch(`${JUPITER_QUOTE_URL}?${params}`);
+    const quoteController = new AbortController();
+    const quoteTimeout = setTimeout(() => quoteController.abort(), 5_000);
+    let res: Response;
+    try {
+      res = await fetch(`${JUPITER_QUOTE_URL}?${params}`, { signal: quoteController.signal });
+    } finally {
+      clearTimeout(quoteTimeout);
+    }
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       log.error('Jupiter quote HTTP error', { status: res.status, body: body.slice(0, 200) });
@@ -189,17 +196,25 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const swapRes = await fetch(JUPITER_SWAP_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          quoteResponse: quote.raw,
-          userPublicKey: keypair.publicKey.toBase58(),
-          wrapAndUnwrapSol: true,
-          dynamicComputeUnitLimit: true,
-          prioritizationFeeLamports: 'auto',
-        }),
-      });
+      const swapController = new AbortController();
+      const swapTimeout = setTimeout(() => swapController.abort(), 10_000);
+      let swapRes: Response;
+      try {
+        swapRes = await fetch(JUPITER_SWAP_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            quoteResponse: quote.raw,
+            userPublicKey: keypair.publicKey.toBase58(),
+            wrapAndUnwrapSol: true,
+            dynamicComputeUnitLimit: true,
+            prioritizationFeeLamports: 'auto',
+          }),
+          signal: swapController.signal,
+        });
+      } finally {
+        clearTimeout(swapTimeout);
+      }
 
       if (!swapRes.ok) {
         const body = await swapRes.text().catch(() => '');
@@ -260,7 +275,12 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
         });
       }
 
-      const confirmation = await conn.confirmTransaction(signature, 'confirmed');
+      const confirmation = await Promise.race([
+        conn.confirmTransaction(signature, 'confirmed'),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('confirmTransaction timeout after 30s')), 30_000)
+        ),
+      ]);
       if (confirmation.value.err) {
         lastError = `Tx confirmed with error: ${JSON.stringify(confirmation.value.err)}`;
         log.warn('Tx error on chain', { attempt, signature, error: lastError });

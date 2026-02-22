@@ -39,14 +39,41 @@ interface SweepTemplate {
 }
 
 const templates: SweepTemplate[] = [
+  // ── RSI(14) threshold sweep — the winning baseline ──
+  {
+    name: 'rsi',
+    paramGrid: {
+      entry: [10, 15, 20, 25, 30, 35, 40],
+      exit: [55, 60, 65, 70, 75, 80, 85, 90],
+      sl: [-0.5, -1, -1.5, -2, -3, -5],
+      tp: [1, 2, 3, 4, 6, 8, 10],
+    },
+    build(p) {
+      return {
+        name: `rsi-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `RSI(14) sweep entry<${p.entry} exit>${p.exit}`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsi } = ctx.indicators;
+          if (rsi === undefined) return 'hold';
+          if (!ctx.position && rsi < p.entry) return 'buy';
+          if (ctx.position && rsi > p.exit) return 'sell';
+          return 'hold';
+        },
+      };
+    },
+  },
+
   // ── CRSI threshold sweep ──
   {
     name: 'crsi',
     paramGrid: {
-      entry: [5, 10, 15, 20, 25, 30, 35],
-      exit: [60, 65, 70, 75, 80, 85, 90],
-      sl: [-1, -1.5, -2, -3, -5],
-      tp: [1, 2, 3, 4, 6],
+      entry: [2, 3, 5, 10, 15, 20, 25, 30, 35],
+      exit: [55, 60, 65, 70, 75, 80, 85, 90, 95],
+      sl: [-0.5, -1, -1.5, -2, -3, -5],
+      tp: [1, 2, 3, 4, 6, 8, 10],
     },
     build(p) {
       return {
@@ -70,16 +97,18 @@ const templates: SweepTemplate[] = [
   {
     name: 'bb-rsi',
     paramGrid: {
-      rsiEntry: [20, 25, 30, 35],
-      rsiExit: [50, 55, 60, 65, 70],
-      sl: [-1.5, -2, -2.5, -3],
+      rsiEntry: [15, 20, 25, 30, 35, 40],
+      rsiExit: [50, 55, 60, 65, 70, 75, 80],
+      sl: [-1, -1.5, -2, -2.5, -3],
+      tp: [2, 3, 4, 6, 8],
     },
     build(p) {
       return {
-        name: `bb-rsi-${p.rsiEntry}-${p.rsiExit}-sl${p.sl}`,
+        name: `bb-rsi-${p.rsiEntry}-${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
         description: `BB+RSI sweep`,
         requiredHistory: 21,
         stopLossPct: p.sl,
+        takeProfitPct: p.tp,
         evaluate(ctx): Signal {
           const { bollingerBands, rsi } = ctx.indicators;
           if (!bollingerBands || rsi === undefined) return 'hold';
@@ -95,8 +124,8 @@ const templates: SweepTemplate[] = [
   {
     name: 'macd-obv',
     paramGrid: {
-      sl: [-1, -1.5, -2, -3],
-      tp: [1, 2, 3, 4, 6],
+      sl: [-0.5, -1, -1.5, -2, -3, -5],
+      tp: [1, 2, 3, 4, 6, 8, 10],
     },
     build(p) {
       return {
@@ -121,16 +150,18 @@ const templates: SweepTemplate[] = [
   {
     name: 'rsi2',
     paramGrid: {
-      entry: [5, 10, 15, 20],
-      exit: [40, 50, 60, 70],
-      sl: [-1, -1.5, -2, -3],
+      entry: [2, 3, 5, 10, 15, 20, 25],
+      exit: [30, 40, 50, 60, 70, 80, 90],
+      sl: [-0.5, -1, -1.5, -2, -3],
+      tp: [1, 2, 3, 4, 6, 8],
     },
     build(p) {
       return {
-        name: `rsi2-${p.entry}-${p.exit}-sl${p.sl}`,
+        name: `rsi2-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
         description: `RSI(2) sweep`,
         requiredHistory: 5,
         stopLossPct: p.sl,
+        takeProfitPct: p.tp,
         evaluate(ctx): Signal {
           const { rsiShort } = ctx.indicators;
           if (rsiShort === undefined) return 'hold';
@@ -146,10 +177,10 @@ const templates: SweepTemplate[] = [
   {
     name: 'ema-adx',
     paramGrid: {
-      adxMin: [15, 20, 25],
-      rsiLow: [35, 40, 45],
-      rsiHigh: [60, 65, 70],
-      sl: [-1.5, -2, -3],
+      adxMin: [10, 15, 20, 25, 30],
+      rsiLow: [30, 35, 40, 45, 50],
+      rsiHigh: [55, 60, 65, 70, 75, 80],
+      sl: [-1, -1.5, -2, -3],
     },
     build(p) {
       return {
@@ -180,9 +211,9 @@ const templates: SweepTemplate[] = [
   {
     name: 'multi',
     paramGrid: {
-      minScore: [2, 3, 4],
-      sl: [-1.5, -2, -3],
-      tp: [2, 3, 4, 6],
+      minScore: [1, 2, 3, 4],
+      sl: [-1, -1.5, -2, -3],
+      tp: [1, 2, 3, 4, 6, 8],
     },
     build(p) {
       return {

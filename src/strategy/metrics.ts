@@ -36,6 +36,8 @@ export interface AggregateMetrics {
   executionFailures: number;
   executionAttempts: number;
   executionFailureRate: number;
+  executionSkips: number;
+  skipReasonDistribution: Record<string, number>;
   uptimeHours: number;
   startedAt: number;
   exitTypeDistribution: Record<string, number>;
@@ -45,7 +47,35 @@ export interface AggregateMetrics {
 const tradeMetrics: TradeMetric[] = [];
 let executionAttempts = 0;
 let executionFailures = 0;
+let executionSkips = 0;
+const skipReasonDistribution: Record<string, number> = {};
 let startedAt = 0;
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isValidTradeMetric(trade: unknown): trade is TradeMetric {
+  if (!trade || typeof trade !== 'object') return false;
+  const t = trade as Partial<TradeMetric>;
+  return (
+    typeof t.id === 'string' &&
+    typeof t.mint === 'string' &&
+    typeof t.exitType === 'string' &&
+    typeof t.isPaper === 'boolean' &&
+    isFiniteNumber(t.entryTime) &&
+    isFiniteNumber(t.exitTime) &&
+    isFiniteNumber(t.holdTimeMinutes) &&
+    isFiniteNumber(t.entryUsdc) &&
+    isFiniteNumber(t.exitUsdc) &&
+    isFiniteNumber(t.pnlUsdc) &&
+    isFiniteNumber(t.pnlPct)
+  );
+}
+
+function getValidTradeMetrics(): TradeMetric[] {
+  return tradeMetrics.filter(isValidTradeMetric);
+}
 
 export function initMetrics() {
   startedAt = Date.now();
@@ -55,10 +85,19 @@ export function initMetrics() {
     if (fs.existsSync(filePath)) {
       const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
       if (Array.isArray(raw.trades)) {
-        tradeMetrics.push(...raw.trades);
+        const valid = raw.trades.filter(isValidTradeMetric);
+        tradeMetrics.push(...valid);
+        const dropped = raw.trades.length - valid.length;
+        if (dropped > 0) {
+          log.warn('Dropped invalid historical trade metrics', { dropped });
+        }
       }
       executionAttempts = raw.executionAttempts || 0;
       executionFailures = raw.executionFailures || 0;
+      executionSkips = raw.executionSkips || 0;
+      if (raw.skipReasonDistribution && typeof raw.skipReasonDistribution === 'object') {
+        Object.assign(skipReasonDistribution, raw.skipReasonDistribution);
+      }
       startedAt = raw.startedAt || startedAt;
       log.info('Loaded existing metrics', { trades: tradeMetrics.length });
     }
@@ -70,6 +109,11 @@ export function initMetrics() {
 export function recordExecutionAttempt(success: boolean) {
   executionAttempts++;
   if (!success) executionFailures++;
+}
+
+export function recordSkip(reason: string) {
+  executionSkips++;
+  skipReasonDistribution[reason] = (skipReasonDistribution[reason] || 0) + 1;
 }
 
 export function recordClosedPosition(position: Position, isPaper: boolean) {
@@ -113,7 +157,7 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
 }
 
 export function getAggregateMetrics(): AggregateMetrics {
-  const trades = tradeMetrics;
+  const trades = getValidTradeMetrics();
   const totalTrades = trades.length;
 
   if (totalTrades === 0) {
@@ -133,6 +177,8 @@ export function getAggregateMetrics(): AggregateMetrics {
       executionFailures,
       executionAttempts,
       executionFailureRate: 0,
+      executionSkips,
+      skipReasonDistribution: { ...skipReasonDistribution },
       uptimeHours: (Date.now() - startedAt) / 3_600_000,
       startedAt,
       exitTypeDistribution: {},
@@ -211,6 +257,8 @@ export function getAggregateMetrics(): AggregateMetrics {
     executionFailures,
     executionAttempts,
     executionFailureRate,
+    executionSkips,
+    skipReasonDistribution: { ...skipReasonDistribution },
     uptimeHours: (Date.now() - startedAt) / 3_600_000,
     startedAt,
     exitTypeDistribution,
@@ -227,6 +275,8 @@ export function saveMetrics() {
     startedAt,
     executionAttempts,
     executionFailures,
+    executionSkips,
+    skipReasonDistribution,
     trades: tradeMetrics,
     aggregate: getAggregateMetrics(),
   };
@@ -252,11 +302,13 @@ export function printMetricsSummary() {
     sharpe: m.sharpeRatio.toFixed(2),
     avgHoldMins: Math.round(m.avgHoldTimeMinutes),
     execFailRate: `${m.executionFailureRate.toFixed(1)}%`,
+    execSkips: m.executionSkips,
+    skipReasons: m.skipReasonDistribution,
     uptimeHours: m.uptimeHours.toFixed(1),
     exitTypes: m.exitTypeDistribution,
   });
 }
 
 export function getTradeMetrics(): TradeMetric[] {
-  return tradeMetrics;
+  return getValidTradeMetrics();
 }

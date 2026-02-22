@@ -10,6 +10,8 @@ import {
   loadStrategyConfig, evaluateEntry,
   initMetrics, saveMetrics, printMetricsSummary, getAggregateMetrics,
 } from './strategy';
+import { getLiveTokenStrategy } from './strategy/live-strategy-map';
+import { StrategyPlan } from './execution/types';
 import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
 import {
   initPortfolio,
@@ -87,6 +89,12 @@ async function prunePendingTokens(maxAgeMs: number): Promise<number> {
 }
 
 async function analyzeCandidate(mint: string, launch: TokenLaunch) {
+  const isWatchlist = launch.source === 'watchlist';
+
+  // Per-token strategy gate: watchlist tokens must have an active strategy entry
+  const tokenStrategy = getLiveTokenStrategy(mint);
+  if (isWatchlist && (!tokenStrategy || !tokenStrategy.enabled)) return;
+
   const strategyCfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
 
@@ -96,7 +104,6 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   if (!tokenData) return;
 
   // Check age window (skip for watchlist)
-  const isWatchlist = launch.source === 'watchlist';
   if (!isWatchlist) {
     if (tokenData.tokenAgeMins < strategyCfg.universe.tokenAgeMinMinutes) return;
     if (tokenData.tokenAgeMins > strategyCfg.universe.tokenAgeMaxMinutes) {
@@ -114,26 +121,35 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   // Get 5-minute trade window
   const window = getTradeWindow(mint, FIVE_MINUTES_MS);
 
-  // Indicators (RSI / Connors RSI)
+  // Indicators — override periods from per-token strategy when available
   const indicatorsCfg = strategyCfg.entry.indicators;
   const indicators = indicatorsCfg?.enabled
     ? getIndicatorSnapshot(mint, {
-      intervalMinutes: indicatorsCfg.candleIntervalMinutes,
-      lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
-      rsiPeriod: indicatorsCfg.rsi.period,
-      connorsRsiPeriod: indicatorsCfg.connors.rsiPeriod,
-      connorsStreakRsiPeriod: indicatorsCfg.connors.streakRsiPeriod,
-      connorsPercentRankPeriod: indicatorsCfg.connors.percentRankPeriod,
-    })
+        intervalMinutes: indicatorsCfg.candleIntervalMinutes,
+        lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+        // Per-token: use per-token RSI period; for candle sufficiency, set percentRankPeriod
+        // to rsiPeriod+1 so minCandles threshold aligns with what RSI actually needs
+        rsiPeriod: tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.rsi.period,
+        connorsRsiPeriod: tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.connors.rsiPeriod,
+        connorsStreakRsiPeriod: tokenStrategy?.indicator.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
+        connorsPercentRankPeriod: tokenStrategy
+          ? (tokenStrategy.indicator.kind === 'rsi'
+              ? tokenStrategy.indicator.rsiPeriod + 1
+              : (tokenStrategy.indicator.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
+          : indicatorsCfg.connors.percentRankPeriod,
+      })
     : undefined;
 
   // Compute 5m volume in USD
   const solPrice = tokenData.priceUsd / (tokenData.priceSol || 1);
   tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
 
-  // Evaluate entry (now with LP change data + trade count for sample size gate)
+  // Evaluate entry
   const totalTrades = getAggregateMetrics().totalTrades;
-  const signal = evaluateEntry(tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist, totalTrades);
+  const signal = evaluateEntry(
+    tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist, totalTrades,
+    tokenStrategy ?? undefined
+  );
 
   // Log every signal decision (Phase 2)
   logSignal({
@@ -151,6 +167,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   if (signal.passed) {
     log.info('ENTRY SIGNAL', {
       mint,
+      label: tokenStrategy?.label,
       score: signal.scoreResult ? Math.round(signal.scoreResult.total) : 0,
       sizeUsdc: signal.positionSizeUsdc.toFixed(2),
       mcap: Math.round(tokenData.mcapUsd),
@@ -159,7 +176,19 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     });
 
     const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
-    const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps);
+
+    // Build strategyPlan to carry into position for per-token exit logic
+    const strategyPlan: StrategyPlan | undefined = tokenStrategy
+      ? {
+          kind: tokenStrategy.indicator.kind,
+          entry: tokenStrategy.params.entry,
+          exit: tokenStrategy.params.exit,
+          sl: tokenStrategy.params.sl,
+          tp: tokenStrategy.params.tp,
+        }
+      : undefined;
+
+    const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps, strategyPlan);
     if (!pos) {
       log.warn('Position not opened despite entry signal', { mint });
     }
@@ -168,7 +197,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
 // Round-robin index so we cycle through all candidates over time
 let analysisOffset = 0;
-const MAX_CANDIDATES_PER_CYCLE = 1;
+const MAX_CANDIDATES_PER_CYCLE = 8;
 
 async function analysisLoop() {
   const mints = Array.from(pendingTokens.keys());
