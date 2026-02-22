@@ -5,7 +5,6 @@ dist/
 *.log
 AGENTS.md
 .env*
-scripts/
 fixlater.md
 review.md
 DATA-COLLECTION-CHECKLIST.md
