@@ -78,9 +78,12 @@ export function evaluateEntry(
   }
 
   // Hard filters (universe + entry + LP stability).
-  // When using per-token strategy, skip the global indicator check — we apply our own below.
+  // When using per-token strategy: skip global indicator threshold (apply our own below),
+  // and skip LP drop filter (established tokens have deep liquidity; our estimation
+  // method produces unreliable snapshots that cause false -99% drop readings).
   const indicatorsForFilter = tokenStrategy ? { rsi: 0, connorsRsi: 0 } : indicators;
-  const filterResult = filterToken(token, window, lpChange10mPct, indicatorsForFilter, isWatchlist);
+  const lpChangeForFilter = tokenStrategy ? undefined : lpChange10mPct;
+  const filterResult = filterToken(token, window, lpChangeForFilter, indicatorsForFilter, isWatchlist);
   if (!filterResult.passed) {
     return {
       mint: token.mint,
