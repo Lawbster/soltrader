@@ -1,7 +1,7 @@
 import http from 'http';
 import { createLogger, config } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
-import { getPoolLiquidityCached, getTokenPriceCached, fetchTokenPrice } from '../analysis/token-data';
+import { getPoolLiquidityCached, getTokenPriceCached } from '../analysis/token-data';
 import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact, getWalletBalances, SOL_MINT } from '../execution';
 import {
   getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
@@ -88,10 +88,8 @@ async function handleStatus(res: http.ServerResponse) {
     tp2Hit: p.tp2Hit,
   }));
 
-  const [walletBalances, solPriceResult] = await Promise.all([
-    getWalletBalances(),
-    fetchTokenPrice(SOL_MINT),
-  ]);
+  const walletBalances = await getWalletBalances();
+  const solPriceResult = getTokenPriceCached(SOL_MINT);
 
   const universeMode = config.universe.mode;
   const tradeCapture = universeMode === 'watchlist' ? 'disabled' : 'active';

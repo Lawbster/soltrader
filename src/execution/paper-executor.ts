@@ -1,6 +1,7 @@
 import { PublicKey } from '@solana/web3.js';
 import { getConnection, createLogger } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
+import { jupiterGet } from './jupiter-client';
 import { SwapResult } from './types';
 
 const log = createLogger('paper');
@@ -43,7 +44,7 @@ async function getQuoteEstimate(
       amount: amountRaw,
       slippageBps: slippageBps.toString(),
     });
-    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
+    const res = await jupiterGet(`https://lite-api.jup.ag/swap/v1/quote?${params}`);
     if (!res.ok) {
       log.warn('Quote HTTP error', { status: res.status, inputMint, outputMint });
       return null;

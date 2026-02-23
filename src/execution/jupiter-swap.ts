@@ -4,6 +4,7 @@ import { loadStrategyConfig } from '../strategy/strategy-config';
 import { FillSource, SwapQuote, SwapResult, TradeLog } from './types';
 import { validateQuote, validateSimulation } from './guards';
 import { sendWithJito } from './jito-bundle';
+import { jupiterGet, jupiterPost } from './jupiter-client';
 import fs from 'fs';
 import path from 'path';
 
@@ -123,7 +124,7 @@ export async function getQuote(
     const quoteTimeout = setTimeout(() => quoteController.abort(), 5_000);
     let res: Response;
     try {
-      res = await fetch(`${JUPITER_QUOTE_URL}?${params}`, { signal: quoteController.signal });
+      res = await jupiterGet(`${JUPITER_QUOTE_URL}?${params}`, 2, quoteController.signal);
     } finally {
       clearTimeout(quoteTimeout);
     }
@@ -200,18 +201,13 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
       const swapTimeout = setTimeout(() => swapController.abort(), 10_000);
       let swapRes: Response;
       try {
-        swapRes = await fetch(JUPITER_SWAP_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            quoteResponse: quote.raw,
-            userPublicKey: keypair.publicKey.toBase58(),
-            wrapAndUnwrapSol: true,
-            dynamicComputeUnitLimit: true,
-            prioritizationFeeLamports: 'auto',
-          }),
-          signal: swapController.signal,
-        });
+        swapRes = await jupiterPost(JUPITER_SWAP_URL, {
+          quoteResponse: quote.raw,
+          userPublicKey: keypair.publicKey.toBase58(),
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+          prioritizationFeeLamports: 'auto',
+        }, 2, swapController.signal);
       } finally {
         clearTimeout(swapTimeout);
       }
@@ -220,10 +216,6 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
         const body = await swapRes.text().catch(() => '');
         lastError = `Jupiter swap HTTP ${swapRes.status}: ${body.slice(0, 200)}`;
         log.warn('Jupiter swap HTTP error', { attempt, status: swapRes.status, body: body.slice(0, 200) });
-        // Back off on rate limits before retrying
-        if (swapRes.status === 429 || body.toLowerCase().includes('rate limit')) {
-          await new Promise(r => setTimeout(r, 2000 * (attempt + 1)));
-        }
         continue;
       }
 

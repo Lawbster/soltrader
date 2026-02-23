@@ -6,6 +6,7 @@ import { loadStrategyConfig } from '../strategy/strategy-config';
 import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
 import { buyToken, sellToken, USDC_MINT, SOL_MINT } from './jupiter-swap';
+import { jupiterGet } from './jupiter-client';
 import { paperBuyToken, paperSellToken } from './paper-executor';
 import { Position, PositionExit, SwapResult, StrategyPlan } from './types';
 import { checkKillSwitch } from './guards';
@@ -51,7 +52,7 @@ async function checkEntryImpact(mint: string, sizeUsdc: number): Promise<ImpactC
       amount: rawUsdc,
       slippageBps: '100',
     });
-    const res = await fetch(`https://lite-api.jup.ag/swap/v1/quote?${params}`, { signal: controller.signal });
+    const res = await jupiterGet(`https://lite-api.jup.ag/swap/v1/quote?${params}`, 2, controller.signal);
     if (!res.ok) {
       return { status: 'hard-fail', reason: `HTTP ${res.status}` };
     }

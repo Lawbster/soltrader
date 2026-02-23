@@ -1,5 +1,6 @@
 import { PublicKey } from '@solana/web3.js';
 import { getConnection, createLogger } from '../utils';
+import { jupiterGet } from '../execution/jupiter-client';
 import { TokenData } from './types';
 
 const log = createLogger('token-data');
@@ -104,23 +105,6 @@ const LIQUIDITY_FAIL_TTL = 60_000; // 1 min negative cache on failures to avoid 
 const tokenPriceCache = new Map<string, { priceSol: number; priceUsd: number; fetchedAt: number }>();
 const liquidityCache = new Map<string, { liquidityUsd: number; fetchedAt: number }>();
 
-/** Wrapper with 429 backoff for all Jupiter API calls */
-async function jupiterFetch(url: string, maxRetries = 2): Promise<Response> {
-  let lastRes: Response | undefined;
-  for (let i = 0; i <= maxRetries; i++) {
-    lastRes = await fetch(url);
-    if (lastRes.status === 429) {
-      const retryAfter = parseInt(lastRes.headers.get('retry-after') || '2', 10);
-      const backoffMs = Math.min(retryAfter * 1000, 10_000);
-      log.warn('Jupiter rate limited, backing off', { backoffMs, attempt: i + 1 });
-      await new Promise(r => setTimeout(r, backoffMs));
-      continue;
-    }
-    return lastRes;
-  }
-  // Return last 429 response so caller can handle it — no extra fetch
-  return lastRes!;
-}
 
 function extractUsdPrice(entry: any): number {
   if (!entry) return 0;
@@ -137,7 +121,7 @@ async function getSolPrice(): Promise<number> {
 
   try {
     const SOL_MINT = 'So11111111111111111111111111111111111111112';
-    const res = await jupiterFetch(`https://lite-api.jup.ag/price/v3?ids=${SOL_MINT}`);
+    const res = await jupiterGet(`https://lite-api.jup.ag/price/v3?ids=${SOL_MINT}`);
     if (!res.ok) return SOL_PRICE_CACHE.price || 150;
     const json = await res.json() as any;
     const entry = json.data?.[SOL_MINT] ?? json[SOL_MINT];
@@ -165,7 +149,7 @@ export async function fetchTokenPricesBatch(mints: string[]): Promise<void> {
 
   try {
     const ids = Array.from(allIds).join(',');
-    const res = await jupiterFetch(`https://lite-api.jup.ag/price/v3?ids=${ids}`);
+    const res = await jupiterGet(`https://lite-api.jup.ag/price/v3?ids=${ids}`);
     if (!res.ok) {
       log.warn('Batch price fetch failed', { status: res.status });
       return;
@@ -205,7 +189,7 @@ export async function fetchTokenPrice(mint: string): Promise<{ priceSol: number;
   }
 
   try {
-    const res = await jupiterFetch(`https://lite-api.jup.ag/price/v3?ids=${mint}`);
+    const res = await jupiterGet(`https://lite-api.jup.ag/price/v3?ids=${mint}`);
     if (!res.ok) {
       log.warn('Token price fetch HTTP error', { mint, status: res.status });
       return cached ? { priceSol: cached.priceSol, priceUsd: cached.priceUsd } : { priceSol: 0, priceUsd: 0 };
@@ -305,7 +289,7 @@ export async function fetchPoolLiquidity(mint: string): Promise<number> {
     const amount = isSol ? 100_000_000 : 1_000_000_000; // 100 USDC (6 dec) or 1 SOL (9 dec)
     const quoteValueUsd = isSol ? 100 : 0; // Will compute from SOL price if not SOL
 
-    const res = await jupiterFetch(
+    const res = await jupiterGet(
       `https://lite-api.jup.ag/swap/v1/quote?inputMint=${inputMint}&outputMint=${mint}&amount=${amount}&slippageBps=300`
     );
 
