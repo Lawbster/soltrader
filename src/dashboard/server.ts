@@ -107,6 +107,7 @@ async function handleStatus(res: http.ServerResponse) {
     pendingCandidates: pendingTokenCount,
     tradeCapture,
     universeMode,
+    isPaperTrading: config.trading.paperTrading,
     timestamp: Date.now(),
   }));
 }
@@ -190,6 +191,11 @@ function handleSignals(res: http.ServerResponse) {
         quotedImpact,
         totalTrades,
         sampleSizeGateMinTrades: posCfg.sampleSizeGateMinTrades,
+        tokenMaxUsdc: tokenStrategy?.maxPositionUsdc ?? posCfg.maxPositionUsdc,
+        sl: tokenStrategy?.params.sl,
+        tp: tokenStrategy?.params.tp,
+        tier: tokenStrategy?.tier,
+        indicatorKind: tokenStrategy?.indicator.kind ?? 'crsi',
       };
     });
 

@@ -4,7 +4,7 @@ export function getDashboardHtml(): string {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Sol-Trader CRSI</title>
+<title>Sol-Trader</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -292,13 +292,13 @@ export function getDashboardHtml(): string {
 
 <div class="header">
   <div>
-    <h1>Sol-Trader CRSI</h1>
+    <h1>Sol-Trader</h1>
     <div class="updated" id="lastUpdate">Loading...</div>
   </div>
   <div class="badges">
     <span class="badge-pill badge-watchlist">WATCHLIST</span>
     <span class="badge-pill badge-paper" id="modeLabel">PAPER</span>
-    <span class="badge-pill" id="crsiSourceBadge" style="background:#1a2a3a;color:#58a6ff;border:1px solid #1f6feb;">CRSI: --</span>
+    <span class="badge-pill" id="crsiSourceBadge" style="background:#1c1c1c;color:#6e7681;border:1px solid #30363d;">--</span>
     <span class="badge-pill" id="tradeCaptBadge" style="background:#1c1c1c;color:#6e7681;border:1px solid #30363d;">TRADES: --</span>
   </div>
 </div>
@@ -306,8 +306,7 @@ export function getDashboardHtml(): string {
 <!-- CRSI Signal Panel -->
 <div class="signal-panel">
   <div class="signal-header">
-    <h2>CRSI Signals</h2>
-    <span class="signal-source" id="signalSource">--</span>
+    <h2>RSI Signals</h2>
   </div>
   <div class="signal-grid" id="signalGrid">
     <div class="no-data">Loading signals...</div>
@@ -579,22 +578,22 @@ function renderSignals(signals) {
     return;
   }
 
-  const srcEl = document.getElementById('signalSource');
-  srcEl.textContent = signals[0].source || 'none';
-
   el.innerHTML = signals.map((s, i) => {
-    const hasCrsi = s.crsi !== undefined && s.crsi !== null;
-    const crsiVal = hasCrsi ? fmt(s.crsi, 1) : '--';
-    const crsiCls = crsiColor(s.crsi, s.oversoldThreshold);
-    const rsiVal = s.rsi !== undefined && s.rsi !== null ? fmt(s.rsi, 1) : '--';
+    const hasRsi = s.rsi !== undefined && s.rsi !== null;
+    const rsiVal = hasRsi ? fmt(s.rsi, 1) : '--';
+    const rsiCls = crsiColor(s.rsi, s.oversoldThreshold);
     const priceFmt = s.priceUsd > 0 ? '$' + (s.priceUsd < 0.01 ? s.priceUsd.toExponential(2) : fmt(s.priceUsd, 4)) : '--';
     const pct = Math.min(100, Math.round((s.candleCount / s.candlesNeeded) * 100));
     const minsLeft = Math.max(0, s.candlesNeeded - s.candleCount);
     const readyLabel = s.ready ? 'Ready' : 'Warming up (~' + minsLeft + ' min)';
     const barCls = s.ready ? 'ready' : 'warming';
-    const signalLabel = hasCrsi && s.crsi <= s.oversoldThreshold
+    const signalLabel = hasRsi && s.rsi <= s.oversoldThreshold
       ? '<span class="green" style="font-weight:700;font-size:0.8rem;">OVERSOLD</span>'
       : '';
+    const indicatorLabel = s.indicatorKind === 'rsi' ? 'RSI(14)' : 'CRSI';
+    const tierLabel = s.tier ? s.tier.toUpperCase() : '';
+    const slVal = s.sl !== undefined ? s.sl + '%' : '--';
+    const tpVal = s.tp !== undefined ? '+' + s.tp + '%' : '--';
 
     const isSelected = selectedMint ? s.mint === selectedMint : i === 0;
     return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
@@ -603,23 +602,26 @@ function renderSignals(signals) {
         '<a href="https://solscan.io/token/' + s.mint + '" target="_blank" onclick="event.stopPropagation();">' + shortMint(s.mint) + '</a>' +
       '</div>' +
       '<div class="crsi-display">' +
-        '<div><div class="crsi-label">Connors RSI</div><div class="crsi-value ' + crsiCls + '">' + crsiVal + '</div></div>' +
-        '<div><div class="crsi-label">RSI</div><div class="crsi-sub">' + rsiVal + '</div></div>' +
+        '<div><div class="crsi-label">' + indicatorLabel + '</div><div class="crsi-value ' + rsiCls + '">' + rsiVal + '</div></div>' +
         '<div><div class="crsi-label">Price</div><div class="crsi-sub">' + priceFmt + '</div></div>' +
       '</div>' +
       '<div class="progress-bar"><div class="progress-fill ' + barCls + '" style="width:' + pct + '%"></div></div>' +
       '<div class="progress-text"><span>' + readyLabel + '</span><span>' + s.candleCount + ' / ' + s.candlesNeeded + ' candles</span></div>' +
       '<div style="margin-top:8px">' +
-        '<div class="signal-row"><span class="label">Oversold threshold</span><span>' + s.oversoldThreshold + '</span></div>' +
-        '<div class="signal-row"><span class="label">Price points</span><span>' + s.pricePoints + '</span></div>' +
+        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Entry</div>' +
+        '<div class="signal-row"><span class="label">RSI threshold</span><span>' + s.oversoldThreshold + '</span></div>' +
+        (tierLabel ? '<div class="signal-row"><span class="label">Tier</span><span>' + tierLabel + '</span></div>' : '') +
       '</div>' +
       '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
-        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position Sizing</div>' +
+        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Exit</div>' +
+        '<div class="signal-row"><span class="label">Stop loss</span><span class="red">' + slVal + '</span></div>' +
+        '<div class="signal-row"><span class="label">Take profit</span><span class="green">' + tpVal + '</span></div>' +
+      '</div>' +
+      '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
+        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position</div>' +
         '<div class="signal-row"><span class="label">Pool liquidity</span><span>' + (s.liquidityUsd > 0 ? '$' + Number(s.liquidityUsd).toLocaleString('en-US', {maximumFractionDigits:0}) : '--') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Max position</span><span class="blue">' + (s.effectiveMaxUsdc !== undefined ? fmt(s.effectiveMaxUsdc, 2) + ' USDC' : '--') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Max impact</span><span>' + (s.maxEntryImpactPct !== undefined ? s.maxEntryImpactPct + '%' : '--') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Last quoted impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Sample size gate</span><span class="' + (s.totalTrades < s.sampleSizeGateMinTrades ? 'yellow' : 'green') + '">' + s.totalTrades + ' / ' + s.sampleSizeGateMinTrades + ' trades</span></div>' +
+        '<div class="signal-row"><span class="label">Max size</span><span class="blue">' + (s.tokenMaxUsdc !== undefined ? fmt(s.tokenMaxUsdc, 2) + ' USDC' : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Last impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -850,10 +852,14 @@ function renderSystem(status, metrics, signals) {
 }
 
 function renderBadges(status, signals) {
-  // CRSI source badge
+  // PAPER/LIVE badge
+  const modeBadge = document.getElementById('modeLabel');
+  modeBadge.textContent = status.isPaperTrading ? 'PAPER' : 'LIVE';
+  modeBadge.className = 'badge-pill ' + (status.isPaperTrading ? 'badge-paper' : 'badge-live');
+  // Signal source badge
   const srcBadge = document.getElementById('crsiSourceBadge');
   const source = signals && signals.length > 0 ? signals[0].source : 'none';
-  srcBadge.textContent = 'CRSI: ' + source.toUpperCase();
+  srcBadge.textContent = source.toUpperCase();
   if (source === 'price-feed') {
     srcBadge.style.background = '#1a3a2a'; srcBadge.style.color = '#3fb950'; srcBadge.style.borderColor = '#238636';
   } else {
