@@ -16,7 +16,7 @@
     "minUniqueBuyers5m": 0,
     "maxSingleWalletBuyPct": 100,
     "maxLpChange10mPct": -15,
-    "maxSlippagePct": 0.15,
+    "maxSlippagePct": 0.5,
     "minScoreToTrade": 0,
     "indicators": {
       "enabled": true,
