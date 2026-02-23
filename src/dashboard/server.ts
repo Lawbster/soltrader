@@ -9,6 +9,7 @@ import {
 } from '../analysis';
 import { loadWatchlist } from '../monitor';
 import { getLiveTokenStrategy } from '../strategy/live-strategy-map';
+import { getJupiterMetrics } from '../execution/jupiter-client';
 import { getDashboardHtml } from './page';
 
 const log = createLogger('dashboard');
@@ -106,6 +107,7 @@ async function handleStatus(res: http.ServerResponse) {
     tradeCapture,
     universeMode,
     isPaperTrading: config.trading.paperTrading,
+    jupiterMetrics: getJupiterMetrics(),
     timestamp: Date.now(),
   }));
 }

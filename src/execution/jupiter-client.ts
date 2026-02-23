@@ -6,6 +6,18 @@ const API_KEY = process.env.JUPITER_API_KEY;
 const MAX_BACKOFF_MS = 30_000;
 const BASE_DELAY_MS = 1_000;
 
+const metrics = {
+  reqCount: 0,
+  count429: 0,
+  retryCount: 0,
+  lastSuccessAt: 0,
+  lastErrorAt: 0,
+};
+
+export function getJupiterMetrics() {
+  return { ...metrics };
+}
+
 function getBackoffMs(attempt: number, retryAfterHeader: string | null): number {
   // Retry-After header takes precedence when present
   if (retryAfterHeader) {
@@ -28,21 +40,29 @@ function shouldRetry(status: number): boolean {
 }
 
 export async function jupiterGet(url: string, maxRetries = 2, signal?: AbortSignal): Promise<Response> {
+  metrics.reqCount++;
   let lastRes: Response | undefined;
   for (let i = 0; i <= maxRetries; i++) {
     lastRes = await fetch(url, { headers: buildHeaders(), signal });
     if (shouldRetry(lastRes.status)) {
+      if (lastRes.status === 429) metrics.count429++;
       const backoffMs = getBackoffMs(i, lastRes.headers.get('retry-after'));
       log.warn('Jupiter GET error, backing off', { status: lastRes.status, backoffMs, attempt: i + 1 });
-      if (i < maxRetries) await new Promise(r => setTimeout(r, backoffMs));
+      if (i < maxRetries) {
+        metrics.retryCount++;
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
       continue;
     }
+    metrics.lastSuccessAt = Date.now();
     return lastRes;
   }
+  metrics.lastErrorAt = Date.now();
   return lastRes!;
 }
 
 export async function jupiterPost(url: string, body: unknown, maxRetries = 2, signal?: AbortSignal): Promise<Response> {
+  metrics.reqCount++;
   let lastRes: Response | undefined;
   for (let i = 0; i <= maxRetries; i++) {
     lastRes = await fetch(url, {
@@ -52,12 +72,18 @@ export async function jupiterPost(url: string, body: unknown, maxRetries = 2, si
       signal,
     });
     if (shouldRetry(lastRes.status)) {
+      if (lastRes.status === 429) metrics.count429++;
       const backoffMs = getBackoffMs(i, lastRes.headers.get('retry-after'));
       log.warn('Jupiter POST error, backing off', { status: lastRes.status, backoffMs, attempt: i + 1 });
-      if (i < maxRetries) await new Promise(r => setTimeout(r, backoffMs));
+      if (i < maxRetries) {
+        metrics.retryCount++;
+        await new Promise(r => setTimeout(r, backoffMs));
+      }
       continue;
     }
+    metrics.lastSuccessAt = Date.now();
     return lastRes;
   }
+  metrics.lastErrorAt = Date.now();
   return lastRes!;
 }
