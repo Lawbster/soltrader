@@ -44,7 +44,7 @@ export interface StrategyContext {
   index: number;
   indicators: IndicatorValues;
   prevIndicators?: IndicatorValues;
-  position: BacktestPosition | null;
+  positions: BacktestPosition[]; // all currently open positions (0..maxPositions)
   history: Candle[];
   hour: number; // UTC hour 0-23
 }
@@ -91,6 +91,7 @@ export interface BacktestConfig {
   commissionPct?: number;     // legacy fallback
   slippagePct?: number;       // legacy fallback
   roundTripCostPct?: number;  // overrides commissionPct+slippagePct when set
+  maxPositions?: number;      // max concurrent positions per token (default 1)
 }
 
 export interface BacktestResult {

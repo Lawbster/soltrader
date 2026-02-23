@@ -7,7 +7,7 @@
       "maxPositionUsdc": 15,
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
-      "params": { "entry": 35, "exit": 85, "sl": -5, "tp": 1 }
+      "params": { "entry": 30, "exit": 70, "sl": -5, "tp": 4 }
     },
     "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn": {
       "label": "PUMP",
@@ -39,7 +39,7 @@
       "maxPositionUsdc": 7.5,
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
-      "params": { "entry": 40, "exit": 90, "sl": -3, "tp": 1 }
+      "params": { "entry": 20, "exit": 85, "sl": -1, "tp": 1 }
     },
     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
       "label": "BONK",
@@ -47,13 +47,13 @@
       "maxPositionUsdc": 7.5,
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
-      "params": { "entry": 25, "exit": 75, "sl": -2, "tp": 1 }
+      "params": { "entry": 20, "exit": 75, "sl": -2, "tp": 3 }
     },
     "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN": {
       "label": "TRUMP",
       "tier": "probe",
       "maxPositionUsdc": 5,
-      "enabled": true,
+      "enabled": false,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "params": { "entry": 15, "exit": 70, "sl": -5, "tp": 1 }
     },
@@ -63,7 +63,7 @@
       "maxPositionUsdc": 5,
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
-      "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 2 }
+      "params": { "entry": 15, "exit": 80, "sl": -2, "tp": 1 }
     }
   }
 }

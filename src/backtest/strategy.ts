@@ -19,8 +19,8 @@ export const rsiMeanReversion: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { rsi } = ctx.indicators;
     if (rsi === undefined) return 'hold';
-    if (!ctx.position && rsi < 30) return 'buy';
-    if (ctx.position && rsi > 70) return 'sell';
+    if (ctx.positions.length === 0 && rsi < 30) return 'buy';
+    if (ctx.positions.length > 0 && rsi > 70) return 'sell';
     return 'hold';
   },
 };
@@ -33,11 +33,12 @@ export const bollingerBounce: BacktestStrategy = {
     const bb = ctx.indicators.bollingerBands;
     if (!bb) return 'hold';
     const price = ctx.candle.close;
-    if (!ctx.position && price <= bb.lower) return 'buy';
-    if (ctx.position && price >= bb.upper) return 'sell';
-    if (ctx.position && ctx.position.peakPnlPct > 1) {
-      const currentPnlPct = ((price - ctx.position.entryPrice) / ctx.position.entryPrice) * 100;
-      if (ctx.position.peakPnlPct - currentPnlPct > 1.5) return 'sell';
+    if (ctx.positions.length === 0 && price <= bb.lower) return 'buy';
+    if (ctx.positions.length > 0 && price >= bb.upper) return 'sell';
+    const p0 = ctx.positions[0];
+    if (p0 && p0.peakPnlPct > 1) {
+      const currentPnlPct = ((price - p0.entryPrice) / p0.entryPrice) * 100;
+      if (p0.peakPnlPct - currentPnlPct > 1.5) return 'sell';
     }
     return 'hold';
   },
@@ -50,8 +51,8 @@ export const macdRsiCombo: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { macd, rsi } = ctx.indicators;
     if (!macd || rsi === undefined) return 'hold';
-    if (!ctx.position && macd.histogram > 0 && rsi < 50) return 'buy';
-    if (ctx.position && (macd.histogram < 0 || rsi > 75)) return 'sell';
+    if (ctx.positions.length === 0 && macd.histogram > 0 && rsi < 50) return 'buy';
+    if (ctx.positions.length > 0 && (macd.histogram < 0 || rsi > 75)) return 'sell';
     return 'hold';
   },
 };
@@ -67,7 +68,7 @@ export const liveCrsi: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { connorsRsi } = ctx.indicators;
     if (connorsRsi === undefined) return 'hold';
-    if (!ctx.position && connorsRsi < 35) return 'buy';
+    if (ctx.positions.length === 0 && connorsRsi < 35) return 'buy';
     return 'hold';
   },
 };
@@ -81,7 +82,7 @@ export const crsiWider: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { connorsRsi } = ctx.indicators;
     if (connorsRsi === undefined) return 'hold';
-    if (!ctx.position && connorsRsi < 35) return 'buy';
+    if (ctx.positions.length === 0 && connorsRsi < 35) return 'buy';
     return 'hold';
   },
 };
@@ -102,14 +103,14 @@ export const crsiBbAdx: BacktestStrategy = {
     const { connorsRsi, adx, bollingerBands } = ctx.indicators;
     if (connorsRsi === undefined || adx === undefined || !bollingerBands) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       // Deep oversold + ranging market + price recovering above midline
       if (connorsRsi < 10 && adx < 25 && ctx.candle.close > bollingerBands.middle) {
         return 'buy';
       }
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (connorsRsi > 75 || ctx.candle.close >= bollingerBands.upper) return 'sell';
     }
     return 'hold';
@@ -129,12 +130,12 @@ export const crsiDipRecover: BacktestStrategy = {
     const prev = ctx.prevIndicators?.connorsRsi;
     if (curr === undefined || prev === undefined) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       // Previous bar was below 20 (recently deeply oversold), now crossing above 20
       if (prev < 20 && curr >= 20) return 'buy';
     }
 
-    if (ctx.position && curr > 70) return 'sell';
+    if (ctx.positions.length > 0 && curr > 70) return 'sell';
     return 'hold';
   },
 };
@@ -152,11 +153,11 @@ export const crsiTrendPullback: BacktestStrategy = {
     const sma50 = sma[50];
     if (sma50 === undefined || isNaN(sma50)) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       if (connorsRsi < 15 && ctx.candle.close > sma50) return 'buy';
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (connorsRsi > 70 || ctx.candle.close < sma50) return 'sell';
     }
     return 'hold';
@@ -182,7 +183,7 @@ export const rsi2BbScalp: BacktestStrategy = {
     const ema9 = ema[9];
     if (ema9 === undefined || isNaN(ema9)) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       // RSI(2) was below 20, now crossing back above + price above EMA9 + near lower BB zone
       const nearLowerBB = ctx.candle.close < bollingerBands.middle;
       if (prevRsi < 20 && rsiShort >= 20 && ctx.candle.close > ema9 && nearLowerBB) {
@@ -190,7 +191,7 @@ export const rsi2BbScalp: BacktestStrategy = {
       }
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       // Exit at RSI(2) > 50 or price above BB middle
       if (rsiShort > 50 || ctx.candle.close > bollingerBands.middle) return 'sell';
     }
@@ -209,8 +210,8 @@ export const rsi2ExtremeBounce: BacktestStrategy = {
     const { rsiShort } = ctx.indicators;
     if (rsiShort === undefined) return 'hold';
 
-    if (!ctx.position && rsiShort < 10) return 'buy';
-    if (ctx.position && rsiShort > 65) return 'sell';
+    if (ctx.positions.length === 0 && rsiShort < 10) return 'buy';
+    if (ctx.positions.length > 0 && rsiShort > 65) return 'sell';
     return 'hold';
   },
 };
@@ -232,14 +233,14 @@ export const vwapRsiBounce: BacktestStrategy = {
     const prevPrice = ctx.history[ctx.index - 1]?.close;
     if (!prevPrice) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       // Price crosses above VWAP from below + RSI has room to run
       if (prevPrice < prev.vwapProxy && ctx.candle.close > vwapProxy && rsi < 45) {
         return 'buy';
       }
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (rsi > 65 || ctx.candle.close < vwapProxy) return 'sell';
     }
     return 'hold';
@@ -261,7 +262,7 @@ export const bbSqueezeMomentum: BacktestStrategy = {
     const prev = ctx.prevIndicators;
     if (!bollingerBands || !macd || !prev?.bollingerBands || !prev?.macd || obvProxy === undefined || prev.obvProxy === undefined) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       const squeezing = bollingerBands.width < prev.bollingerBands.width;
       const macdFlipBullish = prev.macd.histogram <= 0 && macd.histogram > 0;
       const obvRising = obvProxy > prev.obvProxy;
@@ -269,7 +270,7 @@ export const bbSqueezeMomentum: BacktestStrategy = {
       if (squeezing && macdFlipBullish && obvRising) return 'buy';
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (ctx.candle.close >= bollingerBands.upper || macd.histogram < 0) return 'sell';
     }
     return 'hold';
@@ -287,11 +288,11 @@ export const bbRsiMeanRevert: BacktestStrategy = {
     const { bollingerBands, rsi } = ctx.indicators;
     if (!bollingerBands || rsi === undefined) return 'hold';
 
-    if (!ctx.position && ctx.candle.close <= bollingerBands.lower && rsi < 30) {
+    if (ctx.positions.length === 0 && ctx.candle.close <= bollingerBands.lower && rsi < 30) {
       return 'buy';
     }
 
-    if (ctx.position && ctx.candle.close >= bollingerBands.middle) return 'sell';
+    if (ctx.positions.length > 0 && ctx.candle.close >= bollingerBands.middle) return 'sell';
     return 'hold';
   },
 };
@@ -309,8 +310,8 @@ export const macdObvMomentum: BacktestStrategy = {
     const prev = ctx.prevIndicators;
     if (!macd || !prev?.macd || obvProxy === undefined || prev.obvProxy === undefined) return 'hold';
 
-    if (!ctx.position && macd.histogram > 0 && obvProxy > prev.obvProxy) return 'buy';
-    if (ctx.position && macd.histogram < 0 && obvProxy < prev.obvProxy) return 'sell';
+    if (ctx.positions.length === 0 && macd.histogram > 0 && obvProxy > prev.obvProxy) return 'buy';
+    if (ctx.positions.length > 0 && macd.histogram < 0 && obvProxy < prev.obvProxy) return 'sell';
     return 'hold';
   },
 };
@@ -329,11 +330,11 @@ export const emaCrossAtr: BacktestStrategy = {
     const prevEma12 = prev.ema?.[12], prevEma26 = prev.ema?.[26];
     if ([ema12, ema26, prevEma12, prevEma26].some(v => v === undefined || isNaN(v!))) return 'hold';
 
-    if (!ctx.position && prevEma12! <= prevEma26! && ema12 > ema26) return 'buy';
+    if (ctx.positions.length === 0 && prevEma12! <= prevEma26! && ema12 > ema26) return 'buy';
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (prevEma12! >= prevEma26! && ema12 < ema26) return 'sell';
-      if (ctx.candle.close < ctx.position.entryPrice - 2 * atr) return 'sell';
+      if (ctx.candle.close < ctx.positions[0].entryPrice - 2 * atr) return 'sell';
     }
     return 'hold';
   },
@@ -363,8 +364,8 @@ export const multiConfirm: BacktestStrategy = {
     if (sma20 && ctx.candle.close > sma20) bullScore++; else bearScore++;
     if (prev?.obvProxy !== undefined && obvProxy > prev.obvProxy) bullScore++; else bearScore++;
 
-    if (!ctx.position && bullScore >= 3) return 'buy';
-    if (ctx.position && bearScore >= 3) return 'sell';
+    if (ctx.positions.length === 0 && bullScore >= 3) return 'buy';
+    if (ctx.positions.length > 0 && bearScore >= 3) return 'sell';
     return 'hold';
   },
 };
@@ -381,7 +382,7 @@ export const usHoursCrsi: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { connorsRsi } = ctx.indicators;
     if (connorsRsi === undefined) return 'hold';
-    if (!ctx.position && connorsRsi < 35 && ctx.hour >= 14 && ctx.hour < 22) return 'buy';
+    if (ctx.positions.length === 0 && connorsRsi < 35 && ctx.hour >= 14 && ctx.hour < 22) return 'buy';
     return 'hold';
   },
 };
@@ -396,7 +397,7 @@ export const euroHoursCrsi: BacktestStrategy = {
   evaluate(ctx): Signal {
     const { connorsRsi } = ctx.indicators;
     if (connorsRsi === undefined) return 'hold';
-    if (!ctx.position && connorsRsi < 35 && ctx.hour >= 7 && ctx.hour < 16) return 'buy';
+    if (ctx.positions.length === 0 && connorsRsi < 35 && ctx.hour >= 7 && ctx.hour < 16) return 'buy';
     return 'hold';
   },
 };
@@ -419,13 +420,13 @@ export const smEmaRsiAdx: BacktestStrategy = {
     const ema9 = ema[9];
     if (sma50 === undefined || isNaN(sma50) || ema9 === undefined || isNaN(ema9)) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       if (ctx.candle.close > sma50 && ctx.candle.close > ema9 && rsiShort > adx) {
         return 'buy';
       }
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (rsiShort < adx || ctx.candle.close < sma50) return 'sell';
     }
     return 'hold';
@@ -445,7 +446,7 @@ export const bbVwapAdxBreakout: BacktestStrategy = {
     const { bollingerBands, vwapProxy, adx, rsi } = ctx.indicators;
     if (!bollingerBands || vwapProxy === undefined || adx === undefined || rsi === undefined) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       // Breaking above upper BB from below + trending + not overbought + above VWAP
       const prevClose = ctx.history[ctx.index - 1]?.close;
       if (prevClose && prevClose <= bollingerBands.upper &&
@@ -456,7 +457,7 @@ export const bbVwapAdxBreakout: BacktestStrategy = {
       }
     }
 
-    if (ctx.position) {
+    if (ctx.positions.length > 0) {
       if (ctx.candle.close < bollingerBands.middle || rsi > 80) return 'sell';
     }
     return 'hold';
@@ -477,16 +478,16 @@ export const emaTrendAdxAtr: BacktestStrategy = {
     const ema12 = ema[12], ema26 = ema[26];
     if (ema12 === undefined || ema26 === undefined || isNaN(ema12) || isNaN(ema26)) return 'hold';
 
-    if (!ctx.position) {
+    if (ctx.positions.length === 0) {
       if (ema12 > ema26 && rsi >= 40 && rsi <= 65 && adx > 20) {
         return 'buy';
       }
     }
 
-    if (ctx.position) {
-      // Bearish EMA cross or ATR-based stop
+    if (ctx.positions.length > 0) {
+      // Bearish EMA cross or ATR-based stop (oldest position as reference)
       if (ema12 < ema26) return 'sell';
-      if (ctx.candle.close < ctx.position.entryPrice - 1.5 * atr) return 'sell';
+      if (ctx.candle.close < ctx.positions[0].entryPrice - 1.5 * atr) return 'sell';
     }
     return 'hold';
   },

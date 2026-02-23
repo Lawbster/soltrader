@@ -83,7 +83,7 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
 }
 
 export function runBacktest(candles: Candle[], config: BacktestConfig): BacktestResult {
-  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct } = config;
+  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct, maxPositions = 1 } = config;
   // Round-trip cost: use explicit override if provided, otherwise derive from commission+slippage
   const roundTripCost = roundTripCostPct ?? (commissionPct + slippagePct) * 2;
 
@@ -97,7 +97,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
 
   const pre = precompute(candles);
   const trades: BacktestTrade[] = [];
-  let position: BacktestPosition | null = null;
+  const positions: BacktestPosition[] = []; // active positions (capped at maxPositions)
   let pendingBuy = false;
   let pendingSell = false;
 
@@ -106,90 +106,95 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     const candle = candles[i];
 
     // Execute pending signals at this bar's open (next-bar execution)
-    if (pendingBuy && !position) {
-      position = {
+    if (pendingBuy && positions.length < maxPositions) {
+      positions.push({
         entryIndex: i,
         entryPrice: candle.open,
         entryTime: candle.timestamp,
         peakPrice: candle.open,
         peakPnlPct: 0,
-      };
-      pendingBuy = false;
-    } else if (pendingSell && position) {
-      const grossPnlPct = ((candle.open - position.entryPrice) / position.entryPrice) * 100;
-
-      trades.push({
-        mint,
-        entryTime: position.entryTime,
-        exitTime: candle.timestamp,
-        entryPrice: position.entryPrice,
-        exitPrice: candle.open,
-        pnlPct: grossPnlPct - roundTripCost,
-        holdBars: i - position.entryIndex,
-        holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
-        exitReason: 'strategy',
       });
-      position = null;
+      pendingBuy = false;
+    } else if (pendingSell && positions.length > 0) {
+      // All-out on sell signal: close every open position at this bar's open
+      for (const pos of positions.splice(0)) {
+        const grossPnlPct = ((candle.open - pos.entryPrice) / pos.entryPrice) * 100;
+        trades.push({
+          mint,
+          entryTime: pos.entryTime,
+          exitTime: candle.timestamp,
+          entryPrice: pos.entryPrice,
+          exitPrice: candle.open,
+          pnlPct: grossPnlPct - roundTripCost,
+          holdBars: i - pos.entryIndex,
+          holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
+          exitReason: 'strategy',
+        });
+      }
       pendingSell = false;
     }
 
-    // Intra-bar TP/SL check (fires within the bar, before strategy evaluation)
-    if (position) {
-      let closedByTpSl = false;
+    // Intra-bar SL/TP check — evaluated per position, SL priority over TP
+    if (positions.length > 0) {
+      for (let j = positions.length - 1; j >= 0; j--) {
+        const pos = positions[j];
+        let closedThisPos = false;
 
-      // Stop loss (priority over TP — conservative)
-      if (!closedByTpSl && strategy.stopLossPct !== undefined) {
-        const stopPrice = position.entryPrice * (1 + strategy.stopLossPct / 100);
-        if (candle.low <= stopPrice) {
-          trades.push({
-            mint,
-            entryTime: position.entryTime,
-            exitTime: candle.timestamp,
-            entryPrice: position.entryPrice,
-            exitPrice: stopPrice,
-            pnlPct: strategy.stopLossPct - roundTripCost,
-            holdBars: i - position.entryIndex,
-            holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
-            exitReason: 'stop-loss',
-          });
-          position = null;
-          pendingBuy = false;
-          pendingSell = false;
-          closedByTpSl = true;
+        // Stop loss (priority over TP — conservative)
+        if (strategy.stopLossPct !== undefined) {
+          const stopPrice = pos.entryPrice * (1 + strategy.stopLossPct / 100);
+          if (candle.low <= stopPrice) {
+            trades.push({
+              mint,
+              entryTime: pos.entryTime,
+              exitTime: candle.timestamp,
+              entryPrice: pos.entryPrice,
+              exitPrice: stopPrice,
+              pnlPct: strategy.stopLossPct - roundTripCost,
+              holdBars: i - pos.entryIndex,
+              holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
+              exitReason: 'stop-loss',
+            });
+            positions.splice(j, 1);
+            closedThisPos = true;
+            pendingSell = false; // stale after any forced close
+          }
+        }
+
+        // Take profit
+        if (!closedThisPos && strategy.takeProfitPct !== undefined) {
+          const tpPrice = pos.entryPrice * (1 + strategy.takeProfitPct / 100);
+          if (candle.high >= tpPrice) {
+            trades.push({
+              mint,
+              entryTime: pos.entryTime,
+              exitTime: candle.timestamp,
+              entryPrice: pos.entryPrice,
+              exitPrice: tpPrice,
+              pnlPct: strategy.takeProfitPct - roundTripCost,
+              holdBars: i - pos.entryIndex,
+              holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
+              exitReason: 'take-profit',
+            });
+            positions.splice(j, 1);
+            pendingSell = false; // stale after any forced close
+          }
         }
       }
-
-      // Take profit
-      if (!closedByTpSl && position && strategy.takeProfitPct !== undefined) {
-        const tpPrice = position.entryPrice * (1 + strategy.takeProfitPct / 100);
-        if (candle.high >= tpPrice) {
-          trades.push({
-            mint,
-            entryTime: position.entryTime,
-            exitTime: candle.timestamp,
-            entryPrice: position.entryPrice,
-            exitPrice: tpPrice,
-            pnlPct: strategy.takeProfitPct - roundTripCost,
-            holdBars: i - position.entryIndex,
-            holdTimeMinutes: (candle.timestamp - position.entryTime) / 60_000,
-            exitReason: 'take-profit',
-          });
-          position = null;
-          pendingBuy = false;
-          pendingSell = false;
-          closedByTpSl = true;
-        }
+      // If all positions closed by SL/TP, cancel pending re-entry for this signal cycle
+      if (positions.length === 0) {
+        pendingBuy = false;
       }
     }
 
-    // Track peak while in position
-    if (position) {
-      if (candle.close > position.peakPrice) {
-        position.peakPrice = candle.close;
+    // Track peak for each open position
+    for (const pos of positions) {
+      if (candle.close > pos.peakPrice) {
+        pos.peakPrice = candle.close;
       }
-      const pnlPct = ((candle.close - position.entryPrice) / position.entryPrice) * 100;
-      if (pnlPct > position.peakPnlPct) {
-        position.peakPnlPct = pnlPct;
+      const pnlPct = ((candle.close - pos.entryPrice) / pos.entryPrice) * 100;
+      if (pnlPct > pos.peakPnlPct) {
+        pos.peakPnlPct = pnlPct;
       }
     }
 
@@ -202,7 +207,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
       index: i,
       indicators,
       prevIndicators,
-      position,
+      positions,
       history: candles,
       hour,
     };
@@ -210,26 +215,26 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     const signal: Signal = strategy.evaluate(ctx);
 
     // Queue signal for next-bar execution
-    if (signal === 'buy' && !position) {
+    if (signal === 'buy' && positions.length < maxPositions) {
       pendingBuy = true;
-    } else if (signal === 'sell' && position) {
+    } else if (signal === 'sell' && positions.length > 0) {
       pendingSell = true;
     }
   }
 
-  // Force-close any open position at end of data
-  if (position) {
+  // Force-close any open positions at end of data
+  for (const pos of positions) {
     const last = candles[candles.length - 1];
-    const grossPnlPct = ((last.close - position.entryPrice) / position.entryPrice) * 100;
+    const grossPnlPct = ((last.close - pos.entryPrice) / pos.entryPrice) * 100;
     trades.push({
       mint,
-      entryTime: position.entryTime,
+      entryTime: pos.entryTime,
       exitTime: last.timestamp,
-      entryPrice: position.entryPrice,
+      entryPrice: pos.entryPrice,
       exitPrice: last.close,
       pnlPct: grossPnlPct - roundTripCost,
-      holdBars: candles.length - 1 - position.entryIndex,
-      holdTimeMinutes: (last.timestamp - position.entryTime) / 60_000,
+      holdBars: candles.length - 1 - pos.entryIndex,
+      holdTimeMinutes: (last.timestamp - pos.entryTime) / 60_000,
       exitReason: 'end-of-data',
     });
   }

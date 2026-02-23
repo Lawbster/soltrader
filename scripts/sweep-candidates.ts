@@ -1,6 +1,44 @@
 import fs from 'fs';
 import path from 'path';
 
+type TrendRegime = 'uptrend' | 'sideways' | 'downtrend' | 'unknown';
+
+const TREND_WEIGHTS = {
+  ret24h: 0.5,
+  ret48h: 0.3,
+  ret72h: 0.2,
+};
+
+const DATA_ROOT = path.resolve(__dirname, '../data/data');
+const CANDLES_ROOT = path.join(DATA_ROOT, 'candles');
+const WATCHLIST_PATH = path.resolve(__dirname, '../config/watchlist.json');
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+
+interface CandlePoint {
+  timestamp: number;
+  close: number;
+}
+
+interface WatchlistEntry {
+  mint: string;
+  label: string;
+}
+
+interface TrendFallback {
+  tokenRet24hPct: number | null;
+  tokenRet48hPct: number | null;
+  tokenRet72hPct: number | null;
+  tokenRet168hPct: number | null;
+  tokenRetWindowPct: number | null;
+  trendScore: number | null;
+  trendRegime: TrendRegime;
+  trendCoverageDays: number | null;
+}
+
+let watchlistByLabelCache: Map<string, string> | null = null;
+const mintCandlesCache = new Map<string, CandlePoint[]>();
+const trendFallbackCache = new Map<string, TrendFallback | null>();
+
 interface CliArgs {
   file?: string;
   dir: string;
@@ -13,6 +51,7 @@ interface CliArgs {
   priorWins: number;
   priorLosses: number;
   top: number;
+  topPerToken: number;
   outDir?: string;
   writeCsv: boolean;
 }
@@ -21,6 +60,7 @@ interface SweepRow {
   template: string;
   token: string;
   timeframe: number;
+  maxPositions: number;
   params: string;
   trades: number;
   winRate: number;
@@ -33,6 +73,16 @@ interface SweepRow {
   avgLossPct: number;
   avgHoldMinutes: number;
   tradesPerDay: number;
+  tokenRet24hPct: number | null;
+  tokenRet48hPct: number | null;
+  tokenRet72hPct: number | null;
+  tokenRet168hPct: number | null;
+  tokenRetWindowPct: number | null;
+  tokenVol24hPct: number | null;
+  trendScore: number | null;
+  trendRegime: TrendRegime;
+  relRet24hVsSolPct: number | null;
+  trendCoverageDays: number | null;
 }
 
 interface CandidateRow extends SweepRow {
@@ -42,6 +92,13 @@ interface CandidateRow extends SweepRow {
   expectancyPct: number;
   scoreProbe: number;
   scoreCore: number;
+  combinedStat: number;
+  alpha24hPct: number | null;
+  alpha48hPct: number | null;
+  alpha72hPct: number | null;
+  alphaWindowPct: number | null;
+  alphaBlendPct: number | null;
+  trendAdjustedScore: number;
 }
 
 interface PatternRow {
@@ -56,6 +113,9 @@ interface PatternRow {
   avgProfitFactor: number | null;
   avgHoldMinutes: number;
   avgExpectancyPct: number;
+  avgTrendAdjustedScore: number;
+  avgAlphaWindowPct: number | null;
+  avgAlphaBlendPct: number | null;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -64,12 +124,13 @@ function parseArgs(argv: string[]): CliArgs {
     minWinRate: 65,
     probeMinTrades: 3,
     probeMaxTrades: 7,
-    coreMinTrades: 20,
+    coreMinTrades: 10,
     coreMinProfitFactor: 1.1,
     coreMinPnlPct: 0,
     priorWins: 3,
     priorLosses: 3,
     top: 25,
+    topPerToken: 5,
     writeCsv: true,
   };
 
@@ -140,6 +201,11 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === '--top-per-token') {
+      args.topPerToken = parseInt(requireValue(arg, next), 10);
+      i++;
+      continue;
+    }
     if (arg === '--out-dir') {
       args.outDir = path.resolve(requireValue(arg, next));
       i++;
@@ -162,6 +228,9 @@ function parseArgs(argv: string[]): CliArgs {
   if (args.top <= 0) {
     throw new Error('--top must be > 0');
   }
+  if (args.topPerToken <= 0) {
+    throw new Error('--top-per-token must be > 0');
+  }
 
   return args;
 }
@@ -178,12 +247,13 @@ function printHelp(): void {
     '  --min-win-rate N          Minimum raw win rate filter (default: 65)',
     '  --probe-min-trades N      Probe bucket min trades (default: 3)',
     '  --probe-max-trades N      Probe bucket max trades (default: 7)',
-    '  --core-min-trades N       Core bucket min trades (default: 20)',
+    '  --core-min-trades N       Core bucket min trades (default: 10)',
     '  --core-min-pf N           Core min profit factor (default: 1.1)',
     '  --core-min-pnl N          Core min pnl % (default: 0)',
     '  --prior-wins N            Bayesian prior wins for adjusted WR (default: 3)',
     '  --prior-losses N          Bayesian prior losses for adjusted WR (default: 3)',
-    '  --top N                   Rows to print per bucket (default: 25)',
+    '  --top N                   Max total rows per bucket in console/CSV (default: 25)',
+    '  --top-per-token N         Max rows per token per bucket (default: 5)',
     '  --out-dir PATH            Output directory for ranked CSVs (default: <source-dir>/candidates)',
     '  --no-csv                  Do not write output CSVs',
   ];
@@ -203,6 +273,54 @@ function parseNumber(flag: string, value: string | undefined): number {
     throw new Error(`Invalid numeric value for ${flag}: ${value}`);
   }
   return parsed;
+}
+
+function parseOptionalNumber(parts: string[], idx: number | undefined): number | null {
+  if (idx === undefined) return null;
+  const raw = parts[idx];
+  if (raw === undefined || raw.trim() === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseTrendRegime(value: string | undefined): TrendRegime {
+  if (value === 'uptrend' || value === 'sideways' || value === 'downtrend' || value === 'unknown') {
+    return value;
+  }
+  return 'unknown';
+}
+
+function classifyRegimeFromReturns(
+  ret24h: number | null,
+  ret48h: number | null,
+  ret72h: number | null,
+  trendScoreFromRow: number | null,
+): TrendRegime {
+  let trendScore = trendScoreFromRow;
+  if (trendScore === null) {
+    const weighted = weightedAverageReturns(ret24h, ret48h, ret72h);
+    trendScore = weighted;
+  }
+  if (trendScore === null) return 'unknown';
+  const gate24 = ret24h ?? trendScore;
+  if (trendScore >= 8 && gate24 >= 3) return 'uptrend';
+  if (trendScore <= -6 && gate24 <= -2) return 'downtrend';
+  return 'sideways';
+}
+
+function weightedAverageReturns(
+  ret24h: number | null,
+  ret48h: number | null,
+  ret72h: number | null,
+): number | null {
+  const parts: Array<{ v: number; w: number }> = [];
+  if (ret24h !== null) parts.push({ v: ret24h, w: TREND_WEIGHTS.ret24h });
+  if (ret48h !== null) parts.push({ v: ret48h, w: TREND_WEIGHTS.ret48h });
+  if (ret72h !== null) parts.push({ v: ret72h, w: TREND_WEIGHTS.ret72h });
+  if (parts.length === 0) return null;
+  const wSum = parts.reduce((s, p) => s + p.w, 0);
+  if (wSum <= 0) return null;
+  return parts.reduce((s, p) => s + p.v * p.w, 0) / wSum;
 }
 
 function resolveInputFile(args: CliArgs): string {
@@ -288,6 +406,7 @@ function parseSweepCsv(filePath: string): SweepRow[] {
       template: parts[idx.template],
       token: parts[idx.token],
       timeframe: Number(parts[idx.timeframe]),
+      maxPositions: idx.maxPositions !== undefined ? Number(parts[idx.maxPositions]) : 1,
       params: parts[idx.params],
       trades: Number(parts[idx.trades]),
       winRate: Number(parts[idx.winRate]),
@@ -300,7 +419,34 @@ function parseSweepCsv(filePath: string): SweepRow[] {
       avgLossPct: Number(parts[idx.avgLossPct]),
       avgHoldMinutes: Number(parts[idx.avgHoldMinutes]),
       tradesPerDay: Number(parts[idx.tradesPerDay]),
+      tokenRet24hPct: parseOptionalNumber(parts, idx.tokenRet24hPct),
+      tokenRet48hPct: parseOptionalNumber(parts, idx.tokenRet48hPct),
+      tokenRet72hPct: parseOptionalNumber(parts, idx.tokenRet72hPct),
+      tokenRet168hPct: parseOptionalNumber(parts, idx.tokenRet168hPct),
+      tokenRetWindowPct: parseOptionalNumber(parts, idx.tokenRetWindowPct),
+      tokenVol24hPct: parseOptionalNumber(parts, idx.tokenVol24hPct),
+      trendScore: parseOptionalNumber(parts, idx.trendScore),
+      trendRegime: 'unknown',
+      relRet24hVsSolPct: parseOptionalNumber(parts, idx.relRet24hVsSolPct),
+      trendCoverageDays: parseOptionalNumber(parts, idx.trendCoverageDays),
     };
+
+    row.trendRegime = idx.trendRegime !== undefined
+      ? parseTrendRegime(parts[idx.trendRegime])
+      : classifyRegimeFromReturns(
+        row.tokenRet24hPct,
+        row.tokenRet48hPct,
+        row.tokenRet72hPct,
+        row.trendScore,
+      );
+    if (row.trendRegime === 'unknown') {
+      row.trendRegime = classifyRegimeFromReturns(
+        row.tokenRet24hPct,
+        row.tokenRet48hPct,
+        row.tokenRet72hPct,
+        row.trendScore,
+      );
+    }
 
     if (!Number.isFinite(row.trades) || row.trades <= 0) continue;
     if (!Number.isFinite(row.winRate)) continue;
@@ -309,6 +455,47 @@ function parseSweepCsv(filePath: string): SweepRow[] {
   }
 
   return rows;
+}
+
+function computeCombinedStat(
+  pnlPct: number,
+  trades: number,
+  avgHoldMinutes: number,
+  profitFactor: number | null,
+  maxDrawdownPct: number,
+): number {
+  if (pnlPct <= 0) return 0; // unprofitable strategies score 0
+
+  // Capital efficiency: log hold adjustment (mild ±30% modifier on pnlPct)
+  // neutral at 60min, bonus for shorter holds, penalty for longer
+  const holdAdj = Math.log(60 / Math.max(avgHoldMinutes, 5));
+  const adjustedReturn = pnlPct * (1 + holdAdj * 0.3);
+
+  // Sample confidence: normalized [0→1], saturates at 50 trades
+  const tradeWeight = Math.log(Math.max(trades, 1) + 1) / Math.log(51);
+
+  // Drawdown penalty: quadratic — barely affects small DD, punishes large DD hard
+  const ddPenalty = Math.max(1 - Math.pow(maxDrawdownPct / 25, 2), 0);
+
+  // PF bonus: soft additive, max +20% at PF >= 3
+  const pfBonus = profitFactor !== null ? Math.min((profitFactor - 1.0) / 2, 1.0) : 0;
+
+  return adjustedReturn * tradeWeight * ddPenalty * (1 + pfBonus * 0.2);
+}
+
+function alphaFromReturn(pnlPct: number, baselineRetPct: number | null): number | null {
+  if (baselineRetPct === null) return null;
+  return pnlPct - baselineRetPct;
+}
+
+function computeTrendAdjustedScore(
+  combinedStat: number,
+  alphaWindowPct: number | null,
+  alphaBlendPct: number | null,
+): number {
+  const alphaWindow = clamp(alphaWindowPct ?? 0, -50, 50);
+  const alphaBlend = clamp(alphaBlendPct ?? 0, -50, 50);
+  return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend);
 }
 
 function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): CandidateRow {
@@ -323,6 +510,24 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): Can
 
   const scoreProbe = adjustedWinRate * Math.log(row.trades + 1) * pnlBoost;
   const scoreCore = adjustedWinRate * Math.log(row.trades + 1) * pfBoost * depthBoost;
+  const combinedStat = computeCombinedStat(
+    row.pnlPct,
+    row.trades,
+    row.avgHoldMinutes,
+    row.profitFactor,
+    row.maxDrawdownPct,
+  );
+  const weightedRetBaseline = weightedAverageReturns(
+    row.tokenRet24hPct,
+    row.tokenRet48hPct,
+    row.tokenRet72hPct,
+  );
+  const alpha24hPct = alphaFromReturn(row.pnlPct, row.tokenRet24hPct);
+  const alpha48hPct = alphaFromReturn(row.pnlPct, row.tokenRet48hPct);
+  const alpha72hPct = alphaFromReturn(row.pnlPct, row.tokenRet72hPct);
+  const alphaWindowPct = alphaFromReturn(row.pnlPct, row.tokenRetWindowPct);
+  const alphaBlendPct = alphaFromReturn(row.pnlPct, weightedRetBaseline);
+  const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct);
 
   return {
     ...row,
@@ -332,11 +537,31 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): Can
     expectancyPct,
     scoreProbe,
     scoreCore,
+    combinedStat,
+    alpha24hPct,
+    alpha48hPct,
+    alpha72hPct,
+    alphaWindowPct,
+    alphaBlendPct,
+    trendAdjustedScore,
   };
 }
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function capPerToken<T extends { token: string }>(rows: T[], maxPerToken: number): T[] {
+  const counts = new Map<string, number>();
+  const out: T[] = [];
+  for (const row of rows) {
+    const count = counts.get(row.token) ?? 0;
+    if (count < maxPerToken) {
+      out.push(row);
+      counts.set(row.token, count + 1);
+    }
+  }
+  return out;
 }
 
 function average(values: number[]): number | null {
@@ -352,23 +577,42 @@ function formatNum(value: number, digits = 2): string {
   return value.toFixed(digits);
 }
 
-function printCandidateTable(title: string, rows: CandidateRow[], top: number, scoreField: 'scoreProbe' | 'scoreCore'): void {
-  console.log(`\n${title} (top ${Math.min(top, rows.length)}):`);
+function formatOptionalNum(value: number | null, digits = 2): string {
+  if (value === null || !Number.isFinite(value)) return '';
+  return value.toFixed(digits);
+}
+
+function printCandidateTable(title: string, rows: CandidateRow[], top: number, topPerToken: number): void {
   if (rows.length === 0) {
+    console.log(`\n${title} (top 0):`);
     console.log('  none');
     return;
   }
 
-  const ranked = rows
-    .slice()
-    .sort((a, b) => {
-      const scoreDiff = b[scoreField] - a[scoreField];
-      if (Math.abs(scoreDiff) > 1e-9) return scoreDiff;
-      const pnlDiff = b.pnlPct - a.pnlPct;
-      if (Math.abs(pnlDiff) > 1e-9) return pnlDiff;
-      return b.trades - a.trades;
-    })
-    .slice(0, top);
+  // Count qualifying entries per token before capping
+  const tokenCounts = new Map<string, number>();
+  for (const r of rows) tokenCounts.set(r.token, (tokenCounts.get(r.token) ?? 0) + 1);
+
+  const ranked = capPerToken(
+    rows.slice().sort((a, b) => {
+      const diff = b.trendAdjustedScore - a.trendAdjustedScore;
+      if (Math.abs(diff) > 1e-9) return diff;
+      const combinedDiff = b.combinedStat - a.combinedStat;
+      if (Math.abs(combinedDiff) > 1e-9) return combinedDiff;
+      return b.pnlPct - a.pnlPct;
+    }),
+    topPerToken
+  ).slice(0, top);
+
+  console.log(`\n${title} (top ${ranked.length}):`);
+  for (const [token, count] of [...tokenCounts.entries()].sort()) {
+    const shown = ranked.filter(r => r.token === token).length;
+    console.log(`  ${token}: ${count} qualifying (showing ${shown})`);
+  }
+  if (ranked.length === 0) {
+    console.log('  none');
+    return;
+  }
 
   const table = ranked.map((r, i) => ({
     rank: i + 1,
@@ -380,11 +624,28 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, s
     pnlPct: `${r.pnlPct.toFixed(4)}%`,
     pf: r.profitFactor === null ? 'n/a' : r.profitFactor.toFixed(3),
     holdMin: r.avgHoldMinutes.toFixed(1),
-    score: r[scoreField].toFixed(4),
+    regime: r.trendRegime,
+    alphaW: r.alphaWindowPct === null ? 'n/a' : `${r.alphaWindowPct.toFixed(2)}%`,
+    score: r.trendAdjustedScore.toFixed(4),
     params: r.params,
   }));
 
   console.table(table);
+}
+
+function printRegimeBreakdown(label: string, rows: CandidateRow[]): void {
+  if (rows.length === 0) return;
+  const counts = new Map<TrendRegime, number>();
+  for (const row of rows) {
+    counts.set(row.trendRegime, (counts.get(row.trendRegime) ?? 0) + 1);
+  }
+  const text = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}:${v}`)
+    .join(' ');
+  if (text) {
+    console.log(`${label} regimes: ${text}`);
+  }
 }
 
 function buildPatterns(rows: CandidateRow[]): PatternRow[] {
@@ -414,6 +675,9 @@ function buildPatterns(rows: CandidateRow[]): PatternRow[] {
       avgProfitFactor,
       avgHoldMinutes: average(group.map(g => g.avgHoldMinutes)) ?? 0,
       avgExpectancyPct: average(group.map(g => g.expectancyPct)) ?? 0,
+      avgTrendAdjustedScore: average(group.map(g => g.trendAdjustedScore)) ?? 0,
+      avgAlphaWindowPct: average(group.map(g => g.alphaWindowPct).filter((v): v is number => v !== null)),
+      avgAlphaBlendPct: average(group.map(g => g.alphaBlendPct).filter((v): v is number => v !== null)),
     });
   }
   return out;
@@ -429,6 +693,9 @@ function printPatternTable(title: string, patterns: PatternRow[], top: number): 
   const ranked = patterns
     .slice()
     .sort((a, b) => {
+      if (Math.abs(b.avgTrendAdjustedScore - a.avgTrendAdjustedScore) > 1e-9) {
+        return b.avgTrendAdjustedScore - a.avgTrendAdjustedScore;
+      }
       if (b.tokens !== a.tokens) return b.tokens - a.tokens;
       if (b.rows !== a.rows) return b.rows - a.rows;
       return b.avgAdjustedWinRate - a.avgAdjustedWinRate;
@@ -442,9 +709,11 @@ function printPatternTable(title: string, patterns: PatternRow[], top: number): 
       avgAdjWR: `${(p.avgAdjustedWinRate * 100).toFixed(2)}%`,
       avgWin: `${p.avgWinRate.toFixed(2)}%`,
       avgPnl: `${p.avgPnlPct.toFixed(4)}%`,
+      avgAlphaW: p.avgAlphaWindowPct === null ? 'n/a' : `${p.avgAlphaWindowPct.toFixed(2)}%`,
       avgPF: p.avgProfitFactor === null ? 'n/a' : p.avgProfitFactor.toFixed(3),
       avgTrades: p.avgTrades.toFixed(1),
       avgHold: p.avgHoldMinutes.toFixed(1),
+      trendScore: p.avgTrendAdjustedScore.toFixed(3),
       params: p.params,
     }));
 
@@ -514,10 +783,20 @@ function main(): void {
   if (avgCoreAdj !== null) {
     console.log(`Avg core adjusted WR: ${formatPct(avgCoreAdj)}`);
   }
+  const avgProbeAlphaW = average(probe.map(r => r.alphaWindowPct).filter((v): v is number => v !== null));
+  const avgCoreAlphaW = average(core.map(r => r.alphaWindowPct).filter((v): v is number => v !== null));
+  if (avgProbeAlphaW !== null) {
+    console.log(`Avg probe alpha(window): ${avgProbeAlphaW.toFixed(2)}%`);
+  }
+  if (avgCoreAlphaW !== null) {
+    console.log(`Avg core alpha(window): ${avgCoreAlphaW.toFixed(2)}%`);
+  }
+  printRegimeBreakdown('Probe', probe);
+  printRegimeBreakdown('Core', core);
 
-  printCandidateTable('Probe Candidates', probe, args.top, 'scoreProbe');
+  printCandidateTable('Probe Candidates', probe, args.top, args.topPerToken);
   printPatternTable('Probe Shared Patterns', probePatterns, args.top);
-  printCandidateTable('Core Candidates', core, args.top, 'scoreCore');
+  printCandidateTable('Core Candidates', core, args.top, args.topPerToken);
   printPatternTable('Core Shared Patterns', corePatterns, args.top);
 
   if (!args.writeCsv) return;
@@ -529,43 +808,90 @@ function main(): void {
   const probeOut = path.join(outDir, `${srcBase}.probe-ranked.csv`);
   const coreOut = path.join(outDir, `${srcBase}.core-ranked.csv`);
   const patternOut = path.join(outDir, `${srcBase}.patterns.csv`);
+  const coreUpOut = path.join(outDir, `${srcBase}.core-up.csv`);
+  const coreSidewaysOut = path.join(outDir, `${srcBase}.core-sideways.csv`);
+  const coreDownOut = path.join(outDir, `${srcBase}.core-down.csv`);
+  const probeUpOut = path.join(outDir, `${srcBase}.probe-up.csv`);
+  const probeSidewaysOut = path.join(outDir, `${srcBase}.probe-sideways.csv`);
+  const probeDownOut = path.join(outDir, `${srcBase}.probe-down.csv`);
 
-  const probeRows = probe
+  const rankByTrendScore = (rows: CandidateRow[]): CandidateRow[] => rows
     .slice()
-    .sort((a, b) => b.scoreProbe - a.scoreProbe)
-    .map(r => ({
+    .sort((a, b) => {
+      const diff = b.trendAdjustedScore - a.trendAdjustedScore;
+      if (Math.abs(diff) > 1e-9) return diff;
+      const combinedDiff = b.combinedStat - a.combinedStat;
+      if (Math.abs(combinedDiff) > 1e-9) return combinedDiff;
+      return b.pnlPct - a.pnlPct;
+    });
+
+  const probeRows = capPerToken(
+    rankByTrendScore(probe),
+    args.topPerToken
+  ).map(r => ({
       token: r.token,
       template: r.template,
       params: r.params,
+      trendRegime: r.trendRegime,
+      trendScore: formatOptionalNum(r.trendScore, 4),
       trades: r.trades,
       winRatePct: formatNum(r.winRate, 2),
       adjustedWinRatePct: formatNum(r.adjustedWinRate * 100, 2),
       pnlPct: formatNum(r.pnlPct, 4),
+      alpha24hPct: formatOptionalNum(r.alpha24hPct, 4),
+      alpha48hPct: formatOptionalNum(r.alpha48hPct, 4),
+      alpha72hPct: formatOptionalNum(r.alpha72hPct, 4),
+      alphaWindowPct: formatOptionalNum(r.alphaWindowPct, 4),
+      alphaBlendPct: formatOptionalNum(r.alphaBlendPct, 4),
+      tokenRet24hPct: formatOptionalNum(r.tokenRet24hPct, 4),
+      tokenRet48hPct: formatOptionalNum(r.tokenRet48hPct, 4),
+      tokenRet72hPct: formatOptionalNum(r.tokenRet72hPct, 4),
+      tokenRetWindowPct: formatOptionalNum(r.tokenRetWindowPct, 4),
+      relRet24hVsSolPct: formatOptionalNum(r.relRet24hVsSolPct, 4),
       profitFactor: r.profitFactor === null ? '' : formatNum(r.profitFactor, 4),
       avgHoldMinutes: formatNum(r.avgHoldMinutes, 1),
       expectancyPct: formatNum(r.expectancyPct, 4),
       scoreProbe: formatNum(r.scoreProbe, 6),
+      combinedStat: formatNum(r.combinedStat, 6),
+      trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
     }));
 
-  const coreRows = core
-    .slice()
-    .sort((a, b) => b.scoreCore - a.scoreCore)
-    .map(r => ({
+  const coreRows = capPerToken(
+    rankByTrendScore(core),
+    args.topPerToken
+  ).map(r => ({
       token: r.token,
       template: r.template,
       params: r.params,
+      trendRegime: r.trendRegime,
+      trendScore: formatOptionalNum(r.trendScore, 4),
       trades: r.trades,
       winRatePct: formatNum(r.winRate, 2),
       adjustedWinRatePct: formatNum(r.adjustedWinRate * 100, 2),
       pnlPct: formatNum(r.pnlPct, 4),
+      alpha24hPct: formatOptionalNum(r.alpha24hPct, 4),
+      alpha48hPct: formatOptionalNum(r.alpha48hPct, 4),
+      alpha72hPct: formatOptionalNum(r.alpha72hPct, 4),
+      alphaWindowPct: formatOptionalNum(r.alphaWindowPct, 4),
+      alphaBlendPct: formatOptionalNum(r.alphaBlendPct, 4),
+      tokenRet24hPct: formatOptionalNum(r.tokenRet24hPct, 4),
+      tokenRet48hPct: formatOptionalNum(r.tokenRet48hPct, 4),
+      tokenRet72hPct: formatOptionalNum(r.tokenRet72hPct, 4),
+      tokenRetWindowPct: formatOptionalNum(r.tokenRetWindowPct, 4),
+      relRet24hVsSolPct: formatOptionalNum(r.relRet24hVsSolPct, 4),
       profitFactor: r.profitFactor === null ? '' : formatNum(r.profitFactor, 4),
       avgHoldMinutes: formatNum(r.avgHoldMinutes, 1),
       expectancyPct: formatNum(r.expectancyPct, 4),
       scoreCore: formatNum(r.scoreCore, 6),
+      combinedStat: formatNum(r.combinedStat, 6),
+      trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
     }));
 
   const patternRows = [...probePatterns, ...corePatterns]
     .sort((a, b) => {
+      if (Math.abs(b.avgTrendAdjustedScore - a.avgTrendAdjustedScore) > 1e-9) {
+        return b.avgTrendAdjustedScore - a.avgTrendAdjustedScore;
+      }
       if (b.tokens !== a.tokens) return b.tokens - a.tokens;
       if (b.rows !== a.rows) return b.rows - a.rows;
       return b.avgAdjustedWinRate - a.avgAdjustedWinRate;
@@ -582,17 +908,32 @@ function main(): void {
       avgProfitFactor: p.avgProfitFactor === null ? '' : formatNum(p.avgProfitFactor, 4),
       avgHoldMinutes: formatNum(p.avgHoldMinutes, 1),
       avgExpectancyPct: formatNum(p.avgExpectancyPct, 4),
+      avgAlphaWindowPct: formatOptionalNum(p.avgAlphaWindowPct, 4),
+      avgAlphaBlendPct: formatOptionalNum(p.avgAlphaBlendPct, 4),
+      avgTrendAdjustedScore: formatNum(p.avgTrendAdjustedScore, 6),
       bucket: probePatterns.includes(p) ? 'probe' : 'core',
     }));
 
   writeCsv(probeOut, probeRows);
   writeCsv(coreOut, coreRows);
   writeCsv(patternOut, patternRows);
+  writeCsv(coreUpOut, coreRows.filter(r => r.trendRegime === 'uptrend'));
+  writeCsv(coreSidewaysOut, coreRows.filter(r => r.trendRegime === 'sideways'));
+  writeCsv(coreDownOut, coreRows.filter(r => r.trendRegime === 'downtrend'));
+  writeCsv(probeUpOut, probeRows.filter(r => r.trendRegime === 'uptrend'));
+  writeCsv(probeSidewaysOut, probeRows.filter(r => r.trendRegime === 'sideways'));
+  writeCsv(probeDownOut, probeRows.filter(r => r.trendRegime === 'downtrend'));
 
   console.log('\nSaved ranked CSVs:');
   console.log(`  ${probeOut}`);
   console.log(`  ${coreOut}`);
   console.log(`  ${patternOut}`);
+  console.log(`  ${coreUpOut}`);
+  console.log(`  ${coreSidewaysOut}`);
+  console.log(`  ${coreDownOut}`);
+  console.log(`  ${probeUpOut}`);
+  console.log(`  ${probeSidewaysOut}`);
+  console.log(`  ${probeDownOut}`);
 }
 
 try {
