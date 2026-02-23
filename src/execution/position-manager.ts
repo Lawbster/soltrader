@@ -730,7 +730,7 @@ export function loadPositionHistory() {
 
   // Try today's file first
   const todayData = tryLoadFile(today);
-  const isFromToday = todayData !== null && (todayData.open?.length ?? 0) > 0;
+  const isFromToday = todayData !== null;
 
   if (isFromToday) {
     for (const p of todayData!.open) {
