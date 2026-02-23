@@ -76,7 +76,8 @@
   "execution": {
     "maxRouteImpactPct": 0.25,
     "maxRetries": 2,
-    "simulateBeforeSubmit": true
+    "simulateBeforeSubmit": true,
+    "priorityLevelMaxLamports": 500000
   },
   "paperTrading": {
     "latencyRangeMs": [300, 1200],

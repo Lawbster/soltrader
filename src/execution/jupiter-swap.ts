@@ -206,7 +206,12 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
           userPublicKey: keypair.publicKey.toBase58(),
           wrapAndUnwrapSol: true,
           dynamicComputeUnitLimit: true,
-          prioritizationFeeLamports: 'auto',
+          prioritizationFeeLamports: {
+            priorityLevelWithMaxLamports: {
+              maxLamports: cfg.execution.priorityLevelMaxLamports,
+              priorityLevel: 'high',
+            },
+          },
         }, 2, swapController.signal);
       } finally {
         clearTimeout(swapTimeout);

@@ -80,6 +80,7 @@ export interface StrategyConfig {
     maxRouteImpactPct: number;
     maxRetries: number;
     simulateBeforeSubmit: boolean;
+    priorityLevelMaxLamports: number;
   };
   paperTrading: {
     latencyRangeMs: [number, number];
