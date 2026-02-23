@@ -11,6 +11,7 @@ import {
   initMetrics, saveMetrics, printMetricsSummary, getAggregateMetrics,
 } from './strategy';
 import { getLiveTokenStrategy } from './strategy/live-strategy-map';
+import { startRegimeRefresh, getTokenRegimeCached } from './strategy/regime-detector';
 import { StrategyPlan } from './execution/types';
 import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
 import {
@@ -92,7 +93,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const isWatchlist = launch.source === 'watchlist';
 
   // Per-token strategy gate: watchlist tokens must have an active strategy entry
-  const tokenStrategy = getLiveTokenStrategy(mint);
+  const regimeState = getTokenRegimeCached(mint);
+  const regime = regimeState?.confirmed ?? 'sideways';
+  const tokenStrategy = getLiveTokenStrategy(mint, regime);
   if (isWatchlist && (!tokenStrategy || !tokenStrategy.enabled)) return;
 
   const strategyCfg = loadStrategyConfig();
@@ -168,6 +171,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     log.info('ENTRY SIGNAL', {
       mint,
       label: tokenStrategy?.label,
+      regime,
       score: signal.scoreResult ? Math.round(signal.scoreResult.total) : 0,
       sizeUsdc: signal.positionSizeUsdc.toFixed(2),
       mcap: Math.round(tokenData.mcapUsd),
@@ -302,6 +306,11 @@ async function main() {
     }
   } else if (useWatchlist) {
     log.warn('Watchlist mode enabled but no mints found');
+  }
+
+  // Start background regime detection for watchlist tokens
+  if (useWatchlist && watchlist.length > 0) {
+    startRegimeRefresh(watchlist.map(e => e.mint));
   }
 
   if (useLaunches) {

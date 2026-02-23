@@ -9,6 +9,7 @@ import {
 } from '../analysis';
 import { loadWatchlist } from '../monitor';
 import { getLiveTokenStrategy } from '../strategy/live-strategy-map';
+import { getTokenRegimeCached } from '../strategy/regime-detector';
 import { getJupiterMetrics } from '../execution/jupiter-client';
 import { getDashboardHtml } from './page';
 
@@ -173,6 +174,8 @@ function handleSignals(res: http.ServerResponse) {
       const lastImpact = getLastQuotedImpact();
       const quotedImpact = lastImpact?.mint === mint ? lastImpact.impact : undefined;
 
+      const regimeState = getTokenRegimeCached(mint);
+
       return {
         mint,
         label: entry.label,
@@ -196,6 +199,11 @@ function handleSignals(res: http.ServerResponse) {
         tp: tokenStrategy?.params.tp,
         tier: tokenStrategy?.tier,
         indicatorKind: tokenStrategy?.indicator.kind ?? 'crsi',
+        trendRegime: regimeState?.confirmed ?? null,
+        trendScore: regimeState?.trendScore ?? null,
+        ret24h: regimeState?.ret24h ?? null,
+        ret72h: regimeState?.ret72h ?? null,
+        coverageHours: regimeState?.coverageHours ?? null,
       };
     });
 

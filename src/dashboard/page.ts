@@ -591,13 +591,12 @@ function renderSignals(signals) {
       ? '<span class="green" style="font-weight:700;font-size:0.8rem;">OVERSOLD</span>'
       : '';
     const indicatorLabel = s.indicatorKind === 'rsi' ? 'RSI(14)' : 'CRSI';
-    const tierLabel = s.tier ? s.tier.toUpperCase() : '';
-    const slVal = s.sl !== undefined ? s.sl + '%' : '--';
-    const tpVal = s.tp !== undefined ? '+' + s.tp + '%' : '--';
-
+    const regimeColor = s.trendRegime === 'uptrend' ? '#3fb950' : s.trendRegime === 'downtrend' ? '#f85149' : s.trendRegime === 'sideways' ? '#d29922' : '#484f58';
+    const regimeBadge = '<span style="margin-left:6px;font-size:0.6rem;padding:1px 5px;border-radius:3px;background:#0d1117;color:' + regimeColor + ';border:1px solid ' + regimeColor + '40;vertical-align:middle;">' + (s.trendRegime || '--') + '</span>';
+    const regimeScore = s.trendScore !== null ? '<div class="signal-row" style="margin-top:8px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Trend score</span><span style="color:' + regimeColor + ';">' + Number(s.trendScore).toFixed(1) + (s.ret24h !== null ? ' · 24h ' + (s.ret24h >= 0 ? '+' : '') + Number(s.ret24h).toFixed(1) + '%' : '') + (s.ret72h !== null ? ' · 72h ' + (s.ret72h >= 0 ? '+' : '') + Number(s.ret72h).toFixed(1) + '%' : '') + '</span></div>' : '';
     const isSelected = selectedMint ? s.mint === selectedMint : i === 0;
     return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
-      '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + '</div>' +
+      '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + regimeBadge + '</div>' +
       '<div class="signal-mint">' +
         '<a href="https://solscan.io/token/' + s.mint + '" target="_blank" onclick="event.stopPropagation();">' + shortMint(s.mint) + '</a>' +
       '</div>' +
@@ -607,16 +606,7 @@ function renderSignals(signals) {
       '</div>' +
       '<div class="progress-bar"><div class="progress-fill ' + barCls + '" style="width:' + pct + '%"></div></div>' +
       '<div class="progress-text"><span>' + readyLabel + '</span><span>' + s.candleCount + ' / ' + s.candlesNeeded + ' candles</span></div>' +
-      '<div style="margin-top:8px">' +
-        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Entry</div>' +
-        '<div class="signal-row"><span class="label">RSI threshold</span><span>' + s.oversoldThreshold + '</span></div>' +
-        (tierLabel ? '<div class="signal-row"><span class="label">Tier</span><span>' + tierLabel + '</span></div>' : '') +
-      '</div>' +
-      '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
-        '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Exit</div>' +
-        '<div class="signal-row"><span class="label">Stop loss</span><span class="red">' + slVal + '</span></div>' +
-        '<div class="signal-row"><span class="label">Take profit</span><span class="green">' + tpVal + '</span></div>' +
-      '</div>' +
+      regimeScore +
       '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
         '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position</div>' +
         '<div class="signal-row"><span class="label">Pool liquidity</span><span>' + (s.liquidityUsd > 0 ? '$' + Number(s.liquidityUsd).toLocaleString('en-US', {maximumFractionDigits:0}) : '--') + '</span></div>' +
