@@ -66,11 +66,11 @@
     "emergencyLpDropWindowMinutes": 3
   },
   "portfolio": {
-    "maxConcurrentPositions": 3,
-    "maxOpenExposurePct": 20,
+    "maxConcurrentPositions": 6,
+    "maxOpenExposurePct": 50,
     "dailyLossLimitPct": -8,
-    "consecutiveLossLimit": 999,
-    "consecutiveLossCooldownMinutes": 120,
+    "consecutiveLossLimit": 4,
+    "consecutiveLossCooldownMinutes": 60,
     "reEntryLockoutHours": 0.0666666667
   },
   "execution": {
