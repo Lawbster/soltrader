@@ -8,7 +8,7 @@ import {
   buildCloseSeriesFromPrices,
 } from '../analysis';
 import { loadWatchlist } from '../monitor';
-import { getLiveTokenStrategy } from '../strategy/live-strategy-map';
+import { getLiveTokenStrategy, isTokenMasterEnabled } from '../strategy/live-strategy-map';
 import { getTokenRegimeCached } from '../strategy/regime-detector';
 import { getJupiterMetrics } from '../execution/jupiter-client';
 import { getDashboardHtml } from './page';
@@ -123,7 +123,10 @@ function handleSignals(res: http.ServerResponse) {
       const mint = entry.mint;
       const pricePoints = getPriceHistoryCount(mint);
 
-      const tokenStrategy = getLiveTokenStrategy(mint);
+      const regimeState = getTokenRegimeCached(mint);
+      const regime = regimeState?.confirmed ?? 'sideways';
+      const masterEnabled = isTokenMasterEnabled(mint);
+      const tokenStrategy = getLiveTokenStrategy(mint, regime);
       const rsiPeriod = tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.rsi.period;
       const connorsPercentRankPeriod = tokenStrategy
         ? (tokenStrategy.indicator.kind === 'rsi'
@@ -174,8 +177,6 @@ function handleSignals(res: http.ServerResponse) {
       const lastImpact = getLastQuotedImpact();
       const quotedImpact = lastImpact?.mint === mint ? lastImpact.impact : undefined;
 
-      const regimeState = getTokenRegimeCached(mint);
-
       return {
         mint,
         label: entry.label,
@@ -204,6 +205,8 @@ function handleSignals(res: http.ServerResponse) {
         ret24h: regimeState?.ret24h ?? null,
         ret72h: regimeState?.ret72h ?? null,
         coverageHours: regimeState?.coverageHours ?? null,
+        masterEnabled,
+        regimeActive: tokenStrategy !== null,
       };
     });
 

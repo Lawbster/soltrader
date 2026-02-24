@@ -124,6 +124,11 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
   return cached;
 }
 
+export function isTokenMasterEnabled(mint: string): boolean {
+  const map = loadLiveStrategyMap();
+  return !!map.tokens[mint]?.enabled;
+}
+
 export function getLiveTokenStrategy(mint: string, regime: TrendRegime = 'sideways'): TokenStrategy | null {
   const map = loadLiveStrategyMap();
   const entry = map.tokens[mint];
