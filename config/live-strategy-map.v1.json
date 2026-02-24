@@ -21,7 +21,7 @@
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
         "uptrend":   { "enabled": false, "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
+        "sideways":  { "enabled": false, "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
         "downtrend": { "enabled": true,  "params": { "entry": 25, "exit": 70, "sl": -5, "tp": 1 } }
       }
     },
