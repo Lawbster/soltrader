@@ -92,6 +92,7 @@ export interface BacktestConfig {
   slippagePct?: number;       // legacy fallback
   roundTripCostPct?: number;  // overrides commissionPct+slippagePct when set
   maxPositions?: number;      // max concurrent positions per token (default 1)
+  exitParityMode?: 'indicator' | 'price'; // 'price' suppresses indicator sell signals so only SL/TP closes positions
 }
 
 export interface BacktestResult {

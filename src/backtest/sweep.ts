@@ -26,6 +26,7 @@ interface SweepResult {
   token: string;
   timeframe: number;
   maxPositions: number;
+  exitParity: 'indicator' | 'price';
   metrics: BacktestMetrics;
   trend: TrendMetrics;
 }
@@ -153,10 +154,10 @@ const templates: SweepTemplate[] = [
   {
     name: 'rsi',
     paramGrid: {
-      entry: [10, 15, 20, 25, 30, 35, 40],
-      exit: [55, 60, 65, 70, 75, 80, 85, 90],
-      sl: [-0.5, -1, -1.5, -2, -3, -5],
-      tp: [1, 2, 3, 4, 6, 8, 10],
+      entry: [20, 25, 30, 35],
+      exit: [70, 75, 85],
+      sl: [-3, -5],
+      tp: [1, 3, 4, 6, 8, 10],
     },
     build(p) {
       return {
@@ -180,10 +181,10 @@ const templates: SweepTemplate[] = [
   {
     name: 'crsi',
     paramGrid: {
-      entry: [2, 3, 5, 10, 15, 20, 25, 30, 35],
-      exit: [55, 60, 65, 70, 75, 80, 85, 90, 95],
-      sl: [-0.5, -1, -1.5, -2, -3, -5],
-      tp: [1, 2, 3, 4, 6, 8, 10],
+      entry: [10, 15, 20],
+      exit: [90, 95],
+      sl: [-3, -5],
+      tp: [3, 4, 6, 8, 10],
     },
     build(p) {
       return {
@@ -230,6 +231,462 @@ const templates: SweepTemplate[] = [
     },
   },
 
+  // ── RSI + CRSI confluence — both oversold required ──
+  {
+    name: 'rsi-crsi-confluence',
+    paramGrid: {
+      entryRsi:  [20, 25, 30],
+      entryCrsi: [10, 15, 20],
+      exitRsi:   [65, 70, 75],
+      exitCrsi:  [70, 80, 90],
+      sl: [-2, -3, -5],
+      tp: [2, 3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `rsi-crsi-conf-r${p.entryRsi}-c${p.entryCrsi}-er${p.exitRsi}-ec${p.exitCrsi}-sl${p.sl}-tp${p.tp}`,
+        description: `RSI+CRSI confluence entry<${p.entryRsi}/${p.entryCrsi} exit>${p.exitRsi}/${p.exitCrsi}`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsi, connorsRsi } = ctx.indicators;
+          if (rsi === undefined || connorsRsi === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (rsi > p.exitRsi || connorsRsi > p.exitCrsi)) return 'sell';
+          if (rsi < p.entryRsi && connorsRsi < p.entryCrsi) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── CRSI dip + recover — enter on bounce, not during fall ──
+  {
+    name: 'crsi-dip-recover',
+    paramGrid: {
+      dip:     [5, 10, 15],
+      recover: [20, 25, 30],
+      exit:    [70, 80, 90],
+      sl:      [-2, -3, -5],
+      tp:      [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `crsi-dip-rec-d${p.dip}-r${p.recover}-e${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `CRSI dip<${p.dip} recover>=${p.recover} exit>${p.exit}`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { connorsRsi } = ctx.indicators;
+          const prev = ctx.prevIndicators;
+          if (connorsRsi === undefined || prev?.connorsRsi === undefined) return 'hold';
+          if (ctx.positions.length > 0 && connorsRsi > p.exit) return 'sell';
+          if (prev.connorsRsi < p.dip && connorsRsi >= p.recover) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── Trend pullback RSI — mean-revert only above SMA50 ──
+  {
+    name: 'trend-pullback-rsi',
+    paramGrid: {
+      entry: [30, 35, 40],
+      exit:  [60, 65, 70],
+      sl:    [-2, -3, -5],
+      tp:    [3, 4, 6, 8],
+    },
+    build(p) {
+      return {
+        name: `trend-pb-rsi-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `SMA50 trend pullback RSI entry<${p.entry} exit>${p.exit}`,
+        requiredHistory: 51,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsi, sma } = ctx.indicators;
+          if (rsi === undefined || !sma) return 'hold';
+          const sma50 = sma[50];
+          if (sma50 === undefined || isNaN(sma50)) return 'hold';
+          if (ctx.positions.length > 0 && (rsi > p.exit || ctx.candle.close < sma50)) return 'sell';
+          if (ctx.candle.close > sma50 && rsi < p.entry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── VWAP proxy reclaim + RSI gate — prevClose via ctx.history[ctx.index - 1] ──
+  {
+    name: 'vwap-rsi-reclaim',
+    paramGrid: {
+      rsiMax:  [40, 45, 50],
+      exitRsi: [60, 65, 70],
+      sl:      [-1.5, -2, -3],
+      tp:      [2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `vwap-reclaim-rsi${p.rsiMax}-e${p.exitRsi}-sl${p.sl}-tp${p.tp}`,
+        description: `VWAP proxy reclaim rsiMax<${p.rsiMax} exit>${p.exitRsi}`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsi, vwapProxy } = ctx.indicators;
+          const prevVwap = ctx.prevIndicators?.vwapProxy;
+          const prevClose = ctx.history[ctx.index - 1]?.close;
+          if (rsi === undefined || vwapProxy === undefined || prevVwap === undefined || prevClose === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (rsi > p.exitRsi || ctx.candle.close < vwapProxy)) return 'sell';
+          if (prevClose < prevVwap && ctx.candle.close >= vwapProxy && rsi < p.rsiMax) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── BB lower + RSI + CRSI triple confluence reversal ──
+  {
+    name: 'bb-rsi-crsi-reversal',
+    paramGrid: {
+      rsiEntry:  [20, 25, 30],
+      crsiEntry: [10, 15, 20],
+      rsiExit:   [55, 60, 65],
+      sl:        [-2, -3, -5],
+      tp:        [2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `bb-rsi-crsi-r${p.rsiEntry}-c${p.crsiEntry}-e${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `BB lower + RSI<${p.rsiEntry} + CRSI<${p.crsiEntry} reversal exit>${p.rsiExit}`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { bollingerBands, rsi, connorsRsi } = ctx.indicators;
+          if (!bollingerBands || rsi === undefined || connorsRsi === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (ctx.candle.close >= bollingerBands.middle || rsi > p.rsiExit)) return 'sell';
+          if (ctx.candle.close <= bollingerBands.lower && rsi < p.rsiEntry && connorsRsi < p.crsiEntry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── RSI+CRSI entry, exit at RSI midpoint (>50) — tests early-exit hypothesis ──
+  {
+    name: 'rsi-crsi-midpoint-exit',
+    paramGrid: {
+      entryRsi:  [20, 25, 30],
+      entryCrsi: [10, 15, 20],
+      sl:        [-2, -3, -5],
+    },
+    build(p) {
+      return {
+        name: `rsi-crsi-mid-r${p.entryRsi}-c${p.entryCrsi}-sl${p.sl}`,
+        description: `RSI+CRSI entry<${p.entryRsi}/${p.entryCrsi} exit at RSI>50 midpoint`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        evaluate(ctx): Signal {
+          const { rsi, connorsRsi } = ctx.indicators;
+          if (rsi === undefined || connorsRsi === undefined) return 'hold';
+          if (ctx.positions.length > 0 && rsi > 50) return 'sell';
+          if (rsi < p.entryRsi && connorsRsi < p.entryCrsi) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── Low-ADX ranging + BB lower touch + RSI oversold ──
+  {
+    name: 'adx-range-rsi-bb',
+    paramGrid: {
+      adxMax:   [20, 25],
+      rsiEntry: [25, 30, 35],
+      rsiExit:  [50, 60],
+      sl:       [-2, -3, -5],
+      tp:       [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `adx-rng-bb-adx${p.adxMax}-r${p.rsiEntry}-e${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `ADX<${p.adxMax} range + BB lower + RSI<${p.rsiEntry} exit>${p.rsiExit}`,
+        requiredHistory: 21,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { adx, rsi, bollingerBands } = ctx.indicators;
+          if (adx === undefined || rsi === undefined || !bollingerBands) return 'hold';
+          if (ctx.positions.length > 0 && (rsi > p.rsiExit || ctx.candle.close >= bollingerBands.middle)) return 'sell';
+          if (adx < p.adxMax && ctx.candle.close <= bollingerBands.lower && rsi < p.rsiEntry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── ADX trend filter + EMA cross + SMA50 structure + RSI pullback entry ──
+  {
+    name: 'adx-trend-rsi-pullback',
+    paramGrid: {
+      adxMin:   [15, 20, 25],
+      rsiEntry: [30, 35, 40],
+      rsiExit:  [60, 65, 70],
+      sl:       [-2, -3, -5],
+      tp:       [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `adx-trend-pb-adx${p.adxMin}-r${p.rsiEntry}-e${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `ADX>${p.adxMin} + EMA12>26 + SMA50 + RSI pullback<${p.rsiEntry}`,
+        requiredHistory: 51,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { adx, rsi, ema, sma } = ctx.indicators;
+          if (adx === undefined || rsi === undefined || !ema || !sma) return 'hold';
+          const ema12 = ema[12], ema26 = ema[26], sma50 = sma[50];
+          if (ema12 === undefined || ema26 === undefined || sma50 === undefined) return 'hold';
+          if (isNaN(ema12) || isNaN(ema26) || isNaN(sma50)) return 'hold';
+          if (ctx.positions.length > 0 && (ema12 < ema26 || rsi > p.rsiExit)) return 'sell';
+          if (adx > p.adxMin && ema12 > ema26 && ctx.candle.close > sma50 && rsi < p.rsiEntry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── MACD histogram zero-cross up + RSI momentum confirmation ──
+  {
+    name: 'macd-zero-rsi-confirm',
+    paramGrid: {
+      rsiMax:  [45, 50, 55],
+      rsiExit: [60, 65, 70],
+      sl:      [-2, -3, -5],
+      tp:      [2, 3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `macd-zero-rsi-r${p.rsiMax}-e${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `MACD histogram cross>0 + RSI<${p.rsiMax} exit>${p.rsiExit}`,
+        requiredHistory: 35,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { macd, rsi } = ctx.indicators;
+          const prev = ctx.prevIndicators;
+          if (!macd || rsi === undefined || !prev?.macd) return 'hold';
+          if (ctx.positions.length > 0 && (macd.histogram < 0 || rsi > p.rsiExit)) return 'sell';
+          if (prev.macd.histogram < 0 && macd.histogram > 0 && rsi < p.rsiMax) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── MACD signal-line cross up with OBV confirmation ──
+  {
+    name: 'macd-signal-obv-confirm',
+    paramGrid: {
+      sl: [-2, -3, -5],
+      tp: [2, 3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `macd-sig-obv-sl${p.sl}-tp${p.tp}`,
+        description: `MACD signal cross up + OBV rising exit on reverse`,
+        requiredHistory: 35,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { macd, obvProxy } = ctx.indicators;
+          const prev = ctx.prevIndicators;
+          if (!macd || obvProxy === undefined || !prev?.macd || prev.obvProxy === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (macd.macd < macd.signal || obvProxy < prev.obvProxy)) return 'sell';
+          if (prev.macd.macd < prev.macd.signal && macd.macd > macd.signal && obvProxy > prev.obvProxy) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── BB squeeze + expansion breakout ──
+  {
+    name: 'bb-squeeze-breakout',
+    paramGrid: {
+      widthThreshold: [0.05, 0.08, 0.10],
+      sl:             [-1.5, -2, -3],
+      tp:             [2, 3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `bb-squeeze-w${p.widthThreshold}-sl${p.sl}-tp${p.tp}`,
+        description: `BB squeeze width<${p.widthThreshold} then expansion breakout above upper`,
+        requiredHistory: 21,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { bollingerBands } = ctx.indicators;
+          const prev = ctx.prevIndicators;
+          if (!bollingerBands || !prev?.bollingerBands) return 'hold';
+          if (ctx.positions.length > 0 && ctx.candle.close < bollingerBands.middle) return 'sell';
+          if (
+            prev.bollingerBands.width < p.widthThreshold &&
+            bollingerBands.width > prev.bollingerBands.width &&
+            ctx.candle.close > bollingerBands.upper
+          ) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── VWAP trend: price above VWAP + RSI pullback entry ──
+  {
+    name: 'vwap-trend-pullback',
+    paramGrid: {
+      rsiEntry: [30, 35, 40],
+      rsiExit:  [60, 65, 70],
+      sl:       [-2, -3, -5],
+      tp:       [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `vwap-trend-pb-r${p.rsiEntry}-e${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `Price>VWAP + RSI pullback<${p.rsiEntry} exit on VWAP loss or RSI>${p.rsiExit}`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsi, vwapProxy } = ctx.indicators;
+          if (rsi === undefined || vwapProxy === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (ctx.candle.close < vwapProxy || rsi > p.rsiExit)) return 'sell';
+          if (ctx.candle.close > vwapProxy && rsi < p.rsiEntry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── Low-ADX range: below-VWAP deviation + RSI oversold, revert to VWAP ──
+  {
+    name: 'vwap-rsi-range-revert',
+    paramGrid: {
+      adxMax:   [20, 25],
+      rsiEntry: [25, 30, 35],
+      sl:       [-2, -3, -5],
+      tp:       [2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `vwap-rng-rev-adx${p.adxMax}-r${p.rsiEntry}-sl${p.sl}-tp${p.tp}`,
+        description: `ADX<${p.adxMax} + below VWAP + RSI<${p.rsiEntry} mean-revert to VWAP`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { adx, rsi, vwapProxy } = ctx.indicators;
+          if (adx === undefined || rsi === undefined || vwapProxy === undefined) return 'hold';
+          if (ctx.positions.length > 0 && ctx.candle.close >= vwapProxy) return 'sell';
+          if (adx < p.adxMax && ctx.candle.close < vwapProxy && rsi < p.rsiEntry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── CRSI oversold pullback gated by SMA50 uptrend structure ──
+  {
+    name: 'connors-sma50-pullback',
+    paramGrid: {
+      entry: [10, 15, 20],
+      exit:  [70, 80, 90],
+      sl:    [-2, -3, -5],
+      tp:    [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `crsi-sma50-pb-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `Close>SMA50 + CRSI<${p.entry} pullback exit on CRSI>${p.exit} or SMA break`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { connorsRsi, sma } = ctx.indicators;
+          if (connorsRsi === undefined || !sma) return 'hold';
+          const sma50 = sma[50];
+          if (sma50 === undefined || isNaN(sma50)) return 'hold';
+          if (ctx.positions.length > 0 && (connorsRsi > p.exit || ctx.candle.close < sma50)) return 'sell';
+          if (ctx.candle.close > sma50 && connorsRsi < p.entry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── RSI(2) extremes in low-ADX chop regime ──
+  {
+    name: 'rsi2-micro-range',
+    paramGrid: {
+      rsi2Entry: [5, 10, 15],
+      rsi2Exit:  [85, 90, 95],
+      adxMax:    [20, 25],
+      sl:        [-1, -1.5, -2],
+      tp:        [1, 2, 3],
+    },
+    build(p) {
+      return {
+        name: `rsi2-micro-e${p.rsi2Entry}-x${p.rsi2Exit}-adx${p.adxMax}-sl${p.sl}-tp${p.tp}`,
+        description: `RSI2<${p.rsi2Entry} extreme in ADX<${p.adxMax} range exit>${p.rsi2Exit}`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { rsiShort, adx } = ctx.indicators;
+          if (rsiShort === undefined || adx === undefined) return 'hold';
+          if (ctx.positions.length > 0 && rsiShort > p.rsi2Exit) return 'sell';
+          if (adx < p.adxMax && rsiShort < p.rsi2Entry) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+
+  // ── ATR expansion breakout above prev high with ADX trend confirmation ──
+  {
+    name: 'atr-breakout-follow',
+    paramGrid: {
+      adxMin: [20, 25, 30],
+      sl:     [-2, -3, -5],
+      tp:     [3, 4, 6, 8],
+    },
+    build(p) {
+      return {
+        name: `atr-bkout-adx${p.adxMin}-sl${p.sl}-tp${p.tp}`,
+        description: `Close>prevHigh breakout + ATR expanding + ADX>${p.adxMin} trend`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate(ctx): Signal {
+          const { atr, adx } = ctx.indicators;
+          const prevAtr = ctx.prevIndicators?.atr;
+          const prevHigh = ctx.history[ctx.index - 1]?.high;
+          if (atr === undefined || adx === undefined || prevAtr === undefined || prevHigh === undefined) return 'hold';
+          if (ctx.positions.length > 0 && (adx < p.adxMin || ctx.candle.close < prevHigh)) return 'sell';
+          if (ctx.candle.close > prevHigh && atr > prevAtr && adx > p.adxMin) return 'buy';
+          return 'hold';
+        },
+      };
+    },
+  },
+];
+
+// ── Disabled templates (zero positive rows 2026-02-24) ────────────────────────────
+// To re-enable: move the desired template object into the `templates` array above.
+const _disabledTemplates: SweepTemplate[] = [
   // ── MACD + OBV momentum with SL/TP sweep ──
   {
     name: 'macd-obv',
@@ -352,6 +809,7 @@ const templates: SweepTemplate[] = [
     },
   },
 ];
+void _disabledTemplates; // suppress unused-variable warning
 
 // ── Grid expansion ───────────────────────────────────────────────────
 
@@ -393,6 +851,7 @@ function main() {
   let fromDate: string | undefined;
   let toDate: string | undefined;
   let maxPositions = 2; // default: 2 concurrent positions per token
+  let exitParity: 'indicator' | 'price' | 'both' = 'indicator';
   const positional: string[] = [];
 
   for (let i = 0; i < rawArgs.length; i++) {
@@ -400,6 +859,7 @@ function main() {
     else if (rawArgs[i] === '--from' && rawArgs[i + 1]) { fromDate = rawArgs[++i]; }
     else if (rawArgs[i] === '--to' && rawArgs[i + 1]) { toDate = rawArgs[++i]; }
     else if (rawArgs[i] === '--max-positions' && rawArgs[i + 1]) { maxPositions = parseInt(rawArgs[++i], 10); }
+    else if (rawArgs[i] === '--exit-parity' && rawArgs[i + 1]) { exitParity = rawArgs[++i] as 'indicator' | 'price' | 'both'; }
     else { positional.push(rawArgs[i]); }
   }
 
@@ -453,16 +913,23 @@ function main() {
     console.warn('[WARN] SOL candles not found for relative-return baseline.');
   }
 
+  // Parity modes to run for each combo
+  const parityModes: Array<'indicator' | 'price'> =
+    exitParity === 'both' ? ['indicator', 'price'] :
+    exitParity === 'price' ? ['price'] : ['indicator'];
+
   // Count total combos for progress
   let totalCombos = 0;
   for (const tmpl of selectedTemplates) {
     totalCombos += expandGrid(tmpl.paramGrid).length;
   }
+  const totalRuns = totalCombos * parityModes.length;
   console.log(`Sweep: ${selectedTemplates.length} template(s) x ${tokens.length} token(s) x ${timeframe}-min bars`);
   console.log(`Cost model: ${costCfg.model} (round-trip ${costCfg.roundTripPct.toFixed(3)}%${costCfg.sampleSize ? `, n=${costCfg.sampleSize}` : ''})`);
   console.log(`Max positions per token: ${maxPositions}`);
+  console.log(`Exit parity: ${exitParity}${parityModes.length > 1 ? ' (both modes run per combo)' : ''}`);
   if (fromDate || toDate) console.log(`Date range: ${fromDate ?? 'all'} → ${toDate ?? 'all'}`);
-  console.log(`Total parameter combos per token: ${totalCombos}\n`);
+  console.log(`Total parameter combos per token: ${totalCombos}${parityModes.length > 1 ? ` (${totalRuns} runs with both parity modes)` : ''}\n`);
 
   const allResults: SweepResult[] = [];
 
@@ -487,30 +954,34 @@ function main() {
     for (const tmpl of selectedTemplates) {
       const grid = expandGrid(tmpl.paramGrid);
       for (const params of grid) {
-        run++;
-        const strategy = tmpl.build(params);
-        const result = runBacktest(candles, {
-          mint: token.mint,
-          label: token.label,
-          strategy,
-          roundTripCostPct: costCfg.roundTripPct,
-          maxPositions,
-        });
-        const dateRange = result.dateRange.end - result.dateRange.start;
-        const metrics = computeMetrics(result.trades, dateRange);
+        for (const parityMode of parityModes) {
+          run++;
+          const strategy = tmpl.build(params);
+          const result = runBacktest(candles, {
+            mint: token.mint,
+            label: token.label,
+            strategy,
+            roundTripCostPct: costCfg.roundTripPct,
+            maxPositions,
+            exitParityMode: parityMode,
+          });
+          const dateRange = result.dateRange.end - result.dateRange.start;
+          const metrics = computeMetrics(result.trades, dateRange);
 
-        allResults.push({
-          templateName: tmpl.name,
-          params,
-          token: token.label,
-          timeframe,
-          maxPositions,
-          metrics,
-          trend,
-        });
+          allResults.push({
+            templateName: tmpl.name,
+            params,
+            token: token.label,
+            timeframe,
+            maxPositions,
+            exitParity: parityMode,
+            metrics,
+            trend,
+          });
+        }
       }
     }
-    process.stdout.write(`  ${run} combos tested\n`);
+    process.stdout.write(`  ${run} runs tested\n`);
   }
 
   // Filter to results with at least 3 trades
@@ -606,7 +1077,7 @@ function main() {
   const outPath = path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min.csv`);
 
   const csvHeader = [
-    'template', 'token', 'timeframe', 'maxPositions', 'params',
+    'template', 'token', 'timeframe', 'maxPositions', 'exitParity', 'params',
     'trades', 'winRate', 'pnlPct', 'profitFactor', 'sharpeRatio',
     'maxDrawdownPct', 'avgWinLossRatio', 'avgWinPct', 'avgLossPct',
     'avgHoldMinutes', 'tradesPerDay',
@@ -625,6 +1096,7 @@ function main() {
       r.token,
       r.timeframe,
       r.maxPositions,
+      r.exitParity,
       `"${paramStr}"`,
       m.totalTrades,
       m.winRate.toFixed(2),

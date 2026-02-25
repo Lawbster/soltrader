@@ -21,8 +21,8 @@
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
         "uptrend":   { "enabled": false, "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
-        "sideways":  { "enabled": false, "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
-        "downtrend": { "enabled": true,  "params": { "entry": 25, "exit": 70, "sl": -5, "tp": 1 } }
+        "sideways":  { "enabled": true,  "params": { "entry": 25, "exit": 85, "sl": -3, "tp": 1 } },
+        "downtrend": { "enabled": false, "params": { "entry": 25, "exit": 70, "sl": -5, "tp": 1 } }
       }
     },
     "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux": {
@@ -33,7 +33,7 @@
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
         "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 10 } },
+        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } },
         "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } }
       }
     },
@@ -69,7 +69,7 @@
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
         "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 75, "sl": -2, "tp": 3 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -2, "tp": 4 } },
+        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -3, "tp": 4 } },
         "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 75, "sl": -2, "tp": 3 } }
       }
     },

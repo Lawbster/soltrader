@@ -83,7 +83,7 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
 }
 
 export function runBacktest(candles: Candle[], config: BacktestConfig): BacktestResult {
-  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct, maxPositions = 1 } = config;
+  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct, maxPositions = 1, exitParityMode = 'indicator' } = config;
   // Round-trip cost: use explicit override if provided, otherwise derive from commission+slippage
   const roundTripCost = roundTripCostPct ?? (commissionPct + slippagePct) * 2;
 
@@ -214,10 +214,11 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
 
     const signal: Signal = strategy.evaluate(ctx);
 
-    // Queue signal for next-bar execution
+    // Queue signal for next-bar execution.
+    // In 'price' parity mode: suppress indicator sell signals — positions only close via intra-bar SL/TP.
     if (signal === 'buy' && positions.length < maxPositions) {
       pendingBuy = true;
-    } else if (signal === 'sell' && positions.length > 0) {
+    } else if (signal === 'sell' && positions.length > 0 && exitParityMode !== 'price') {
       pendingSell = true;
     }
   }
