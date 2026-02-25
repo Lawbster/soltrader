@@ -1,9 +1,12 @@
 import { createLogger } from '../utils';
-import { TokenData, TradeWindow, FilterResult, ScoreResult } from '../analysis/types';
+import { TokenData, TradeWindow, FilterResult, ScoreResult, IndicatorSnapshot } from '../analysis/types';
 import { filterToken } from '../analysis/token-filter';
+import { snapshotToIndicatorValues } from '../analysis/indicators';
 import { scoreToken } from './scoring';
 import { loadStrategyConfig } from './strategy-config';
 import { TokenStrategy } from './live-strategy-map';
+import { evaluateSignal } from './templates/catalog';
+import type { LiveTemplateContext } from './templates/types';
 
 const log = createLogger('rules');
 
@@ -40,7 +43,7 @@ export function evaluateEntry(
   window: TradeWindow,
   portfolio: PortfolioState,
   lpChange10mPct?: number,
-  indicators?: { rsi?: number; connorsRsi?: number },
+  indicators?: IndicatorSnapshot,
   isWatchlist = false,
   totalTrades = 0,
   tokenStrategy?: TokenStrategy
@@ -109,59 +112,41 @@ export function evaluateEntry(
     };
   }
 
-  // Per-token strategy: apply indicator threshold and use per-token size/SL
+  // Per-token strategy: evaluate via shared template catalog
   if (tokenStrategy) {
-    const { kind } = tokenStrategy.indicator;
-    const threshold = tokenStrategy.params.entry;
+    const liveCtx: LiveTemplateContext = {
+      close: token.priceUsd,
+      indicators: snapshotToIndicatorValues(indicators ?? {}),
+      prevIndicators: indicators?.prevIndicators
+        ? snapshotToIndicatorValues(indicators.prevIndicators)
+        : undefined,
+      hourUtc: new Date().getUTCHours(),
+      hasPosition: false, // evaluateEntry is only called when no open position for this token
+    };
 
-    if (kind === 'rsi') {
-      if (indicators?.rsi === undefined) {
-        return {
-          mint: token.mint, passed: false, filterResult, scoreResult,
-          positionSizeUsdc: 0, stopLossPct: 0,
-          reason: 'RSI unavailable (insufficient candles)',
-        };
-      }
-      if (indicators.rsi > threshold) {
-        return {
-          mint: token.mint, passed: false, filterResult, scoreResult,
-          positionSizeUsdc: 0, stopLossPct: 0,
-          reason: `RSI ${indicators.rsi.toFixed(1)} > ${threshold} (entry threshold)`,
-        };
-      }
-    } else {
-      if (indicators?.connorsRsi === undefined) {
-        return {
-          mint: token.mint, passed: false, filterResult, scoreResult,
-          positionSizeUsdc: 0, stopLossPct: 0,
-          reason: 'CRSI unavailable (insufficient candles)',
-        };
-      }
-      if (indicators.connorsRsi > threshold) {
-        return {
-          mint: token.mint, passed: false, filterResult, scoreResult,
-          positionSizeUsdc: 0, stopLossPct: 0,
-          reason: `CRSI ${indicators.connorsRsi.toFixed(1)} > ${threshold} (entry threshold)`,
-        };
-      }
+    const signal = evaluateSignal(tokenStrategy.templateId, tokenStrategy.params, liveCtx);
+
+    if (signal !== 'buy') {
+      return {
+        mint: token.mint, passed: false, filterResult, scoreResult,
+        positionSizeUsdc: 0, stopLossPct: 0,
+        reason: `template:${tokenStrategy.templateId} signal=${signal}`,
+      };
     }
 
     const positionSizeUsdc = Math.min(
       calculatePositionSize(portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades),
       tokenStrategy.maxPositionUsdc
     );
-    const stopLossPct = tokenStrategy.params.sl;
 
     log.info('ENTRY SIGNAL', {
       mint: token.mint,
       label: tokenStrategy.label,
-      kind,
-      rsi: indicators?.rsi?.toFixed(1),
-      crsi: indicators?.connorsRsi?.toFixed(1),
-      threshold,
+      templateId: tokenStrategy.templateId,
+      exitMode: tokenStrategy.exitMode,
       sizeUsdc: positionSizeUsdc.toFixed(2),
-      sl: stopLossPct,
-      tp: tokenStrategy.params.tp,
+      sl: tokenStrategy.sl,
+      tp: tokenStrategy.tp,
     });
 
     return {
@@ -170,7 +155,7 @@ export function evaluateEntry(
       filterResult,
       scoreResult,
       positionSizeUsdc,
-      stopLossPct,
+      stopLossPct: tokenStrategy.sl,
     };
   }
 

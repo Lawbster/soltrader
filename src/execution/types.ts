@@ -1,3 +1,6 @@
+import type { TemplateId } from '../strategy/templates/types';
+import type { ExitMode } from '../strategy/live-strategy-map';
+
 export interface SwapQuote {
   inputMint: string;
   outputMint: string;
@@ -27,10 +30,13 @@ export interface SwapResult {
 
 export interface StrategyPlan {
   kind: 'rsi' | 'crsi';
-  entry: number;  // oversold threshold used at entry
-  exit: number;   // overbought threshold (reference from sweep; live exit driven by sl/tp)
+  entry: number;  // oversold threshold used at entry (0 for non-RSI/CRSI templates)
+  exit: number;   // overbought threshold (100 for non-RSI/CRSI templates)
   sl: number;     // stop loss pct (negative, e.g. -5)
   tp: number;     // take profit pct (positive, e.g. 1)
+  templateId?: TemplateId;                 // always set for template-routed tokens
+  templateParams?: Record<string, number>; // template-specific params
+  exitMode?: ExitMode;                     // 'price' (default) | 'indicator'
 }
 
 export interface Position {
@@ -57,6 +63,7 @@ export interface Position {
   status: 'open' | 'closed';
   closeReason?: string;
   strategyPlan?: StrategyPlan;
+  lastTemplateExitEvalMs?: number; // tracks candle boundary for indicator-mode exits
 }
 
 export interface PositionExit {

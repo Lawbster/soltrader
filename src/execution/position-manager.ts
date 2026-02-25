@@ -5,6 +5,10 @@ import { getConnection, getKeypair, createLogger, config } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
 import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
+import { getIndicatorSnapshot, snapshotToIndicatorValues } from '../analysis';
+import type { IndicatorSnapshot } from '../analysis/types';
+import { evaluateSignal } from '../strategy/templates/catalog';
+import type { LiveTemplateContext } from '../strategy/templates/types';
 import { buyToken, sellToken, USDC_MINT, SOL_MINT } from './jupiter-swap';
 import { jupiterGet } from './jupiter-client';
 import { paperBuyToken, paperSellToken } from './paper-executor';
@@ -463,28 +467,87 @@ async function updatePosition(position: Position) {
   let exitSignal: ReturnType<typeof evaluateExit>;
 
   if (position.strategyPlan) {
-    // Per-token strategy: simple SL/TP exit (100% sell, no partial exits)
+    // Per-token strategy: SL/TP exit with optional template-indicator exit
     const { sl, tp } = position.strategyPlan;
+    const effectiveExitMode = position.strategyPlan.exitMode ?? 'price';
+
+    // Emergency LP drop — always highest priority regardless of exit mode
     if (lpChangePct < cfg.exits.emergencyLpDropPct) {
       exitSignal = {
         type: 'emergency',
         sellPct: 100,
         reason: `LP dropped ${lpChangePct.toFixed(1)}% in ${cfg.exits.emergencyLpDropWindowMinutes}m`,
       };
-    } else if (pnlPct <= sl) {
-      exitSignal = {
-        type: 'hard_stop',
-        sellPct: 100,
-        reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%`,
-      };
-    } else if (pnlPct >= tp) {
-      exitSignal = {
-        type: 'tp1',
-        sellPct: 100,
-        reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%`,
-      };
+    } else if (
+      effectiveExitMode === 'indicator' &&
+      position.strategyPlan.templateId &&
+      position.strategyPlan.templateParams
+    ) {
+      // Template indicator exit: evaluate at most once per candle boundary
+      const indCfg = cfg.entry.indicators;
+      const candleMs = (indCfg?.candleIntervalMinutes ?? 1) * 60_000;
+      const lastCandleTs = Math.floor(Date.now() / candleMs) * candleMs;
+
+      let templateSig: 'buy' | 'sell' | 'hold' = 'hold';
+
+      if (lastCandleTs > (position.lastTemplateExitEvalMs ?? 0)) {
+        position.lastTemplateExitEvalMs = lastCandleTs;
+        // Evaluate template signal when indicators are available; otherwise templateSig stays 'hold'
+        if (indCfg?.enabled) {
+          const snap = getIndicatorSnapshot(position.mint, {
+            intervalMinutes: indCfg.candleIntervalMinutes,
+            lookbackMinutes: indCfg.candleLookbackMinutes,
+            rsiPeriod: indCfg.rsi.period,
+            connorsRsiPeriod: indCfg.connors.rsiPeriod,
+            connorsStreakRsiPeriod: indCfg.connors.streakRsiPeriod,
+            connorsPercentRankPeriod: indCfg.connors.percentRankPeriod,
+          });
+          const liveCtx: LiveTemplateContext = {
+            close: position.currentPrice,
+            indicators: snapshotToIndicatorValues(snap),
+            prevIndicators: snap.prevIndicators
+              ? snapshotToIndicatorValues(snap.prevIndicators)
+              : undefined,
+            hourUtc: new Date().getUTCHours(),
+            hasPosition: true,
+          };
+          templateSig = evaluateSignal(
+            position.strategyPlan.templateId,
+            position.strategyPlan.templateParams,
+            liveCtx,
+          );
+          log.debug('Template exit eval', {
+            mint: position.mint,
+            templateId: position.strategyPlan.templateId,
+            signal: templateSig,
+            pnl: pnlPct.toFixed(1),
+          });
+        }
+      }
+
+      // Template sell wins; otherwise fall through to SL/TP
+      if (templateSig === 'sell') {
+        exitSignal = {
+          type: 'tp1',
+          sellPct: 100,
+          reason: `template-indicator-exit: ${position.strategyPlan.templateId}`,
+        };
+      } else if (pnlPct <= sl) {
+        exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
+      } else if (pnlPct >= tp) {
+        exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+      } else {
+        exitSignal = null;
+      }
     } else {
-      exitSignal = null;
+      // Price-only exit (exitMode='price' or absent)
+      if (pnlPct <= sl) {
+        exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
+      } else if (pnlPct >= tp) {
+        exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+      } else {
+        exitSignal = null;
+      }
     }
   } else {
     exitSignal = evaluateExit(

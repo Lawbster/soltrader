@@ -127,11 +127,11 @@ function handleSignals(res: http.ServerResponse) {
       const regime = regimeState?.confirmed ?? 'sideways';
       const masterEnabled = isTokenMasterEnabled(mint);
       const tokenStrategy = getLiveTokenStrategy(mint, regime);
-      const rsiPeriod = tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.rsi.period;
+      const rsiPeriod = tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) : indicatorsCfg.rsi.period;
       const connorsPercentRankPeriod = tokenStrategy
-        ? (tokenStrategy.indicator.kind === 'rsi'
+        ? (tokenStrategy.indicator?.kind === 'rsi'
             ? rsiPeriod + 1
-            : (tokenStrategy.indicator.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
+            : (tokenStrategy.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
         : indicatorsCfg.connors.percentRankPeriod;
       const candlesNeeded = connorsPercentRankPeriod + 1;
 
@@ -146,7 +146,7 @@ function handleSignals(res: http.ServerResponse) {
           lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
           rsiPeriod,
           connorsRsiPeriod: tokenStrategy ? rsiPeriod : indicatorsCfg.connors.rsiPeriod,
-          connorsStreakRsiPeriod: tokenStrategy?.indicator.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
+          connorsStreakRsiPeriod: tokenStrategy?.indicator?.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
           connorsPercentRankPeriod,
         });
         crsi = snap.connorsRsi;
@@ -196,10 +196,12 @@ function handleSignals(res: http.ServerResponse) {
         totalTrades,
         sampleSizeGateMinTrades: posCfg.sampleSizeGateMinTrades,
         tokenMaxUsdc: tokenStrategy?.maxPositionUsdc ?? posCfg.maxPositionUsdc,
-        sl: tokenStrategy?.params.sl,
-        tp: tokenStrategy?.params.tp,
+        sl: tokenStrategy?.sl,
+        tp: tokenStrategy?.tp,
         tier: tokenStrategy?.tier,
-        indicatorKind: tokenStrategy?.indicator.kind ?? 'crsi',
+        indicatorKind: tokenStrategy?.indicator?.kind ?? 'crsi',
+        templateId: tokenStrategy?.templateId ?? null,
+        exitMode: tokenStrategy?.exitMode ?? null,
         trendRegime: regimeState?.confirmed ?? null,
         trendScore: regimeState?.trendScore ?? null,
         ret24h: regimeState?.ret24h ?? null,

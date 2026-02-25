@@ -11,10 +11,32 @@
 import fs from 'fs';
 import path from 'path';
 import { BacktestStrategy, Signal, BacktestMetrics, Candle } from './types';
-import { loadCandles, loadTokenList, aggregateCandles } from './data-loader';
+import { loadCandles, loadTokenList, aggregateCandles, closeSeries, highSeries, lowSeries, volumeSeries } from './data-loader';
 import { runBacktest } from './engine';
 import { computeMetrics } from './report';
 import { fixedCost, loadEmpiricalCost } from './cost-loader';
+import { computeAtr } from './indicators';
+import { evaluateSignal } from '../strategy/templates/catalog';
+import type { TemplateId } from '../strategy/templates/types';
+import type { StrategyContext } from './types';
+
+/** Adapter: maps StrategyContext to LiveTemplateContext for catalog evaluators */
+function toTemplateCtx(ctx: StrategyContext) {
+  return {
+    close: ctx.candle.close,
+    prevClose: ctx.history[ctx.index - 1]?.close,
+    prevHigh: ctx.history[ctx.index - 1]?.high,
+    indicators: ctx.indicators,
+    prevIndicators: ctx.prevIndicators,
+    hourUtc: ctx.hour,
+    hasPosition: ctx.positions.length > 0,
+  };
+}
+
+/** Build a thin-wrapper evaluate function that delegates to the catalog */
+function catalogEvaluate(id: TemplateId, p: Record<string, number>) {
+  return (ctx: StrategyContext): Signal => evaluateSignal(id, p, toTemplateCtx(ctx));
+}
 
 const SWEEP_OUT_DIR = path.resolve(__dirname, '../../data/data/sweep-results');
 
@@ -42,6 +64,11 @@ interface TrendMetrics {
   trendRegime: 'uptrend' | 'sideways' | 'downtrend' | 'unknown';
   relRet24hVsSolPct: number | null;
   trendCoverageDays: number;
+  // Context columns (Phase 1)
+  windowEndHourUtc: number;      // UTC hour of last candle (0-23) — for time-of-day analysis
+  windowEndDayOfWeek: number;    // UTC day-of-week of last candle (0=Sun…6=Sat)
+  atrPercentile: number | null;  // ATR at last candle as percentile [0-100] of window ATR distribution
+  volumeZScore: number | null;   // Z-score of last 24h pricePoints vs full-window mean
 }
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -83,6 +110,36 @@ function computeVol24hPct(candles: Candle[], timeframeMinutes: number): number |
   return Math.sqrt(variance);
 }
 
+function computeAtrPercentile(candles: Candle[], timeframeMinutes: number): number | null {
+  void timeframeMinutes; // unused in this function; kept for API symmetry
+  if (candles.length < 15) return null;
+  const highs = highSeries(candles);
+  const lows = lowSeries(candles);
+  const closes = closeSeries(candles);
+  const atrs = computeAtr(highs, lows, closes, 14);
+  const validAtrs = atrs.filter(v => Number.isFinite(v) && v > 0);
+  if (validAtrs.length < 2) return null;
+  const lastAtr = atrs[atrs.length - 1];
+  if (!Number.isFinite(lastAtr) || lastAtr <= 0) return null;
+  const sorted = [...validAtrs].sort((a, b) => a - b);
+  const rank = sorted.filter(v => v <= lastAtr).length;
+  return (rank / sorted.length) * 100;
+}
+
+function computeVolumeZScore(candles: Candle[], timeframeMinutes: number): number | null {
+  const vols = volumeSeries(candles); // pricePoints = volume proxy
+  if (vols.length < 2) return null;
+  const windowMean = vols.reduce((s, v) => s + v, 0) / vols.length;
+  const windowVariance = vols.reduce((s, v) => s + Math.pow(v - windowMean, 2), 0) / vols.length;
+  const windowStd = Math.sqrt(windowVariance);
+  if (windowStd === 0) return null;
+  const bars24 = lookbackBars(24, timeframeMinutes);
+  const last24 = vols.slice(-bars24);
+  if (last24.length === 0) return null;
+  const last24Mean = last24.reduce((s, v) => s + v, 0) / last24.length;
+  return (last24Mean - windowMean) / windowStd;
+}
+
 function weightedTrendScore(ret24: number | null, ret48: number | null, ret72: number | null): number | null {
   const parts: Array<{ v: number; w: number }> = [];
   if (ret24 !== null) parts.push({ v: ret24, w: 0.5 });
@@ -120,6 +177,13 @@ function computeTrendMetrics(
     ? (candles[candles.length - 1].timestamp - candles[0].timestamp) / 86_400_000
     : 0;
 
+  const lastTimestamp = candles.length > 0 ? candles[candles.length - 1].timestamp : Date.now();
+  const windowEndDate = new Date(lastTimestamp);
+  const windowEndHourUtc = windowEndDate.getUTCHours();
+  const windowEndDayOfWeek = windowEndDate.getUTCDay();
+  const atrPercentile = computeAtrPercentile(candles, timeframeMinutes);
+  const volumeZScore = computeVolumeZScore(candles, timeframeMinutes);
+
   return {
     tokenRet24hPct: ret24,
     tokenRet48hPct: ret48,
@@ -131,6 +195,10 @@ function computeTrendMetrics(
     trendRegime: regime,
     relRet24hVsSolPct: relRet24,
     trendCoverageDays: coverageDays,
+    windowEndHourUtc,
+    windowEndDayOfWeek,
+    atrPercentile,
+    volumeZScore,
   };
 }
 
@@ -166,13 +234,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsi } = ctx.indicators;
-          if (rsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && rsi > p.exit) return 'sell';
-          if (rsi < p.entry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('rsi', p),
       };
     },
   },
@@ -193,13 +255,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { connorsRsi } = ctx.indicators;
-          if (connorsRsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && connorsRsi > p.exit) return 'sell';
-          if (connorsRsi < p.entry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('crsi', p),
       };
     },
   },
@@ -220,13 +276,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 21,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { bollingerBands, rsi } = ctx.indicators;
-          if (!bollingerBands || rsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (rsi > p.rsiExit || ctx.candle.close >= bollingerBands.upper)) return 'sell';
-          if (ctx.candle.close <= bollingerBands.lower && rsi < p.rsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('bb-rsi', p),
       };
     },
   },
@@ -249,13 +299,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsi, connorsRsi } = ctx.indicators;
-          if (rsi === undefined || connorsRsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (rsi > p.exitRsi || connorsRsi > p.exitCrsi)) return 'sell';
-          if (rsi < p.entryRsi && connorsRsi < p.entryCrsi) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('rsi-crsi-confluence', p),
       };
     },
   },
@@ -277,14 +321,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { connorsRsi } = ctx.indicators;
-          const prev = ctx.prevIndicators;
-          if (connorsRsi === undefined || prev?.connorsRsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && connorsRsi > p.exit) return 'sell';
-          if (prev.connorsRsi < p.dip && connorsRsi >= p.recover) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('crsi-dip-recover', p),
       };
     },
   },
@@ -305,15 +342,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 51,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsi, sma } = ctx.indicators;
-          if (rsi === undefined || !sma) return 'hold';
-          const sma50 = sma[50];
-          if (sma50 === undefined || isNaN(sma50)) return 'hold';
-          if (ctx.positions.length > 0 && (rsi > p.exit || ctx.candle.close < sma50)) return 'sell';
-          if (ctx.candle.close > sma50 && rsi < p.entry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('trend-pullback-rsi', p),
       };
     },
   },
@@ -334,15 +363,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsi, vwapProxy } = ctx.indicators;
-          const prevVwap = ctx.prevIndicators?.vwapProxy;
-          const prevClose = ctx.history[ctx.index - 1]?.close;
-          if (rsi === undefined || vwapProxy === undefined || prevVwap === undefined || prevClose === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (rsi > p.exitRsi || ctx.candle.close < vwapProxy)) return 'sell';
-          if (prevClose < prevVwap && ctx.candle.close >= vwapProxy && rsi < p.rsiMax) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('vwap-rsi-reclaim', p),
       };
     },
   },
@@ -364,13 +385,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { bollingerBands, rsi, connorsRsi } = ctx.indicators;
-          if (!bollingerBands || rsi === undefined || connorsRsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (ctx.candle.close >= bollingerBands.middle || rsi > p.rsiExit)) return 'sell';
-          if (ctx.candle.close <= bollingerBands.lower && rsi < p.rsiEntry && connorsRsi < p.crsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('bb-rsi-crsi-reversal', p),
       };
     },
   },
@@ -389,13 +404,7 @@ const templates: SweepTemplate[] = [
         description: `RSI+CRSI entry<${p.entryRsi}/${p.entryCrsi} exit at RSI>50 midpoint`,
         requiredHistory: 102,
         stopLossPct: p.sl,
-        evaluate(ctx): Signal {
-          const { rsi, connorsRsi } = ctx.indicators;
-          if (rsi === undefined || connorsRsi === undefined) return 'hold';
-          if (ctx.positions.length > 0 && rsi > 50) return 'sell';
-          if (rsi < p.entryRsi && connorsRsi < p.entryCrsi) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('rsi-crsi-midpoint-exit', p),
       };
     },
   },
@@ -417,13 +426,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 21,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { adx, rsi, bollingerBands } = ctx.indicators;
-          if (adx === undefined || rsi === undefined || !bollingerBands) return 'hold';
-          if (ctx.positions.length > 0 && (rsi > p.rsiExit || ctx.candle.close >= bollingerBands.middle)) return 'sell';
-          if (adx < p.adxMax && ctx.candle.close <= bollingerBands.lower && rsi < p.rsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('adx-range-rsi-bb', p),
       };
     },
   },
@@ -445,16 +448,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 51,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { adx, rsi, ema, sma } = ctx.indicators;
-          if (adx === undefined || rsi === undefined || !ema || !sma) return 'hold';
-          const ema12 = ema[12], ema26 = ema[26], sma50 = sma[50];
-          if (ema12 === undefined || ema26 === undefined || sma50 === undefined) return 'hold';
-          if (isNaN(ema12) || isNaN(ema26) || isNaN(sma50)) return 'hold';
-          if (ctx.positions.length > 0 && (ema12 < ema26 || rsi > p.rsiExit)) return 'sell';
-          if (adx > p.adxMin && ema12 > ema26 && ctx.candle.close > sma50 && rsi < p.rsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('adx-trend-rsi-pullback', p),
       };
     },
   },
@@ -475,14 +469,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 35,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { macd, rsi } = ctx.indicators;
-          const prev = ctx.prevIndicators;
-          if (!macd || rsi === undefined || !prev?.macd) return 'hold';
-          if (ctx.positions.length > 0 && (macd.histogram < 0 || rsi > p.rsiExit)) return 'sell';
-          if (prev.macd.histogram < 0 && macd.histogram > 0 && rsi < p.rsiMax) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('macd-zero-rsi-confirm', p),
       };
     },
   },
@@ -501,14 +488,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 35,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { macd, obvProxy } = ctx.indicators;
-          const prev = ctx.prevIndicators;
-          if (!macd || obvProxy === undefined || !prev?.macd || prev.obvProxy === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (macd.macd < macd.signal || obvProxy < prev.obvProxy)) return 'sell';
-          if (prev.macd.macd < prev.macd.signal && macd.macd > macd.signal && obvProxy > prev.obvProxy) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('macd-signal-obv-confirm', p),
       };
     },
   },
@@ -528,18 +508,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 21,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { bollingerBands } = ctx.indicators;
-          const prev = ctx.prevIndicators;
-          if (!bollingerBands || !prev?.bollingerBands) return 'hold';
-          if (ctx.positions.length > 0 && ctx.candle.close < bollingerBands.middle) return 'sell';
-          if (
-            prev.bollingerBands.width < p.widthThreshold &&
-            bollingerBands.width > prev.bollingerBands.width &&
-            ctx.candle.close > bollingerBands.upper
-          ) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('bb-squeeze-breakout', p),
       };
     },
   },
@@ -560,13 +529,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsi, vwapProxy } = ctx.indicators;
-          if (rsi === undefined || vwapProxy === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (ctx.candle.close < vwapProxy || rsi > p.rsiExit)) return 'sell';
-          if (ctx.candle.close > vwapProxy && rsi < p.rsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('vwap-trend-pullback', p),
       };
     },
   },
@@ -587,13 +550,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { adx, rsi, vwapProxy } = ctx.indicators;
-          if (adx === undefined || rsi === undefined || vwapProxy === undefined) return 'hold';
-          if (ctx.positions.length > 0 && ctx.candle.close >= vwapProxy) return 'sell';
-          if (adx < p.adxMax && ctx.candle.close < vwapProxy && rsi < p.rsiEntry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('vwap-rsi-range-revert', p),
       };
     },
   },
@@ -614,15 +571,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { connorsRsi, sma } = ctx.indicators;
-          if (connorsRsi === undefined || !sma) return 'hold';
-          const sma50 = sma[50];
-          if (sma50 === undefined || isNaN(sma50)) return 'hold';
-          if (ctx.positions.length > 0 && (connorsRsi > p.exit || ctx.candle.close < sma50)) return 'sell';
-          if (ctx.candle.close > sma50 && connorsRsi < p.entry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('connors-sma50-pullback', p),
       };
     },
   },
@@ -644,13 +593,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { rsiShort, adx } = ctx.indicators;
-          if (rsiShort === undefined || adx === undefined) return 'hold';
-          if (ctx.positions.length > 0 && rsiShort > p.rsi2Exit) return 'sell';
-          if (adx < p.adxMax && rsiShort < p.rsi2Entry) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('rsi2-micro-range', p),
       };
     },
   },
@@ -670,15 +613,50 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
-        evaluate(ctx): Signal {
-          const { atr, adx } = ctx.indicators;
-          const prevAtr = ctx.prevIndicators?.atr;
-          const prevHigh = ctx.history[ctx.index - 1]?.high;
-          if (atr === undefined || adx === undefined || prevAtr === undefined || prevHigh === undefined) return 'hold';
-          if (ctx.positions.length > 0 && (adx < p.adxMin || ctx.candle.close < prevHigh)) return 'sell';
-          if (ctx.candle.close > prevHigh && atr > prevAtr && adx > p.adxMin) return 'buy';
-          return 'hold';
-        },
+        evaluate: catalogEvaluate('atr-breakout-follow', p),
+      };
+    },
+  },
+  // ── RSI oversold entry gated to a specific UTC trading session ──
+  {
+    name: 'rsi-session-gate',
+    paramGrid: {
+      entry:   [20, 25, 30],
+      exit:    [70, 75, 85],
+      sl:      [-3, -5],
+      tp:      [1, 3, 4, 6],
+      session: [0, 8, 16],   // session start hour: 0=Asia(0-8), 8=Europe(8-16), 16=US(16-24)
+    },
+    build(p) {
+      return {
+        name: `rsi-sess-s${p.session}-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `RSI(14) oversold<${p.entry} exit>${p.exit} — entry only in session UTC ${p.session}-${p.session + 8}`,
+        requiredHistory: 15,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate: catalogEvaluate('rsi-session-gate', p),
+      };
+    },
+  },
+
+  // ── CRSI oversold entry gated to a specific UTC trading session ──
+  {
+    name: 'crsi-session-gate',
+    paramGrid: {
+      entry:   [10, 15, 20],
+      exit:    [90, 95],
+      sl:      [-3, -5],
+      tp:      [3, 4, 6],
+      session: [0, 8, 16],
+    },
+    build(p) {
+      return {
+        name: `crsi-sess-s${p.session}-${p.entry}-${p.exit}-sl${p.sl}-tp${p.tp}`,
+        description: `CRSI oversold<${p.entry} exit>${p.exit} — entry only in session UTC ${p.session}-${p.session + 8}`,
+        requiredHistory: 102,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        evaluate: catalogEvaluate('crsi-session-gate', p),
       };
     },
   },
@@ -1084,6 +1062,7 @@ function main() {
     'tokenRet24hPct', 'tokenRet48hPct', 'tokenRet72hPct', 'tokenRet168hPct',
     'tokenRetWindowPct', 'tokenVol24hPct', 'trendScore', 'trendRegime',
     'relRet24hVsSolPct', 'trendCoverageDays',
+    'windowEndHourUtc', 'windowEndDayOfWeek', 'atrPercentile', 'volumeZScore',
   ].join(',');
   const csvRows = meaningful.map(r => {
     const m = r.metrics;
@@ -1119,6 +1098,10 @@ function main() {
       t.trendRegime,
       fmtNullable(t.relRet24hVsSolPct, 4),
       t.trendCoverageDays.toFixed(2),
+      t.windowEndHourUtc,
+      t.windowEndDayOfWeek,
+      fmtNullable(t.atrPercentile, 2),
+      fmtNullable(t.volumeZScore, 4),
     ].join(',');
   });
 

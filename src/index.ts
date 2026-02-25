@@ -132,13 +132,13 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
         lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
         // Per-token: use per-token RSI period; for candle sufficiency, set percentRankPeriod
         // to rsiPeriod+1 so minCandles threshold aligns with what RSI actually needs
-        rsiPeriod: tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.rsi.period,
-        connorsRsiPeriod: tokenStrategy ? tokenStrategy.indicator.rsiPeriod : indicatorsCfg.connors.rsiPeriod,
-        connorsStreakRsiPeriod: tokenStrategy?.indicator.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
+        rsiPeriod: tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) : indicatorsCfg.rsi.period,
+        connorsRsiPeriod: tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.connors.rsiPeriod) : indicatorsCfg.connors.rsiPeriod,
+        connorsStreakRsiPeriod: tokenStrategy?.indicator?.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
         connorsPercentRankPeriod: tokenStrategy
-          ? (tokenStrategy.indicator.kind === 'rsi'
-              ? tokenStrategy.indicator.rsiPeriod + 1
-              : (tokenStrategy.indicator.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
+          ? (tokenStrategy.indicator?.kind === 'rsi'
+              ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) + 1
+              : (tokenStrategy.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
           : indicatorsCfg.connors.percentRankPeriod,
       })
     : undefined;
@@ -181,20 +181,38 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
     const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
 
-    // Build strategyPlan to carry into position for per-token exit logic
+    // Build strategyPlan to carry into position for per-token exit logic.
+    // entry/exit default to 0/100 for template-based tokens that don't use RSI thresholds;
+    // these fields are vestigial for non-RSI/CRSI templates and are not used for exit decisions.
     const strategyPlan: StrategyPlan | undefined = tokenStrategy
       ? {
-          kind: tokenStrategy.indicator.kind,
-          entry: tokenStrategy.params.entry,
-          exit: tokenStrategy.params.exit,
-          sl: tokenStrategy.params.sl,
-          tp: tokenStrategy.params.tp,
+          kind: (tokenStrategy.indicator?.kind ?? 'rsi') as 'rsi' | 'crsi',
+          entry: tokenStrategy.params.entry ?? 0,
+          exit: tokenStrategy.params.exit ?? 100,
+          sl: tokenStrategy.sl,
+          tp: tokenStrategy.tp,
+          templateId: tokenStrategy.templateId,
+          templateParams: tokenStrategy.params,
+          exitMode: tokenStrategy.exitMode,
         }
       : undefined;
 
-    const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps, strategyPlan);
-    if (!pos) {
-      log.warn('Position not opened despite entry signal', { mint });
+    // SHADOW_TEMPLATE=1: log template-driven entry decisions without executing
+    const shadowMode = process.env.SHADOW_TEMPLATE === '1';
+    if (shadowMode && tokenStrategy) {
+      log.info('SHADOW_TEMPLATE: entry suppressed', {
+        mint,
+        label: tokenStrategy.label,
+        templateId: tokenStrategy.templateId,
+        exitMode: tokenStrategy.exitMode,
+        regime,
+        sizeUsdc: signal.positionSizeUsdc.toFixed(2),
+      });
+    } else {
+      const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps, strategyPlan);
+      if (!pos) {
+        log.warn('Position not opened despite entry signal', { mint });
+      }
     }
   }
 }

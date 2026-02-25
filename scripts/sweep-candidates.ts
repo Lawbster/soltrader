@@ -83,6 +83,7 @@ interface SweepRow {
   trendRegime: TrendRegime;
   relRet24hVsSolPct: number | null;
   trendCoverageDays: number | null;
+  exitParity: 'indicator' | 'price' | null; // null if column absent (pre-parity CSVs)
 }
 
 interface CandidateRow extends SweepRow {
@@ -99,6 +100,7 @@ interface CandidateRow extends SweepRow {
   alphaWindowPct: number | null;
   alphaBlendPct: number | null;
   trendAdjustedScore: number;
+  parityDelta: number | null; // price.pnlPct - indicator.pnlPct; null if not paired
 }
 
 interface PatternRow {
@@ -429,6 +431,9 @@ function parseSweepCsv(filePath: string): SweepRow[] {
       trendRegime: 'unknown',
       relRet24hVsSolPct: parseOptionalNumber(parts, idx.relRet24hVsSolPct),
       trendCoverageDays: parseOptionalNumber(parts, idx.trendCoverageDays),
+      exitParity: idx.exitParity !== undefined
+        ? (parts[idx.exitParity] === 'price' ? 'price' : parts[idx.exitParity] === 'indicator' ? 'indicator' : null)
+        : null,
     };
 
     row.trendRegime = idx.trendRegime !== undefined
@@ -455,6 +460,25 @@ function parseSweepCsv(filePath: string): SweepRow[] {
   }
 
   return rows;
+}
+
+function buildParityDeltaMap(rows: SweepRow[]): Map<string, number | null> {
+  const indicatorMap = new Map<string, number>();
+  const priceMap = new Map<string, number>();
+  for (const row of rows) {
+    if (row.exitParity === null) continue;
+    const key = `${row.template}||${row.token}||${row.params}`;
+    if (row.exitParity === 'indicator') indicatorMap.set(key, row.pnlPct);
+    else if (row.exitParity === 'price') priceMap.set(key, row.pnlPct);
+  }
+  const result = new Map<string, number | null>();
+  const allKeys = new Set([...indicatorMap.keys(), ...priceMap.keys()]);
+  for (const key of allKeys) {
+    const indPnl = indicatorMap.get(key);
+    const pricePnl = priceMap.get(key);
+    result.set(key, indPnl !== undefined && pricePnl !== undefined ? pricePnl - indPnl : null);
+  }
+  return result;
 }
 
 function computeCombinedStat(
@@ -492,13 +516,17 @@ function computeTrendAdjustedScore(
   combinedStat: number,
   alphaWindowPct: number | null,
   alphaBlendPct: number | null,
+  parityDelta: number | null = null,
 ): number {
   const alphaWindow = clamp(alphaWindowPct ?? 0, -50, 50);
   const alphaBlend = clamp(alphaBlendPct ?? 0, -50, 50);
-  return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend);
+  // parityAdj: penalizes strategies that rely on indicator exits not available live.
+  // Max -2 at delta <= -20pp, max +2 at delta >= +20pp.
+  const parityAdj = parityDelta !== null ? clamp(parityDelta * 0.10, -2, 2) : 0;
+  return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend) + parityAdj;
 }
 
-function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): CandidateRow {
+function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, parityDelta: number | null = null): CandidateRow {
   const wins = (row.winRate / 100) * row.trades;
   const losses = Math.max(row.trades - wins, 0);
   const adjustedWinRate = (wins + priorWins) / (row.trades + priorWins + priorLosses);
@@ -527,7 +555,7 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): Can
   const alpha72hPct = alphaFromReturn(row.pnlPct, row.tokenRet72hPct);
   const alphaWindowPct = alphaFromReturn(row.pnlPct, row.tokenRetWindowPct);
   const alphaBlendPct = alphaFromReturn(row.pnlPct, weightedRetBaseline);
-  const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct);
+  const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct, parityDelta);
 
   return {
     ...row,
@@ -544,6 +572,7 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number): Can
     alphaWindowPct,
     alphaBlendPct,
     trendAdjustedScore,
+    parityDelta,
   };
 }
 
@@ -754,9 +783,20 @@ function main(): void {
     throw new Error(`No valid rows parsed from ${inputFile}`);
   }
 
-  const filtered = rows
+  const parityDeltaMap = buildParityDeltaMap(rows);
+  // Only rank indicator-mode rows; price-only rows are used solely for delta computation
+  const hasParityColumn = rows.some(r => r.exitParity !== null);
+  const rankingRows = hasParityColumn ? rows.filter(r => r.exitParity !== 'price') : rows;
+  if (hasParityColumn && rankingRows.length === 0) {
+    throw new Error('All rows have exitParity=price — nothing to rank. Run sweep with --exit-parity indicator or both.');
+  }
+
+  const filtered = rankingRows
     .filter(r => r.winRate >= args.minWinRate)
-    .map(r => toCandidate(r, args.priorWins, args.priorLosses));
+    .map(r => {
+      const key = `${r.template}||${r.token}||${r.params}`;
+      return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null);
+    });
 
   const probe = filtered.filter(r => r.trades >= args.probeMinTrades && r.trades <= args.probeMaxTrades);
   const core = filtered.filter(
@@ -793,6 +833,23 @@ function main(): void {
   }
   printRegimeBreakdown('Probe', probe);
   printRegimeBreakdown('Core', core);
+
+  // Parity delta report (only when --exit-parity both was used)
+  const deltaRows = [...probe, ...core].filter(r => r.parityDelta !== null);
+  if (deltaRows.length > 0) {
+    const sorted = deltaRows.slice().sort((a, b) => (b.parityDelta ?? 0) - (a.parityDelta ?? 0));
+    const topDelta = [...sorted.slice(0, 5), ...sorted.slice(-5)].filter((v, i, a) => a.indexOf(v) === i);
+    console.log('\n=== Parity Delta Report (price.pnlPct - indicator.pnlPct) ===');
+    console.log('(Negative = strategy relies on indicator exits unavailable live; prefer small negatives or positives)');
+    console.table(topDelta.map(r => ({
+      token: r.token,
+      template: r.template,
+      params: r.params.substring(0, 30),
+      indicatorPnl: `${r.pnlPct.toFixed(2)}%`,
+      parityDelta: `${(r.parityDelta! >= 0 ? '+' : '')}${r.parityDelta!.toFixed(2)}%`,
+      trendAdjScore: r.trendAdjustedScore.toFixed(3),
+    })));
+  }
 
   printCandidateTable('Probe Candidates', probe, args.top, args.topPerToken);
   printPatternTable('Probe Shared Patterns', probePatterns, args.top);
@@ -854,6 +911,7 @@ function main(): void {
       scoreProbe: formatNum(r.scoreProbe, 6),
       combinedStat: formatNum(r.combinedStat, 6),
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
+      parityDelta: formatOptionalNum(r.parityDelta, 4),
     }));
 
   const coreRows = capPerToken(
@@ -885,6 +943,7 @@ function main(): void {
       scoreCore: formatNum(r.scoreCore, 6),
       combinedStat: formatNum(r.combinedStat, 6),
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
+      parityDelta: formatOptionalNum(r.parityDelta, 4),
     }));
 
   const patternRows = [...probePatterns, ...corePatterns]

@@ -50,6 +50,31 @@ export interface IndicatorSnapshot {
   candleCount: number;
   rsi?: number;
   connorsRsi?: number;
+  // Extended live indicators (PR2) ─────────────────────────────────────
+  rsiShort?: number;                                              // RSI(2)
+  sma?: Record<number, number>;                                   // keyed by period [10,20,50]
+  ema?: Record<number, number>;                                   // keyed by period [9,12,26]
+  bollingerBands?: { upper: number; middle: number; lower: number; width: number };
+  macd?: { macd: number; signal: number; histogram: number };
+  obvProxy?: number;
+  vwapProxy?: number;    // from dual-source OHLC (trades preferred, price-feed fallback)
+  adx?: number;          // from dual-source OHLC H/L; undefined when insufficient coverage
+  atr?: number;          // from dual-source OHLC H/L; undefined when insufficient coverage
+  adxSource?: 'trades' | 'price-feed' | 'unavailable';          // logged for monitoring
+  /** T-1 bar indicator values — needed by templates that evaluate prevIndicators */
+  prevIndicators?: {
+    rsi?: number;
+    rsiShort?: number;
+    connorsRsi?: number;
+    sma?: Record<number, number>;
+    ema?: Record<number, number>;
+    macd?: { macd: number; signal: number; histogram: number };
+    bollingerBands?: { upper: number; middle: number; lower: number; width: number };
+    atr?: number;
+    adx?: number;
+    vwapProxy?: number;
+    obvProxy?: number;
+  };
 }
 
 export interface FilterResult {
