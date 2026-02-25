@@ -9,7 +9,7 @@
       "indicator": { "kind": "crsi", "rsiPeriod": 14 },
       "regimes": {
         "uptrend":   { "enabled": true,  "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } },
-        "sideways":  { "enabled": false, "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } },
+        "sideways":  { "enabled": true,  "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } },
         "downtrend": { "enabled": false, "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } }
       }
     },
