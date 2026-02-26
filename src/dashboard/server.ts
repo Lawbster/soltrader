@@ -5,8 +5,8 @@ import { getPoolLiquidityCached, getTokenPriceCached } from '../analysis/token-d
 import { getPortfolioState, getOpenPositions, getClosedPositions, getLastQuotedImpact, getWalletBalances, SOL_MINT } from '../execution';
 import {
   getActiveSubscriptionCount, getIndicatorSnapshot, getPriceHistoryCount,
-  buildCloseSeriesFromPrices,
 } from '../analysis';
+import { loadCandles } from '../backtest/data-loader';
 import { loadWatchlist } from '../monitor';
 import { getLiveTokenStrategy, isTokenMasterEnabled } from '../strategy/live-strategy-map';
 import { getTokenRegimeCached } from '../strategy/regime-detector';
@@ -231,17 +231,19 @@ function handlePriceChart(res: http.ServerResponse, mint: string | null) {
     return;
   }
 
-  const intervalMs = 60_000; // 1-minute candles
-  const lookbackMs = 120 * 60_000; // 2 hours
-  const closes = buildCloseSeriesFromPrices(targetMint, intervalMs, lookbackMs);
-
-  // Build time series — each entry is 1 minute apart from now backwards
   const now = Date.now();
-  const startTime = now - lookbackMs;
-  const points = closes.map((price, i) => ({
-    time: startTime + i * intervalMs,
-    price,
-  }));
+  const cutoff = now - 24 * 60 * 60_000;
+
+  function toDateStr(ts: number) {
+    return new Date(ts).toISOString().split('T')[0];
+  }
+  const yesterday = toDateStr(cutoff);
+  const today = toDateStr(now);
+
+  const candles = loadCandles(targetMint, yesterday, today)
+    .filter(c => c.timestamp >= cutoff);
+
+  const points = candles.map(c => ({ time: c.timestamp, price: c.close }));
 
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(points));

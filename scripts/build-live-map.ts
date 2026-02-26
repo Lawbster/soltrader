@@ -79,6 +79,7 @@ interface CliArgs {
   minPf: number;
   minParityDelta: number;
   maxHold: number;
+  preferredExitMode: 'price' | 'indicator';
 }
 
 // ── Patch output types ────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ interface RegimePatch {
   params: Record<string, number>;
   sl: number;
   tp: number;
-  exitMode: 'price';
+  exitMode: 'price' | 'indicator';
 }
 
 interface RegimePatchAudit {
@@ -114,6 +115,7 @@ function parseArgs(argv: string[]): CliArgs {
   let minPf = 1.2;
   let minParityDelta = -10;
   let maxHold = 600;
+  let preferredExitMode: 'price' | 'indicator' = 'price';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -128,6 +130,10 @@ function parseArgs(argv: string[]): CliArgs {
         '  --min-pf N                Min profit factor (default: 1.2)',
         '  --min-parity-delta N      Min parityDelta pp (default: -10, null = skip filter)',
         '  --max-hold N              Max avgHoldMinutes (default: 600)',
+        '  --preferred-exit-mode     price (default)|indicator — exitMode written into patch entries',
+        '                            price: SL/TP only exits (safe default, always works live)',
+        '                            indicator: template sell signal + SL/TP fallback',
+        '                            Note: use indicator only when ranked CSV used --rank-exit-parity indicator',
       ].join('\n'));
       process.exit(0);
     }
@@ -137,6 +143,13 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === '--min-pf') { minPf = parseFloat(next); i++; continue; }
     if (arg === '--min-parity-delta') { minParityDelta = parseFloat(next); i++; continue; }
     if (arg === '--max-hold') { maxHold = parseFloat(next); i++; continue; }
+    if (arg === '--preferred-exit-mode') {
+      const v = next;
+      if (v !== 'price' && v !== 'indicator') throw new Error(`--preferred-exit-mode must be price|indicator, got: ${v}`);
+      preferredExitMode = v;
+      i++;
+      continue;
+    }
     if (!arg.startsWith('--') && !file) { file = path.resolve(arg); continue; }
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -144,7 +157,18 @@ function parseArgs(argv: string[]): CliArgs {
   if (!file) throw new Error('--file is required');
   if (!fs.existsSync(file)) throw new Error(`File not found: ${file}`);
 
-  return { file, minTrades, minAwr, minPf, minParityDelta, maxHold };
+  return { file, minTrades, minAwr, minPf, minParityDelta, maxHold, preferredExitMode };
+}
+
+// ── Exit mode resolution ──────────────────────────────────────────────────────
+
+function resolveExitMode(
+  parityDelta: number | null,
+  preferred: 'price' | 'indicator',
+): 'price' | 'indicator' {
+  if (preferred === 'indicator') return 'indicator';
+  // 'price' (default): always price, but warn in the caller if parityDelta < 0
+  return 'price';
 }
 
 // ── CSV parsing ───────────────────────────────────────────────────────────────
@@ -302,7 +326,7 @@ function main(): void {
   console.log(`  Input:     ${args.file}`);
   console.log(`  Rows:      ${rows.length}`);
   console.log(`  Filters:   trades>=${args.minTrades} adjWR>=${args.minAwr}% PF>=${args.minPf} parityDelta>=${args.minParityDelta}pp hold<=${args.maxHold}min`);
-  console.log(`  exitMode:  always 'price' in patch JSON — review parityDelta notes manually`);
+  console.log(`  exitMode:  '${args.preferredExitMode}' — pass --preferred-exit-mode indicator to enable template sell signals`);
 
   // Track best row per (mint, regime) — CSV is pre-ranked, first passing row wins
   const promotedMap = new Map<string, { row: RankedRow; mint: string; reason: string }>();
@@ -380,10 +404,10 @@ function main(): void {
     const pd = promotedMap.get(`${p._mint}||${p.regime}`)?.row.parityDelta;
     return pd !== null && pd !== undefined && pd < 0;
   });
-  if (hasNegativeParity) {
+  if (hasNegativeParity && args.preferredExitMode === 'price') {
     console.log('\nNOTE: Some promoted rows have parityDelta < 0 (⚠ above). These strategies benefit from');
-    console.log('      indicator exits in backtest. All patch entries use exitMode=price (safe default).');
-    console.log('      Review these rows carefully before optionally switching to exitMode=indicator.');
+    console.log('      indicator exits in backtest. Current patch uses exitMode=price (safe default).');
+    console.log('      Re-run with --preferred-exit-mode indicator after canary validation to enable template sell signals.');
   }
 
   // Build patch JSON — group by mint
@@ -403,8 +427,9 @@ function main(): void {
     }
 
     const patch = tokenPatches[mint];
+    const exitMode = resolveExitMode(row.parityDelta, args.preferredExitMode);
     const parityNote = row.parityDelta !== null && row.parityDelta < 0
-      ? `parityDelta=${row.parityDelta.toFixed(1)}pp — consider indicator mode after canary validation`
+      ? `parityDelta=${row.parityDelta.toFixed(1)}pp — indicator exits better in backtest${exitMode === 'price' ? '; pass --preferred-exit-mode indicator to enable' : ''}`
       : '';
 
     patch._audit[regime as TrendRegime] = { promotionReason: reason, parityNote };
@@ -414,7 +439,7 @@ function main(): void {
       params: templateParams,
       sl,
       tp,
-      exitMode: 'price',
+      exitMode,
     };
   }
 

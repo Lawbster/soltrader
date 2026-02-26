@@ -8,9 +8,9 @@
       "enabled": true,
       "indicator": { "kind": "crsi", "rsiPeriod": 14 },
       "regimes": {
-        "uptrend":   { "enabled": true,  "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } },
-        "downtrend": { "enabled": false, "params": { "entry": 10, "exit": 95, "sl": -3, "tp": 3 } }
+        "uptrend":   { "enabled": true,  "templateId": "crsi", "params": { "entry": 10, "exit": 95 }, "sl": -3, "tp": 3, "exitMode": "indicator" },
+        "sideways":  { "enabled": true,  "templateId": "crsi", "params": { "entry": 10, "exit": 95 }, "sl": -3, "tp": 3, "exitMode": "indicator" },
+        "downtrend": { "enabled": false, "templateId": "crsi", "params": { "entry": 10, "exit": 95 }, "sl": -3, "tp": 3, "exitMode": "price" }
       }
     },
     "pumpCmXqMfrsAkQ5r49WcJnRayYRqmXz6ae8H7H9Dfn": {
@@ -20,9 +20,9 @@
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
-        "uptrend":   { "enabled": false, "params": { "entry": 25, "exit": 80, "sl": -5, "tp": 1 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 25, "exit": 85, "sl": -3, "tp": 1 } },
-        "downtrend": { "enabled": false, "params": { "entry": 25, "exit": 70, "sl": -5, "tp": 1 } }
+        "uptrend":   { "enabled": false, "templateId": "rsi", "params": { "entry": 25, "exit": 80 }, "sl": -5, "tp": 1, "exitMode": "price" },
+        "sideways":  { "enabled": true,  "templateId": "rsi", "params": { "entry": 25, "exit": 85 }, "sl": -3, "tp": 1, "exitMode": "indicator" },
+        "downtrend": { "enabled": false, "templateId": "rsi", "params": { "entry": 25, "exit": 70 }, "sl": -5, "tp": 1, "exitMode": "price" }
       }
     },
     "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux": {
@@ -32,9 +32,9 @@
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
-        "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } },
-        "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -5, "tp": 1 } }
+        "uptrend":   { "enabled": false, "templateId": "rsi", "params": { "entry": 20, "exit": 85 }, "sl": -5, "tp": 1, "exitMode": "price" },
+        "sideways":  { "enabled": true,  "templateId": "rsi", "params": { "entry": 20, "exit": 85 }, "sl": -5, "tp": 1, "exitMode": "indicator" },
+        "downtrend": { "enabled": false, "templateId": "rsi", "params": { "entry": 20, "exit": 85 }, "sl": -5, "tp": 1, "exitMode": "price" }
       }
     },
     "So11111111111111111111111111111111111111112": {
@@ -68,9 +68,9 @@
       "enabled": true,
       "indicator": { "kind": "rsi", "rsiPeriod": 14 },
       "regimes": {
-        "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 75, "sl": -2, "tp": 3 } },
-        "sideways":  { "enabled": true,  "params": { "entry": 20, "exit": 85, "sl": -3, "tp": 4 } },
-        "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 75, "sl": -2, "tp": 3 } }
+        "uptrend":   { "enabled": false, "templateId": "rsi", "params": { "entry": 20, "exit": 75 }, "sl": -2, "tp": 3, "exitMode": "price" },
+        "sideways":  { "enabled": true,  "templateId": "rsi", "params": { "entry": 20, "exit": 85 }, "sl": -3, "tp": 4, "exitMode": "indicator" },
+        "downtrend": { "enabled": false, "templateId": "rsi", "params": { "entry": 20, "exit": 75 }, "sl": -2, "tp": 3, "exitMode": "price" }
       }
     },
     "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN": {

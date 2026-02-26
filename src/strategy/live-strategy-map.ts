@@ -134,6 +134,17 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
         }
       }
 
+      // Warn about enabled old-format regimes — they force exitMode='price' and ignore indicator exits
+      for (const [regimeName, rc] of Object.entries(regimes)) {
+        if (!rc || isNewRegimeFormat(rc)) continue;
+        if (rc.enabled) {
+          log.warn('Enabled regime uses legacy params format — exitMode forced to price. Migrate to new format with templateId/exitMode.', {
+            label: (entry as TokenStrategyV2).label,
+            regime: regimeName,
+          });
+        }
+      }
+
       tokens[mint] = {
         ...(entry as TokenStrategyV2),
         regimes: {

@@ -54,6 +54,7 @@ interface CliArgs {
   topPerToken: number;
   outDir?: string;
   writeCsv: boolean;
+  rankExitParity: 'indicator' | 'price' | 'both';
 }
 
 interface SweepRow {
@@ -134,6 +135,7 @@ function parseArgs(argv: string[]): CliArgs {
     top: 25,
     topPerToken: 5,
     writeCsv: true,
+    rankExitParity: 'indicator',
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -217,6 +219,15 @@ function parseArgs(argv: string[]): CliArgs {
       args.writeCsv = false;
       continue;
     }
+    if (arg === '--rank-exit-parity') {
+      const v = requireValue(arg, next);
+      if (v !== 'indicator' && v !== 'price' && v !== 'both') {
+        throw new Error(`--rank-exit-parity must be indicator|price|both, got: ${v}`);
+      }
+      args.rankExitParity = v;
+      i++;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -258,6 +269,10 @@ function printHelp(): void {
     '  --top-per-token N         Max rows per token per bucket (default: 5)',
     '  --out-dir PATH            Output directory for ranked CSVs (default: <source-dir>/candidates)',
     '  --no-csv                  Do not write output CSVs',
+    '  --rank-exit-parity MODE   indicator (default)|price|both — which exitParity rows to rank',
+    '                            indicator: rank only indicator rows (default when parity data present)',
+    '                            price: rank only price rows (use when deploying exitMode=price)',
+    '                            both: rank all rows (note: same strategy may appear twice)',
   ];
   console.log(help.join('\n'));
 }
@@ -784,11 +799,23 @@ function main(): void {
   }
 
   const parityDeltaMap = buildParityDeltaMap(rows);
-  // Only rank indicator-mode rows; price-only rows are used solely for delta computation
   const hasParityColumn = rows.some(r => r.exitParity !== null);
-  const rankingRows = hasParityColumn ? rows.filter(r => r.exitParity !== 'price') : rows;
+
+  let rankingRows: SweepRow[];
+  if (!hasParityColumn) {
+    rankingRows = rows;
+  } else if (args.rankExitParity === 'price') {
+    rankingRows = rows.filter(r => r.exitParity === 'price');
+  } else if (args.rankExitParity === 'both') {
+    rankingRows = rows;
+    console.log('NOTE: --rank-exit-parity=both includes both indicator and price rows. The same strategy may appear twice in candidate tables with different pnl/stats.');
+  } else {
+    // 'indicator' (default): only rank indicator rows; price rows used only for parityDelta
+    rankingRows = rows.filter(r => r.exitParity !== 'price');
+  }
+
   if (hasParityColumn && rankingRows.length === 0) {
-    throw new Error('All rows have exitParity=price — nothing to rank. Run sweep with --exit-parity indicator or both.');
+    throw new Error(`No rows match --rank-exit-parity=${args.rankExitParity}. Check that the sweep CSV contains the expected exitParity values.`);
   }
 
   const filtered = rankingRows

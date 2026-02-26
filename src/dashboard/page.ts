@@ -315,7 +315,7 @@ export function getDashboardHtml(): string {
 
 <!-- Price Chart -->
 <div class="chart-container">
-  <h3 id="chartTitle">Price (1-min candles, 2hr lookback)</h3>
+  <h3 id="chartTitle">Price (1-min candles, 24hr lookback)</h3>
   <canvas id="priceChart"></canvas>
 </div>
 
@@ -634,7 +634,7 @@ function selectToken(mint) {
 
 function renderPriceChart(points, tokenLabel) {
   const titleEl = document.getElementById('chartTitle');
-  titleEl.textContent = (tokenLabel || '') + ' \u2014 Price (1-min candles, 2hr lookback)';
+  titleEl.textContent = (tokenLabel || '') + ' \u2014 Price (1-min candles, 24hr lookback)';
   const canvas = document.getElementById('priceChart');
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
