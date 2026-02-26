@@ -4,10 +4,10 @@ import type { TrendRegime } from './live-strategy-map';
 
 const log = createLogger('regime-detector');
 
-const REFRESH_INTERVAL_MS = 30 * 60_000;   // 30 min between refreshes
+const REFRESH_INTERVAL_MS = 10 * 60_000;   // 10 min between refreshes
 const STAGGER_MS = 5_000;                  // 5s between token starts
 const HYSTERESIS_CYCLES = 2;              // consecutive cycles required to confirm a regime flip
-const SCORE_BUFFER = 1;                   // ±1 score buffer around thresholds — resets pendingCount
+const SCORE_BUFFER = 0.5;                 // ±0.5 score buffer around thresholds — resets pendingCount
 const LOW_COVERAGE_HOURS = 24;            // below this → force sideways
 
 // Regime classification thresholds (same as sweep-candidates.ts)
