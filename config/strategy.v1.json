@@ -69,7 +69,7 @@
     "maxConcurrentPositions": 6,
     "maxOpenExposurePct": 50,
     "dailyLossLimitPct": -8,
-    "consecutiveLossLimit": 4,
+    "consecutiveLossLimit": 99,
     "consecutiveLossCooldownMinutes": 60,
     "reEntryLockoutHours": 0.0666666667
   },
