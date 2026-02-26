@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Candle, PricePoint, TokenDataset } from './types';
 
-const DATA_ROOT = path.resolve(__dirname, '../../data/data');
+const DATA_ROOT = path.resolve(__dirname, '../../data');
 const WATCHLIST_PATH = path.resolve(__dirname, '../../config/watchlist.json');
 
 interface WatchlistEntry {
