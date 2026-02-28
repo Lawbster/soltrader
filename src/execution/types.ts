@@ -37,6 +37,15 @@ export interface StrategyPlan {
   templateId?: TemplateId;                 // always set for template-routed tokens
   templateParams?: Record<string, number>; // template-specific params
   exitMode?: ExitMode;                     // 'price' (default) | 'indicator'
+  routeId?: string;                        // unique per-token route identifier
+  timeframeMinutes?: number;               // route timeframe (1/5/15)
+  priority?: number;                       // route priority used for arbitration
+  indicator?: {
+    kind: 'rsi' | 'crsi';
+    rsiPeriod: number;
+    streakRsiPeriod?: number;
+    percentRankPeriod?: number;
+  };
 }
 
 export interface Position {

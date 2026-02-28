@@ -485,7 +485,11 @@ async function updatePosition(position: Position) {
     ) {
       // Template indicator exit: evaluate at most once per candle boundary
       const indCfg = cfg.entry.indicators;
-      const candleMs = (indCfg?.candleIntervalMinutes ?? 1) * 60_000;
+      const timeframeMinutes = Math.max(
+        1,
+        Math.round(position.strategyPlan.timeframeMinutes ?? indCfg?.candleIntervalMinutes ?? 1),
+      );
+      const candleMs = timeframeMinutes * 60_000;
       const lastCandleTs = Math.floor(Date.now() / candleMs) * candleMs;
 
       let templateSig: 'buy' | 'sell' | 'hold' = 'hold';
@@ -494,13 +498,23 @@ async function updatePosition(position: Position) {
         position.lastTemplateExitEvalMs = lastCandleTs;
         // Evaluate template signal when indicators are available; otherwise templateSig stays 'hold'
         if (indCfg?.enabled) {
+          const planIndicator = position.strategyPlan.indicator;
+          const rsiPeriod = planIndicator?.rsiPeriod ?? indCfg.rsi.period;
+          const connorsRsiPeriod = planIndicator?.kind === 'rsi'
+            ? rsiPeriod
+            : (planIndicator?.rsiPeriod ?? indCfg.connors.rsiPeriod);
+          const connorsStreakRsiPeriod = planIndicator?.streakRsiPeriod ?? indCfg.connors.streakRsiPeriod;
+          const connorsPercentRankPeriod = planIndicator?.kind === 'rsi'
+            ? (rsiPeriod + 1)
+            : (planIndicator?.percentRankPeriod ?? indCfg.connors.percentRankPeriod);
+
           const snap = getIndicatorSnapshot(position.mint, {
-            intervalMinutes: indCfg.candleIntervalMinutes,
+            intervalMinutes: timeframeMinutes,
             lookbackMinutes: indCfg.candleLookbackMinutes,
-            rsiPeriod: indCfg.rsi.period,
-            connorsRsiPeriod: indCfg.connors.rsiPeriod,
-            connorsStreakRsiPeriod: indCfg.connors.streakRsiPeriod,
-            connorsPercentRankPeriod: indCfg.connors.percentRankPeriod,
+            rsiPeriod,
+            connorsRsiPeriod,
+            connorsStreakRsiPeriod,
+            connorsPercentRankPeriod,
           });
           const liveCtx: LiveTemplateContext = {
             close: position.currentPrice,
@@ -518,7 +532,9 @@ async function updatePosition(position: Position) {
           );
           log.debug('Template exit eval', {
             mint: position.mint,
+            routeId: position.strategyPlan.routeId,
             templateId: position.strategyPlan.templateId,
+            timeframeMinutes,
             signal: templateSig,
             pnl: pnlPct.toFixed(1),
           });

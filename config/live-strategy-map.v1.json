@@ -39,15 +39,55 @@
         },
         "downtrend": {
           "enabled": true,
-          "templateId": "crsi-dip-recover",
-          "params": {
-            "dip": 10,
-            "recover": 25,
-            "exit": 90
-          },
-          "sl": -2,
-          "tp": 4,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "routeId": "pippin-5m-crsi-dip-recover",
+              "enabled": true,
+              "timeframeMinutes": 5,
+              "priority": 320,
+              "templateId": "crsi-dip-recover",
+              "params": {
+                "dip": 15,
+                "recover": 20,
+                "exit": 90
+              },
+              "sl": -3,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "pippin-1m-vwap-rsi-range-revert",
+              "enabled": true,
+              "timeframeMinutes": 1,
+              "priority": 260,
+              "indicator": {
+                "kind": "rsi",
+                "rsiPeriod": 14
+              },
+              "templateId": "vwap-rsi-range-revert",
+              "params": {
+                "adxMax": 20,
+                "rsiEntry": 30
+              },
+              "sl": -5,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "pippin-15m-placeholder",
+              "enabled": false,
+              "timeframeMinutes": 15,
+              "priority": 120,
+              "templateId": "rsi",
+              "params": {
+                "entry": 20,
+                "exit": 80
+              },
+              "sl": -3,
+              "tp": 2,
+              "exitMode": "price"
+            }
+          ]
         }
       }
     },
@@ -75,27 +115,73 @@
         },
         "sideways": {
           "enabled": true,
-          "templateId": "rsi-session-gate",
-          "params": {
-            "entry": 25,
-            "exit": 85,
-            "session": 8
-          },
-          "sl": -5,
-          "tp": 1,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "routeId": "pump-1m-rsi-session-sideways",
+              "enabled": true,
+              "timeframeMinutes": 1,
+              "priority": 220,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 25,
+                "exit": 85,
+                "session": 8
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "pump-5m-rsi-session-sideways",
+              "enabled": true,
+              "timeframeMinutes": 5,
+              "priority": 150,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 25,
+                "exit": 75,
+                "session": 0
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "downtrend": {
-          "enabled": false,
-          "templateId": "rsi-session-gate",
-          "params": {
-            "entry": 25,
-            "exit": 85,
-            "session": 8
-          },
-          "sl": -5,
-          "tp": 1,
-          "exitMode": "price"
+          "enabled": true,
+          "routes": [
+            {
+              "routeId": "pump-1m-rsi-session-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 1,
+              "priority": 240,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 25,
+                "exit": 75,
+                "session": 0
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "pump-5m-rsi-session-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 5,
+              "priority": 160,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 25,
+                "exit": 75,
+                "session": 0
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            }
+          ]
         }
       }
     },
@@ -133,14 +219,37 @@
         },
         "downtrend": {
           "enabled": true,
-          "templateId": "vwap-rsi-range-revert",
-          "params": {
-            "adxMax": 20,
-            "rsiEntry": 35
-          },
-          "sl": -2,
-          "tp": 4,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "routeId": "hnt-1m-rsi-session-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 1,
+              "priority": 230,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 20,
+                "exit": 75,
+                "session": 16
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "hnt-5m-vwap-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 5,
+              "priority": 170,
+              "templateId": "vwap-rsi-range-revert",
+              "params": {
+                "adxMax": 20,
+                "rsiEntry": 35
+              },
+              "sl": -2,
+              "tp": 4,
+              "exitMode": "indicator"
+            }
+          ]
         }
       }
     },
@@ -358,14 +467,37 @@
         },
         "downtrend": {
           "enabled": true,
-          "templateId": "rsi",
-          "params": {
-            "entry": 20,
-            "exit": 85
-          },
-          "sl": -5,
-          "tp": 6,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "routeId": "popcat-1m-rsi-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 1,
+              "priority": 210,
+              "templateId": "rsi",
+              "params": {
+                "entry": 20,
+                "exit": 85
+              },
+              "sl": -5,
+              "tp": 6,
+              "exitMode": "indicator"
+            },
+            {
+              "routeId": "popcat-5m-rsi-session-downtrend",
+              "enabled": true,
+              "timeframeMinutes": 5,
+              "priority": 140,
+              "templateId": "rsi-session-gate",
+              "params": {
+                "entry": 20,
+                "exit": 85,
+                "session": 16
+              },
+              "sl": -3,
+              "tp": 4,
+              "exitMode": "indicator"
+            }
+          ]
         }
       }
     }

@@ -10,9 +10,10 @@ import {
   loadStrategyConfig, evaluateEntry,
   initMetrics, saveMetrics, printMetricsSummary, getAggregateMetrics,
 } from './strategy';
-import { getLiveTokenStrategy } from './strategy/live-strategy-map';
+import { getLiveTokenStrategies, type TokenStrategy } from './strategy/live-strategy-map';
 import { startRegimeRefresh, getTokenRegimeCached } from './strategy/regime-detector';
 import { StrategyPlan } from './execution/types';
+import type { IndicatorSnapshot } from './analysis/types';
 import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
 import {
   initPortfolio,
@@ -89,14 +90,57 @@ async function prunePendingTokens(maxAgeMs: number): Promise<number> {
   return pruned;
 }
 
+// Route-eval de-dup: ensures each timeframe route evaluates once per candle boundary.
+const lastRouteEvalByCandle = new Map<string, number>();
+
+function resolveRouteTimeframeMinutes(route: TokenStrategy, defaultMinutes: number): number {
+  if (Number.isFinite(route.timeframeMinutes) && (route.timeframeMinutes as number) > 0) {
+    return Math.max(1, Math.round(route.timeframeMinutes as number));
+  }
+  return Math.max(1, Math.round(defaultMinutes));
+}
+
+function shouldEvaluateRouteNow(
+  mint: string,
+  route: TokenStrategy,
+  defaultTimeframeMinutes: number,
+  nowMs: number,
+): { evaluate: boolean; timeframeMinutes: number } {
+  const timeframeMinutes = resolveRouteTimeframeMinutes(route, defaultTimeframeMinutes);
+  const candleMs = timeframeMinutes * 60_000;
+  const candleTs = Math.floor(nowMs / candleMs) * candleMs;
+  const routeKey = `${mint}:${route.routeId ?? route.templateId}:${timeframeMinutes}`;
+  const prev = lastRouteEvalByCandle.get(routeKey) ?? 0;
+  if (candleTs <= prev) {
+    return { evaluate: false, timeframeMinutes };
+  }
+  lastRouteEvalByCandle.set(routeKey, candleTs);
+  return { evaluate: true, timeframeMinutes };
+}
+
+function compareRouteCandidates(
+  a: { route: TokenStrategy; score: number; sizeUsdc: number },
+  b: { route: TokenStrategy; score: number; sizeUsdc: number },
+): number {
+  const pa = a.route.priority ?? 0;
+  const pb = b.route.priority ?? 0;
+  if (pa !== pb) return pb - pa;
+  if (a.score !== b.score) return b.score - a.score;
+  const ta = a.route.timeframeMinutes ?? Number.MAX_SAFE_INTEGER;
+  const tb = b.route.timeframeMinutes ?? Number.MAX_SAFE_INTEGER;
+  if (ta !== tb) return ta - tb;
+  if (a.sizeUsdc !== b.sizeUsdc) return b.sizeUsdc - a.sizeUsdc;
+  return (a.route.routeId ?? '').localeCompare(b.route.routeId ?? '');
+}
+
 async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const isWatchlist = launch.source === 'watchlist';
 
-  // Per-token strategy gate: watchlist tokens must have an active strategy entry
+  // Per-token strategy gate: watchlist tokens must have at least one active route.
   const regimeState = getTokenRegimeCached(mint);
   const regime = regimeState?.confirmed ?? 'sideways';
-  const tokenStrategy = getLiveTokenStrategy(mint, regime);
-  if (isWatchlist && (!tokenStrategy || !tokenStrategy.enabled)) return;
+  const tokenStrategies = getLiveTokenStrategies(mint, regime);
+  if (isWatchlist && tokenStrategies.length === 0) return;
 
   const strategyCfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
@@ -124,96 +168,221 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   // Get 5-minute trade window
   const window = getTradeWindow(mint, FIVE_MINUTES_MS);
 
-  // Indicators — override periods from per-token strategy when available
   const indicatorsCfg = strategyCfg.entry.indicators;
-  const indicators = indicatorsCfg?.enabled
-    ? getIndicatorSnapshot(mint, {
-        intervalMinutes: indicatorsCfg.candleIntervalMinutes,
-        lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
-        // Per-token: use per-token RSI period; for candle sufficiency, set percentRankPeriod
-        // to rsiPeriod+1 so minCandles threshold aligns with what RSI actually needs
-        rsiPeriod: tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) : indicatorsCfg.rsi.period,
-        connorsRsiPeriod: tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.connors.rsiPeriod) : indicatorsCfg.connors.rsiPeriod,
-        connorsStreakRsiPeriod: tokenStrategy?.indicator?.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
-        connorsPercentRankPeriod: tokenStrategy
-          ? (tokenStrategy.indicator?.kind === 'rsi'
-              ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) + 1
-              : (tokenStrategy.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
-          : indicatorsCfg.connors.percentRankPeriod,
-      })
-    : undefined;
 
   // Compute 5m volume in USD
   const solPrice = tokenData.priceUsd / (tokenData.priceSol || 1);
   tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
 
-  // Evaluate entry
   const totalTrades = getAggregateMetrics().totalTrades;
-  const signal = evaluateEntry(
-    tokenData, window, portfolio, lpChange10mPct, indicators, isWatchlist, totalTrades,
-    tokenStrategy ?? undefined
-  );
+  const routeCandidates: Array<{
+    route: TokenStrategy;
+    signal: ReturnType<typeof evaluateEntry>;
+    indicators?: IndicatorSnapshot;
+    timeframeMinutes: number;
+  }> = [];
 
-  // Log every signal decision (Phase 2)
-  logSignal({
-    mint,
-    crsi: indicators?.connorsRsi,
-    rsi: indicators?.rsi,
-    source: indicators?.candleCount ? 'price-feed' : 'none',
-    candleCount: indicators?.candleCount ?? 0,
-    entryDecision: signal.passed,
-    rejectReason: signal.passed ? '' : (signal.reason || signal.filterResult?.reason || ''),
-    liquidityUsd: tokenData.liquidityUsd,
-    effectiveMaxUsdc: signal.positionSizeUsdc,
-  });
+  const skippedByBoundary: string[] = [];
+  const indicatorCache = new Map<string, IndicatorSnapshot>();
+  const defaultTimeframeMinutes = indicatorsCfg?.candleIntervalMinutes ?? 1;
+  const nowMs = Date.now();
 
-  if (signal.passed) {
-    log.info('ENTRY SIGNAL', {
-      mint,
-      label: tokenStrategy?.label,
-      regime,
-      score: signal.scoreResult ? Math.round(signal.scoreResult.total) : 0,
-      sizeUsdc: signal.positionSizeUsdc.toFixed(2),
-      mcap: Math.round(tokenData.mcapUsd),
-      liq: Math.round(tokenData.liquidityUsd),
-      lpChange10m: lpChange10mPct?.toFixed(1),
-    });
+  for (const route of tokenStrategies) {
+    const evalGate = shouldEvaluateRouteNow(mint, route, defaultTimeframeMinutes, nowMs);
+    if (!evalGate.evaluate) {
+      skippedByBoundary.push(`${route.routeId ?? route.templateId}@${evalGate.timeframeMinutes}m`);
+      continue;
+    }
 
-    const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
+    let indicators: IndicatorSnapshot | undefined;
+    if (indicatorsCfg?.enabled) {
+      const rsiPeriod = route.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period;
+      const connorsRsiPeriod = route.indicator?.kind === 'rsi'
+        ? rsiPeriod
+        : (route.indicator?.rsiPeriod ?? indicatorsCfg.connors.rsiPeriod);
+      const connorsStreakRsiPeriod = route.indicator?.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod;
+      const connorsPercentRankPeriod = route.indicator?.kind === 'rsi'
+        ? (rsiPeriod + 1)
+        : (route.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod);
+      const intervalMinutes = evalGate.timeframeMinutes;
+      const cacheKey = [
+        intervalMinutes,
+        indicatorsCfg.candleLookbackMinutes,
+        rsiPeriod,
+        connorsRsiPeriod,
+        connorsStreakRsiPeriod,
+        connorsPercentRankPeriod,
+      ].join('|');
 
-    // Build strategyPlan to carry into position for per-token exit logic.
-    // entry/exit default to 0/100 for template-based tokens that don't use RSI thresholds;
-    // these fields are vestigial for non-RSI/CRSI templates and are not used for exit decisions.
-    const strategyPlan: StrategyPlan | undefined = tokenStrategy
-      ? {
-          kind: (tokenStrategy.indicator?.kind ?? 'rsi') as 'rsi' | 'crsi',
-          entry: tokenStrategy.params.entry ?? 0,
-          exit: tokenStrategy.params.exit ?? 100,
-          sl: tokenStrategy.sl,
-          tp: tokenStrategy.tp,
-          templateId: tokenStrategy.templateId,
-          templateParams: tokenStrategy.params,
-          exitMode: tokenStrategy.exitMode,
-        }
-      : undefined;
-
-    // SHADOW_TEMPLATE=1: log template-driven entry decisions without executing
-    const shadowMode = process.env.SHADOW_TEMPLATE === '1';
-    if (shadowMode && tokenStrategy) {
-      log.info('SHADOW_TEMPLATE: entry suppressed', {
-        mint,
-        label: tokenStrategy.label,
-        templateId: tokenStrategy.templateId,
-        exitMode: tokenStrategy.exitMode,
-        regime,
-        sizeUsdc: signal.positionSizeUsdc.toFixed(2),
-      });
-    } else {
-      const pos = await openPosition(mint, signal.positionSizeUsdc, slippageBps, strategyPlan);
-      if (!pos) {
-        log.warn('Position not opened despite entry signal', { mint });
+      const cachedIndicators = indicatorCache.get(cacheKey);
+      if (cachedIndicators) {
+        indicators = cachedIndicators;
+      } else {
+        indicators = getIndicatorSnapshot(mint, {
+          intervalMinutes,
+          lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+          rsiPeriod,
+          connorsRsiPeriod,
+          connorsStreakRsiPeriod,
+          connorsPercentRankPeriod,
+        });
+        indicatorCache.set(cacheKey, indicators);
       }
     }
+
+    const signal = evaluateEntry(
+      tokenData,
+      window,
+      portfolio,
+      lpChange10mPct,
+      indicators,
+      isWatchlist,
+      totalTrades,
+      route,
+    );
+
+    routeCandidates.push({
+      route,
+      signal,
+      indicators,
+      timeframeMinutes: evalGate.timeframeMinutes,
+    });
+  }
+
+  if (routeCandidates.length === 0) {
+    if (skippedByBoundary.length > 0) {
+      logSignal({
+        mint,
+        crsi: undefined,
+        rsi: undefined,
+        source: 'none',
+        candleCount: 0,
+        entryDecision: false,
+        rejectReason: `route-window: waiting candle close (${skippedByBoundary.join(', ')})`,
+        liquidityUsd: tokenData.liquidityUsd,
+        effectiveMaxUsdc: 0,
+      });
+    }
+    return;
+  }
+
+  const passed = routeCandidates
+    .filter(c => c.signal.passed)
+    .sort((a, b) => compareRouteCandidates(
+      { route: a.route, score: a.signal.scoreResult?.total ?? 0, sizeUsdc: a.signal.positionSizeUsdc },
+      { route: b.route, score: b.signal.scoreResult?.total ?? 0, sizeUsdc: b.signal.positionSizeUsdc },
+    ));
+
+  const topRejected = routeCandidates
+    .filter(c => !c.signal.passed)
+    .sort((a, b) => compareRouteCandidates(
+      { route: a.route, score: a.signal.scoreResult?.total ?? 0, sizeUsdc: a.signal.positionSizeUsdc },
+      { route: b.route, score: b.signal.scoreResult?.total ?? 0, sizeUsdc: b.signal.positionSizeUsdc },
+    ))[0];
+
+  if (passed.length === 0) {
+    const rejectIndicators = topRejected?.indicators;
+    const rejectRoute = topRejected?.route;
+    const rejectSignal = topRejected?.signal;
+    logSignal({
+      mint,
+      crsi: rejectIndicators?.connorsRsi,
+      rsi: rejectIndicators?.rsi,
+      source: rejectIndicators?.candleCount ? 'price-feed' : 'none',
+      candleCount: rejectIndicators?.candleCount ?? 0,
+      entryDecision: false,
+      rejectReason: rejectSignal
+        ? `route:${rejectRoute?.routeId ?? rejectRoute?.templateId}@${topRejected?.timeframeMinutes}m ${rejectSignal.reason || rejectSignal.filterResult?.reason || ''}`
+        : 'no-route-passed',
+      liquidityUsd: tokenData.liquidityUsd,
+      effectiveMaxUsdc: 0,
+    });
+    return;
+  }
+
+  const winner = passed[0];
+  const winnerRoute = winner.route;
+  const winnerSignal = winner.signal;
+  const winnerIndicators = winner.indicators;
+
+  if (passed.length > 1) {
+    log.info('Route arbitration', {
+      mint,
+      regime,
+      winner: `${winnerRoute.routeId ?? winnerRoute.templateId}@${winner.timeframeMinutes}m`,
+      candidates: passed.map(c => ({
+        route: c.route.routeId ?? c.route.templateId,
+        timeframeMinutes: c.timeframeMinutes,
+        priority: c.route.priority ?? 0,
+        score: Math.round(c.signal.scoreResult?.total ?? 0),
+        sizeUsdc: Number(c.signal.positionSizeUsdc.toFixed(2)),
+      })),
+    });
+  }
+
+  logSignal({
+    mint,
+    crsi: winnerIndicators?.connorsRsi,
+    rsi: winnerIndicators?.rsi,
+    source: winnerIndicators?.candleCount ? 'price-feed' : 'none',
+    candleCount: winnerIndicators?.candleCount ?? 0,
+    entryDecision: true,
+    rejectReason: '',
+    liquidityUsd: tokenData.liquidityUsd,
+    effectiveMaxUsdc: winnerSignal.positionSizeUsdc,
+  });
+
+  log.info('ENTRY SIGNAL', {
+    mint,
+    label: winnerRoute.label,
+    regime,
+    routeId: winnerRoute.routeId ?? winnerRoute.templateId,
+    templateId: winnerRoute.templateId,
+    timeframeMinutes: winner.timeframeMinutes,
+    priority: winnerRoute.priority ?? 0,
+    score: winnerSignal.scoreResult ? Math.round(winnerSignal.scoreResult.total) : 0,
+    sizeUsdc: winnerSignal.positionSizeUsdc.toFixed(2),
+    mcap: Math.round(tokenData.mcapUsd),
+    liq: Math.round(tokenData.liquidityUsd),
+    lpChange10m: lpChange10mPct?.toFixed(1),
+  });
+
+  const slippageBps = strategyCfg.entry.maxSlippagePct * 100;
+  const strategyPlan: StrategyPlan = {
+    kind: (winnerRoute.indicator?.kind ?? 'rsi') as 'rsi' | 'crsi',
+    entry: winnerRoute.params.entry ?? 0,
+    exit: winnerRoute.params.exit ?? 100,
+    sl: winnerRoute.sl,
+    tp: winnerRoute.tp,
+    templateId: winnerRoute.templateId,
+    templateParams: winnerRoute.params,
+    exitMode: winnerRoute.exitMode,
+    routeId: winnerRoute.routeId,
+    timeframeMinutes: winner.timeframeMinutes,
+    priority: winnerRoute.priority,
+    indicator: winnerRoute.indicator,
+  };
+
+  // SHADOW_TEMPLATE=1: log route winner without executing
+  const shadowMode = process.env.SHADOW_TEMPLATE === '1';
+  if (shadowMode) {
+    log.info('SHADOW_TEMPLATE: entry suppressed', {
+      mint,
+      label: winnerRoute.label,
+      routeId: winnerRoute.routeId ?? winnerRoute.templateId,
+      templateId: winnerRoute.templateId,
+      timeframeMinutes: winner.timeframeMinutes,
+      priority: winnerRoute.priority ?? 0,
+      exitMode: winnerRoute.exitMode,
+      regime,
+      sizeUsdc: winnerSignal.positionSizeUsdc.toFixed(2),
+    });
+    return;
+  }
+
+  const pos = await openPosition(mint, winnerSignal.positionSizeUsdc, slippageBps, strategyPlan);
+  if (!pos) {
+    log.warn('Position not opened despite entry signal', { mint });
   }
 }
 

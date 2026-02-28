@@ -16,7 +16,7 @@ export interface TokenIndicator {
   percentRankPeriod?: number;
 }
 
-/** Old-format params (flat entry/exit/sl/tp) — kept for backward compat */
+// Legacy format kept for backward compatibility
 export interface TokenStrategyParams {
   entry: number;
   exit: number;
@@ -24,24 +24,21 @@ export interface TokenStrategyParams {
   tp: number;
 }
 
-/** Normalized token strategy returned to all callers. */
 export interface TokenStrategy {
   label: string;
   tier: 'core' | 'probe';
   maxPositionUsdc?: number;
   maxPositionEquityPct?: number;
   enabled: boolean;
-  /** Present for RSI/CRSI templates; absent for other template families. */
   indicator?: TokenIndicator;
-  /** Always set after normalization — for RSI/CRSI tokens equals indicator.kind. */
   templateId: TemplateId;
-  /** Template-specific params. For RSI/CRSI: includes entry/exit/sl/tp. */
   params: Record<string, number>;
-  /** Stop-loss % — direct access for position-manager and rules. */
   sl: number;
-  /** Take-profit % — direct access for position-manager and rules. */
   tp: number;
   exitMode: ExitMode;
+  routeId?: string;
+  timeframeMinutes?: number;
+  priority?: number;
 }
 
 export interface RegimeConfig {
@@ -49,19 +46,42 @@ export interface RegimeConfig {
   params: TokenStrategyParams;
 }
 
-// ── Internal JSON shapes ──────────────────────────────────────────────
-
-/** New regime format: template-driven with explicit templateId/params/sl/tp/exitMode */
-interface RegimeConfigNew {
+interface RegimeConfigNewSingle {
   enabled: boolean;
   templateId: TemplateId;
   params: Record<string, number>;
   sl: number;
   tp: number;
   exitMode?: ExitMode;
+  routeId?: string;
+  timeframeMinutes?: number;
+  priority?: number;
+  indicator?: TokenIndicator;
+  maxPositionUsdc?: number;
+  maxPositionEquityPct?: number;
 }
 
-type AnyRegimeConfig = RegimeConfig | RegimeConfigNew;
+interface RegimeRouteConfig {
+  routeId?: string;
+  enabled: boolean;
+  timeframeMinutes: number;
+  priority?: number;
+  indicator?: TokenIndicator;
+  templateId: TemplateId;
+  params: Record<string, number>;
+  sl: number;
+  tp: number;
+  exitMode?: ExitMode;
+  maxPositionUsdc?: number;
+  maxPositionEquityPct?: number;
+}
+
+interface RegimeConfigRoutes {
+  enabled: boolean;
+  routes: RegimeRouteConfig[];
+}
+
+type AnyRegimeConfig = RegimeConfig | RegimeConfigNewSingle | RegimeConfigRoutes;
 
 interface TokenStrategyV2 {
   label: string;
@@ -92,16 +112,80 @@ interface TokenStrategyV1 {
   params: TokenStrategyParams;
 }
 
-// ── Config loading ────────────────────────────────────────────────────
-
 const CONFIG_PATH = path.resolve(__dirname, '../../config/live-strategy-map.v1.json');
 
 let cached: LiveStrategyMapV2 | null = null;
 let cachedMtime = 0;
 let v1WarnEmitted = false;
 
-function isNewRegimeFormat(r: AnyRegimeConfig): r is RegimeConfigNew {
-  return 'templateId' in r && typeof (r as RegimeConfigNew).templateId === 'string';
+function isRouteRegimeFormat(r: AnyRegimeConfig): r is RegimeConfigRoutes {
+  return typeof (r as RegimeConfigRoutes).routes !== 'undefined';
+}
+
+function isNewSingleRegimeFormat(r: AnyRegimeConfig): r is RegimeConfigNewSingle {
+  return typeof (r as RegimeConfigNewSingle).templateId === 'string';
+}
+
+function cloneRegimeConfig(r: AnyRegimeConfig): AnyRegimeConfig {
+  if (isRouteRegimeFormat(r)) {
+    return {
+      enabled: r.enabled,
+      routes: (r.routes ?? []).map(route => ({
+        ...route,
+        params: { ...(route.params ?? {}) },
+        indicator: route.indicator ? { ...route.indicator } : undefined,
+      })),
+    };
+  }
+  if (isNewSingleRegimeFormat(r)) {
+    return {
+      ...r,
+      params: { ...(r.params ?? {}) },
+      indicator: r.indicator ? { ...r.indicator } : undefined,
+    };
+  }
+  return {
+    enabled: r.enabled,
+    params: { ...r.params },
+  };
+}
+
+function validateRegimeConfig(label: string, regimeName: string, rc: AnyRegimeConfig) {
+  if (isRouteRegimeFormat(rc)) {
+    for (let i = 0; i < rc.routes.length; i++) {
+      const route = rc.routes[i];
+      if (!route) continue;
+      const err = validateParams(route.templateId, route.params);
+      if (err) {
+        log.warn('Invalid template params in live-strategy-map route', {
+          label,
+          regime: regimeName,
+          routeId: route.routeId ?? `${regimeName}-${i + 1}`,
+          error: err,
+        });
+      }
+    }
+    return;
+  }
+
+  if (isNewSingleRegimeFormat(rc)) {
+    const err = validateParams(rc.templateId, rc.params);
+    if (err) {
+      log.warn('Invalid template params in live-strategy-map', {
+        label,
+        regime: regimeName,
+        error: err,
+      });
+    }
+    return;
+  }
+
+  if (rc.enabled) {
+    log.warn('Enabled regime uses legacy params format. Migrate to templateId/params or routes[] for full live parity.', {
+      label,
+      regime: regimeName,
+    });
+  }
 }
 
 function loadLiveStrategyMap(): LiveStrategyMapV2 {
@@ -117,67 +201,49 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
 
   for (const [mint, entry] of Object.entries(raw.tokens)) {
     if ('regimes' in entry && entry.regimes) {
-      const regimes = entry.regimes as Partial<TokenStrategyV2['regimes']>;
-      const sideways = regimes.sideways ?? regimes.uptrend ?? regimes.downtrend;
-      if (!sideways) {
-        log.warn('Token has regimes block but all regimes missing', { label: (entry as TokenStrategyV2).label });
+      const v2 = entry as TokenStrategyV2;
+      const regimes = v2.regimes as Partial<TokenStrategyV2['regimes']>;
+      const fallback = regimes.sideways ?? regimes.uptrend ?? regimes.downtrend;
+      if (!fallback) {
+        log.warn('Token has regimes block but no usable regime found', { label: v2.label });
         continue;
       }
 
-      // Validate new-format regime params at load time
       for (const [regimeName, rc] of Object.entries(regimes)) {
-        if (!rc || !isNewRegimeFormat(rc)) continue;
-        const err = validateParams(rc.templateId, rc.params);
-        if (err) {
-          log.warn('Invalid template params in live-strategy-map', {
-            label: (entry as TokenStrategyV2).label,
-            regime: regimeName,
-            error: err,
-          });
-        }
-      }
-
-      // Warn about enabled old-format regimes — they force exitMode='price' and ignore indicator exits
-      for (const [regimeName, rc] of Object.entries(regimes)) {
-        if (!rc || isNewRegimeFormat(rc)) continue;
-        if (rc.enabled) {
-          log.warn('Enabled regime uses legacy params format — exitMode forced to price. Migrate to new format with templateId/exitMode.', {
-            label: (entry as TokenStrategyV2).label,
-            regime: regimeName,
-          });
-        }
+        if (!rc) continue;
+        validateRegimeConfig(v2.label, regimeName, rc);
       }
 
       tokens[mint] = {
-        ...(entry as TokenStrategyV2),
+        ...v2,
         regimes: {
-          uptrend:   (regimes.uptrend   ?? { ...sideways }) as AnyRegimeConfig,
-          sideways:  (regimes.sideways  ?? { ...sideways }) as AnyRegimeConfig,
-          downtrend: (regimes.downtrend ?? { ...sideways }) as AnyRegimeConfig,
+          uptrend: cloneRegimeConfig(regimes.uptrend ?? fallback),
+          sideways: cloneRegimeConfig(regimes.sideways ?? fallback),
+          downtrend: cloneRegimeConfig(regimes.downtrend ?? fallback),
         },
       };
-    } else {
-      // v1 format — promote flat params to all regimes
-      if (!v1WarnEmitted) {
-        log.warn('live-strategy-map.v1.json contains v1-format tokens (flat params). Promoting to v2 in memory.');
-        v1WarnEmitted = true;
-      }
-      const v1 = entry as TokenStrategyV1;
-      const regimeConfig: RegimeConfig = { enabled: v1.enabled, params: v1.params };
-      tokens[mint] = {
-        label: v1.label,
-        tier: v1.tier,
-        maxPositionUsdc: v1.maxPositionUsdc,
-        maxPositionEquityPct: v1.maxPositionEquityPct,
-        enabled: v1.enabled,
-        indicator: v1.indicator,
-        regimes: {
-          uptrend:   { ...regimeConfig },
-          sideways:  { ...regimeConfig },
-          downtrend: { ...regimeConfig },
-        },
-      };
+      continue;
     }
+
+    if (!v1WarnEmitted) {
+      log.warn('live-strategy-map.v1.json contains v1-format tokens. Promoting to v2 in memory.');
+      v1WarnEmitted = true;
+    }
+    const v1 = entry as TokenStrategyV1;
+    const legacyRegime: RegimeConfig = { enabled: v1.enabled, params: v1.params };
+    tokens[mint] = {
+      label: v1.label,
+      tier: v1.tier,
+      maxPositionUsdc: v1.maxPositionUsdc,
+      maxPositionEquityPct: v1.maxPositionEquityPct,
+      enabled: v1.enabled,
+      indicator: v1.indicator,
+      regimes: {
+        uptrend: cloneRegimeConfig(legacyRegime),
+        sideways: cloneRegimeConfig(legacyRegime),
+        downtrend: cloneRegimeConfig(legacyRegime),
+      },
+    };
   }
 
   cached = { version: raw.version, tokens };
@@ -185,59 +251,149 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
   return cached;
 }
 
-// ── Normalization ─────────────────────────────────────────────────────
-
-function normalizeRegime(
-  entry: TokenStrategyV2,
-  regimeConfig: AnyRegimeConfig,
-): Omit<TokenStrategy, 'label' | 'tier' | 'maxPositionUsdc' | 'maxPositionEquityPct' | 'enabled'> {
-  if (isNewRegimeFormat(regimeConfig)) {
-    return {
-      indicator: entry.indicator,
-      templateId: regimeConfig.templateId,
-      params: regimeConfig.params,
-      sl: regimeConfig.sl,
-      tp: regimeConfig.tp,
-      exitMode: regimeConfig.exitMode ?? 'price',
-    };
-  }
-
-  // Old format: derive templateId from indicator.kind
-  const oldParams = regimeConfig.params;
-  const templateId = (entry.indicator?.kind ?? 'rsi') as TemplateId;
-  return {
-    indicator: entry.indicator,
-    templateId,
-    params: { entry: oldParams.entry, exit: oldParams.exit, sl: oldParams.sl, tp: oldParams.tp },
-    sl: oldParams.sl,
-    tp: oldParams.tp,
-    exitMode: 'price',
-  };
+function normalizeTimeframeMinutes(tf?: number): number | undefined {
+  if (!Number.isFinite(tf)) return undefined;
+  const rounded = Math.max(1, Math.round(tf as number));
+  if (rounded === 1 || rounded === 5 || rounded === 15) return rounded;
+  return rounded;
 }
 
-// ── Public API ────────────────────────────────────────────────────────
+function sortByPriority(strategies: TokenStrategy[]): TokenStrategy[] {
+  return strategies.sort((a, b) => {
+    const pa = a.priority ?? 0;
+    const pb = b.priority ?? 0;
+    if (pa !== pb) return pb - pa;
+    const ta = a.timeframeMinutes ?? Number.MAX_SAFE_INTEGER;
+    const tb = b.timeframeMinutes ?? Number.MAX_SAFE_INTEGER;
+    if (ta !== tb) return ta - tb;
+    return (a.routeId ?? '').localeCompare(b.routeId ?? '');
+  });
+}
+
+function normalizeLegacyRegime(
+  entry: TokenStrategyV2,
+  regime: TrendRegime,
+  rc: RegimeConfig,
+): TokenStrategy[] {
+  if (!rc.enabled) return [];
+  const templateId = (entry.indicator?.kind ?? 'rsi') as TemplateId;
+  return [{
+    label: entry.label,
+    tier: entry.tier,
+    maxPositionUsdc: entry.maxPositionUsdc,
+    maxPositionEquityPct: entry.maxPositionEquityPct,
+    enabled: true,
+    indicator: entry.indicator,
+    templateId,
+    params: { entry: rc.params.entry, exit: rc.params.exit, sl: rc.params.sl, tp: rc.params.tp },
+    sl: rc.params.sl,
+    tp: rc.params.tp,
+    exitMode: 'price',
+    routeId: `${regime}:legacy`,
+    priority: 100,
+  }];
+}
+
+function normalizeSingleRegime(
+  entry: TokenStrategyV2,
+  regime: TrendRegime,
+  rc: RegimeConfigNewSingle,
+): TokenStrategy[] {
+  if (!rc.enabled) return [];
+  return [{
+    label: entry.label,
+    tier: entry.tier,
+    maxPositionUsdc: rc.maxPositionUsdc ?? entry.maxPositionUsdc,
+    maxPositionEquityPct: rc.maxPositionEquityPct ?? entry.maxPositionEquityPct,
+    enabled: true,
+    indicator: rc.indicator ?? entry.indicator,
+    templateId: rc.templateId,
+    params: rc.params,
+    sl: rc.sl,
+    tp: rc.tp,
+    exitMode: rc.exitMode ?? 'price',
+    routeId: rc.routeId ?? `${regime}:${rc.templateId}`,
+    timeframeMinutes: normalizeTimeframeMinutes(rc.timeframeMinutes),
+    priority: rc.priority ?? 100,
+  }];
+}
+
+function normalizeRouteRegime(
+  entry: TokenStrategyV2,
+  regime: TrendRegime,
+  rc: RegimeConfigRoutes,
+): TokenStrategy[] {
+  if (!rc.enabled) return [];
+  const out: TokenStrategy[] = [];
+
+  for (let i = 0; i < rc.routes.length; i++) {
+    const route = rc.routes[i];
+    if (!route || !route.enabled) continue;
+    const err = validateParams(route.templateId, route.params);
+    if (err) {
+      log.warn('Skipping route with invalid params', {
+        label: entry.label,
+        regime,
+        routeId: route.routeId ?? `${regime}-${i + 1}`,
+        error: err,
+      });
+      continue;
+    }
+    out.push({
+      label: entry.label,
+      tier: entry.tier,
+      maxPositionUsdc: route.maxPositionUsdc ?? entry.maxPositionUsdc,
+      maxPositionEquityPct: route.maxPositionEquityPct ?? entry.maxPositionEquityPct,
+      enabled: true,
+      indicator: route.indicator ?? entry.indicator,
+      templateId: route.templateId,
+      params: route.params,
+      sl: route.sl,
+      tp: route.tp,
+      exitMode: route.exitMode ?? 'price',
+      routeId: route.routeId ?? `${regime}-${i + 1}`,
+      timeframeMinutes: normalizeTimeframeMinutes(route.timeframeMinutes),
+      priority: route.priority ?? 100,
+    });
+  }
+
+  return sortByPriority(out);
+}
+
+function normalizeRegimeStrategies(
+  entry: TokenStrategyV2,
+  regime: TrendRegime,
+  rc: AnyRegimeConfig,
+): TokenStrategy[] {
+  if (isRouteRegimeFormat(rc)) return normalizeRouteRegime(entry, regime, rc);
+  if (isNewSingleRegimeFormat(rc)) return normalizeSingleRegime(entry, regime, rc);
+  return normalizeLegacyRegime(entry, regime, rc);
+}
 
 export function isTokenMasterEnabled(mint: string): boolean {
   const map = loadLiveStrategyMap();
   return !!map.tokens[mint]?.enabled;
 }
 
-export function getLiveTokenStrategy(mint: string, regime: TrendRegime = 'sideways'): TokenStrategy | null {
+export function getLiveTokenStrategies(
+  mint: string,
+  regime: TrendRegime = 'sideways',
+): TokenStrategy[] {
   const map = loadLiveStrategyMap();
   const entry = map.tokens[mint];
-  if (!entry || !entry.enabled) return null;
+  if (!entry || !entry.enabled) return [];
 
   const regimeConfig = entry.regimes[regime];
-  if (!regimeConfig || !regimeConfig.enabled) return null;
+  if (!regimeConfig) return [];
 
-  const normalized = normalizeRegime(entry, regimeConfig);
-
-  return {
-    label: entry.label,
-    tier: entry.tier,
-    maxPositionUsdc: entry.maxPositionUsdc,
-    maxPositionEquityPct: entry.maxPositionEquityPct,
-    enabled: true,
-    ...normalized,
-  };
+  return sortByPriority(normalizeRegimeStrategies(entry, regime, regimeConfig));
 }
+
+export function getLiveTokenStrategy(
+  mint: string,
+  regime: TrendRegime = 'sideways',
+): TokenStrategy | null {
+  const routes = getLiveTokenStrategies(mint, regime);
+  return routes.length > 0 ? routes[0] : null;
+}
+

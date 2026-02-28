@@ -610,7 +610,14 @@ function renderSignals(signals) {
     const cardBorderColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#21262d';
     const statusText = !s.masterEnabled ? 'Master: disabled' : s.regimeActive ? (s.trendRegime || 'unknown') + ': active' : (s.trendRegime || 'unknown') + ': no strategy';
     const statusColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#6e7681';
-    const strategySummary = s.templateId ? (s.templateId + ' | ' + (s.exitMode || 'price')) : '--';
+    const strategySummary = s.templateId
+      ? (
+          (s.routeId || s.templateId) +
+          ' | ' + (s.timeframeMinutes ? (s.timeframeMinutes + 'm') : '--') +
+          ' | ' + (s.exitMode || 'price') +
+          (isFiniteNumber(s.routePriority) ? (' | p' + fmt(s.routePriority, 0)) : '')
+        )
+      : '--';
     const paramsText = formatStrategyParams(s.strategyParams);
     const stopsText = (isFiniteNumber(s.sl) && isFiniteNumber(s.tp))
       ? ('SL ' + fmt(s.sl, 2) + '% / TP ' + fmt(s.tp, 2) + '%')
