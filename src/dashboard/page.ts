@@ -399,6 +399,18 @@ function crsiColor(v, threshold) {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 function isFiniteNumber(v) { return typeof v === 'number' && Number.isFinite(v); }
+function fmtParamValue(v) {
+  if (!isFiniteNumber(v)) return String(v);
+  if (Number.isInteger(v)) return String(v);
+  return Number(v).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+}
+function formatStrategyParams(params) {
+  if (!params || typeof params !== 'object') return '--';
+  const entries = Object.entries(params).filter(([, v]) => isFiniteNumber(v));
+  if (entries.length === 0) return '--';
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  return entries.map(([k, v]) => k + '=' + fmtParamValue(v)).join(' ');
+}
 function toDateKey(ts) {
   const d = new Date(ts);
   return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
@@ -598,6 +610,11 @@ function renderSignals(signals) {
     const cardBorderColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#21262d';
     const statusText = !s.masterEnabled ? 'Master: disabled' : s.regimeActive ? (s.trendRegime || 'unknown') + ': active' : (s.trendRegime || 'unknown') + ': no strategy';
     const statusColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#6e7681';
+    const strategySummary = s.templateId ? (s.templateId + ' · ' + (s.exitMode || 'price')) : '--';
+    const paramsText = formatStrategyParams(s.strategyParams);
+    const stopsText = (isFiniteNumber(s.sl) && isFiniteNumber(s.tp))
+      ? ('SL ' + fmt(s.sl, 2) + '% / TP ' + fmt(s.tp, 2) + '%')
+      : '--';
     return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" style="border-color:' + cardBorderColor + ';" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
       '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + regimeBadge + '</div>' +
       '<div class="signal-mint">' +
@@ -616,6 +633,9 @@ function renderSignals(signals) {
         '<div class="signal-row"><span class="label">Max size</span><span class="blue">' + (s.tokenMaxUsdc !== undefined ? fmt(s.tokenMaxUsdc, 2) + ' USDC' : '--') + '</span></div>' +
         '<div class="signal-row"><span class="label">Last impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
         '<div class="signal-row" style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Status</span><span style="color:' + statusColor + ';font-size:0.75rem;">' + statusText + '</span></div>' +
+        '<div class="signal-row"><span class="label">Live strategy</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + strategySummary + '</span></div>' +
+        '<div class="signal-row"><span class="label">Params</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + paramsText + '</span></div>' +
+        '<div class="signal-row"><span class="label">Stops</span><span style="font-size:0.75rem;color:#c9d1d9;">' + stopsText + '</span></div>' +
       '</div>' +
     '</div>';
   }).join('');

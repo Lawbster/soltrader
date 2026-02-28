@@ -201,6 +201,7 @@ function handleSignals(res: http.ServerResponse) {
         tier: tokenStrategy?.tier,
         indicatorKind: tokenStrategy?.indicator?.kind ?? 'crsi',
         templateId: tokenStrategy?.templateId ?? null,
+        strategyParams: tokenStrategy?.params ?? null,
         exitMode: tokenStrategy?.exitMode ?? null,
         trendRegime: regimeState?.confirmed ?? null,
         trendScore: regimeState?.trendScore ?? null,
