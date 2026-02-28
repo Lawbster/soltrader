@@ -38,7 +38,7 @@ function catalogEvaluate(id: TemplateId, p: Record<string, number>) {
   return (ctx: StrategyContext): Signal => evaluateSignal(id, p, toTemplateCtx(ctx));
 }
 
-const SWEEP_OUT_DIR = path.resolve(__dirname, '../../data/data/sweep-results');
+const SWEEP_OUT_DIR = path.resolve(__dirname, '../../data/sweep-results');
 
 // ── Sweep result type ────────────────────────────────────────────────
 
@@ -855,15 +855,12 @@ function main() {
     process.exit(1);
   }
 
-  // Resolve cost config
+  // Resolve cost config.
+  // Do not silently downgrade empirical -> fixed.
+  // If empirical cannot be loaded, fail fast so results are not mislabeled.
   let costCfg = fixedCost();
   if (costMode === 'empirical') {
-    try {
-      costCfg = loadEmpiricalCost(fromDate, toDate);
-    } catch (err) {
-      console.error(`[WARN] ${err instanceof Error ? err.message : String(err)}`);
-      console.error('[WARN] Falling back to fixed cost model.');
-    }
+    costCfg = loadEmpiricalCost(fromDate, toDate);
   }
 
   const allTokens = loadTokenList();

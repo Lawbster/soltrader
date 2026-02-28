@@ -9,7 +9,7 @@ const TREND_WEIGHTS = {
   ret72h: 0.2,
 };
 
-const DATA_ROOT = path.resolve(__dirname, '../data/data');
+const DATA_ROOT = path.resolve(__dirname, '../data');
 const CANDLES_ROOT = path.join(DATA_ROOT, 'candles');
 const WATCHLIST_PATH = path.resolve(__dirname, '../config/watchlist.json');
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -123,7 +123,7 @@ interface PatternRow {
 
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
-    dir: path.resolve(__dirname, '../data/data/sweep-results'),
+    dir: path.resolve(__dirname, '../data/sweep-results'),
     minWinRate: 65,
     probeMinTrades: 4,
     probeMaxTrades: 11,
@@ -253,10 +253,10 @@ function printHelp(): void {
     'Usage:',
     '  npm run sweep-candidates',
     '  npm run sweep-candidates -- rsi2026-02-22-1min.csv',
-    '  npm run sweep-candidates -- --file data/data/sweep-results/rsi2026-02-22-1min.csv',
+    '  npm run sweep-candidates -- --file data/sweep-results/rsi2026-02-22-1min.csv',
     '',
     'Optional flags:',
-    '  --dir PATH                Sweep directory (default: data/data/sweep-results)',
+    '  --dir PATH                Sweep directory (default: data/sweep-results)',
     '  --min-win-rate N          Minimum raw win rate filter (default: 65)',
     '  --probe-min-trades N      Probe bucket min trades (default: 4)',
     '  --probe-max-trades N      Probe bucket max trades (default: 11)',

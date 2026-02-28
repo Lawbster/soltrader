@@ -6,31 +6,43 @@
       "tier": "core",
       "maxPositionUsdc": 15,
       "enabled": true,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
-          "enabled": true,
-          "templateId": "rsi",
-          "params": { "entry": 35, "exit": 75 },
+          "enabled": false,
+          "templateId": "vwap-rsi-range-revert",
+          "params": {
+            "adxMax": 20,
+            "rsiEntry": 30
+          },
           "sl": -5,
-          "tp": 1,
-          "exitMode": "indicator"
+          "tp": 3,
+          "exitMode": "price"
         },
         "sideways": {
           "enabled": false,
-          "templateId": "rsi",
-          "params": { "entry": 35, "exit": 75 },
+          "templateId": "vwap-rsi-range-revert",
+          "params": {
+            "adxMax": 20,
+            "rsiEntry": 30
+          },
           "sl": -5,
-          "tp": 1,
+          "tp": 3,
           "exitMode": "price"
         },
         "downtrend": {
-          "enabled": false,
-          "templateId": "rsi",
-          "params": { "entry": 35, "exit": 75 },
+          "enabled": true,
+          "templateId": "vwap-rsi-range-revert",
+          "params": {
+            "adxMax": 20,
+            "rsiEntry": 30
+          },
           "sl": -5,
-          "tp": 1,
-          "exitMode": "price"
+          "tp": 3,
+          "exitMode": "indicator"
         }
       }
     },
@@ -39,31 +51,46 @@
       "tier": "probe",
       "maxPositionUsdc": 12,
       "enabled": true,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
           "enabled": false,
           "templateId": "rsi-session-gate",
-          "params": { "entry": 25, "exit": 70, "session": 0 },
+          "params": {
+            "entry": 25,
+            "exit": 70,
+            "session": 0
+          },
           "sl": -5,
           "tp": 1,
           "exitMode": "price"
         },
         "sideways": {
-          "enabled": true,
-          "templateId": "rsi-session-gate",
-          "params": { "entry": 25, "exit": 70, "session": 0 },
-          "sl": -5,
-          "tp": 1,
-          "exitMode": "indicator"
-        },
-        "downtrend": {
           "enabled": false,
           "templateId": "rsi-session-gate",
-          "params": { "entry": 25, "exit": 70, "session": 0 },
+          "params": {
+            "entry": 25,
+            "exit": 70,
+            "session": 0
+          },
           "sl": -5,
           "tp": 1,
           "exitMode": "price"
+        },
+        "downtrend": {
+          "enabled": true,
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 25,
+            "exit": 70,
+            "session": 0
+          },
+          "sl": -5,
+          "tp": 1,
+          "exitMode": "indicator"
         }
       }
     },
@@ -72,31 +99,46 @@
       "tier": "probe",
       "maxPositionUsdc": 12,
       "enabled": true,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
           "enabled": false,
-          "templateId": "rsi",
-          "params": { "entry": 20, "exit": 85 },
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 75,
+            "session": 16
+          },
           "sl": -5,
           "tp": 1,
           "exitMode": "price"
         },
         "sideways": {
-          "enabled": true,
-          "templateId": "rsi",
-          "params": { "entry": 20, "exit": 85 },
-          "sl": -5,
-          "tp": 1,
-          "exitMode": "indicator"
-        },
-        "downtrend": {
           "enabled": false,
-          "templateId": "rsi",
-          "params": { "entry": 20, "exit": 85 },
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 75,
+            "session": 16
+          },
           "sl": -5,
           "tp": 1,
           "exitMode": "price"
+        },
+        "downtrend": {
+          "enabled": true,
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 75,
+            "session": 16
+          },
+          "sl": -5,
+          "tp": 1,
+          "exitMode": "indicator"
         }
       }
     },
@@ -105,23 +147,83 @@
       "tier": "probe",
       "maxPositionUsdc": 10,
       "enabled": false,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
-        "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 80, "sl": -3, "tp": 2 } },
-        "sideways":  { "enabled": false, "params": { "entry": 20, "exit": 80, "sl": -3, "tp": 2 } },
-        "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 80, "sl": -3, "tp": 2 } }
+        "uptrend": {
+          "enabled": false,
+          "params": {
+            "entry": 20,
+            "exit": 80,
+            "sl": -3,
+            "tp": 2
+          }
+        },
+        "sideways": {
+          "enabled": false,
+          "params": {
+            "entry": 20,
+            "exit": 80,
+            "sl": -3,
+            "tp": 2
+          }
+        },
+        "downtrend": {
+          "enabled": false,
+          "params": {
+            "entry": 20,
+            "exit": 80,
+            "sl": -3,
+            "tp": 2
+          }
+        }
       }
     },
     "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij": {
       "label": "cbBTC",
       "tier": "probe",
       "maxPositionUsdc": 7.5,
-      "enabled": false,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "enabled": true,
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
-        "uptrend":   { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -1, "tp": 1 } },
-        "sideways":  { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -1, "tp": 1 } },
-        "downtrend": { "enabled": false, "params": { "entry": 20, "exit": 85, "sl": -1, "tp": 1 } }
+        "uptrend": {
+          "enabled": false,
+          "templateId": "rsi",
+          "params": {
+            "entry": 25,
+            "exit": 85
+          },
+          "sl": -3,
+          "tp": 1,
+          "exitMode": "price"
+        },
+        "sideways": {
+          "enabled": true,
+          "templateId": "rsi",
+          "params": {
+            "entry": 25,
+            "exit": 85
+          },
+          "sl": -3,
+          "tp": 1,
+          "exitMode": "indicator"
+        },
+        "downtrend": {
+          "enabled": false,
+          "templateId": "rsi",
+          "params": {
+            "entry": 25,
+            "exit": 85
+          },
+          "sl": -3,
+          "tp": 1,
+          "exitMode": "price"
+        }
       }
     },
     "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": {
@@ -129,12 +231,18 @@
       "tier": "probe",
       "maxPositionUsdc": 7.5,
       "enabled": false,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
           "enabled": false,
           "templateId": "rsi",
-          "params": { "entry": 20, "exit": 75 },
+          "params": {
+            "entry": 20,
+            "exit": 75
+          },
           "sl": -2,
           "tp": 3,
           "exitMode": "price"
@@ -142,7 +250,10 @@
         "sideways": {
           "enabled": false,
           "templateId": "rsi",
-          "params": { "entry": 20, "exit": 75 },
+          "params": {
+            "entry": 20,
+            "exit": 75
+          },
           "sl": -2,
           "tp": 3,
           "exitMode": "price"
@@ -150,7 +261,10 @@
         "downtrend": {
           "enabled": false,
           "templateId": "rsi",
-          "params": { "entry": 20, "exit": 75 },
+          "params": {
+            "entry": 20,
+            "exit": 75
+          },
           "sl": -2,
           "tp": 3,
           "exitMode": "price"
@@ -161,13 +275,19 @@
       "label": "TRUMP",
       "tier": "probe",
       "maxPositionUsdc": 5,
-      "enabled": true,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "enabled": false,
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
           "enabled": false,
           "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 25, "rsiEntry": 30 },
+          "params": {
+            "adxMax": 25,
+            "rsiEntry": 30
+          },
           "sl": -5,
           "tp": 2,
           "exitMode": "price"
@@ -175,7 +295,10 @@
         "sideways": {
           "enabled": true,
           "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 25, "rsiEntry": 30 },
+          "params": {
+            "adxMax": 25,
+            "rsiEntry": 30
+          },
           "sl": -5,
           "tp": 2,
           "exitMode": "indicator"
@@ -183,7 +306,10 @@
         "downtrend": {
           "enabled": false,
           "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 25, "rsiEntry": 30 },
+          "params": {
+            "adxMax": 25,
+            "rsiEntry": 30
+          },
           "sl": -5,
           "tp": 2,
           "exitMode": "price"
@@ -195,31 +321,46 @@
       "tier": "probe",
       "maxPositionUsdc": 5,
       "enabled": true,
-      "indicator": { "kind": "rsi", "rsiPeriod": 14 },
+      "indicator": {
+        "kind": "rsi",
+        "rsiPeriod": 14
+      },
       "regimes": {
         "uptrend": {
           "enabled": false,
-          "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 20, "rsiEntry": 30 },
-          "sl": -3,
-          "tp": 4,
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 85,
+            "session": 8
+          },
+          "sl": -5,
+          "tp": 1,
           "exitMode": "price"
         },
         "sideways": {
-          "enabled": true,
-          "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 20, "rsiEntry": 30 },
-          "sl": -3,
-          "tp": 4,
-          "exitMode": "indicator"
+          "enabled": false,
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 85,
+            "session": 8
+          },
+          "sl": -5,
+          "tp": 1,
+          "exitMode": "price"
         },
         "downtrend": {
-          "enabled": false,
-          "templateId": "vwap-rsi-range-revert",
-          "params": { "adxMax": 20, "rsiEntry": 30 },
-          "sl": -3,
-          "tp": 4,
-          "exitMode": "price"
+          "enabled": true,
+          "templateId": "rsi-session-gate",
+          "params": {
+            "entry": 20,
+            "exit": 85,
+            "session": 8
+          },
+          "sl": -5,
+          "tp": 1,
+          "exitMode": "indicator"
         }
       }
     }

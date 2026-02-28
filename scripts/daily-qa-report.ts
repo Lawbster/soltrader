@@ -165,7 +165,7 @@ const DEFAULT_LOOKBACK_DAYS = 2;
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     minDate: DEFAULT_MIN_DATE,
-    dataRoot: path.resolve(__dirname, '../data/data'),
+    dataRoot: path.resolve(__dirname, '../data'),
     watchlistPath: path.resolve(__dirname, '../config/watchlist.json'),
   };
 
@@ -248,14 +248,14 @@ function printHelp(): void {
     '  npm run daily-qa-report',
     '  npm run daily-qa-report -- --date 2026-02-19',
     '  npm run daily-qa-report -- --from 2026-02-18 --to 2026-02-19',
-    '  npm run daily-qa-report -- --out data/data/qa/qa-2026-02-19.md --json-out data/data/qa/qa-2026-02-19.json',
+    '  npm run daily-qa-report -- --out data/qa/qa-2026-02-19.md --json-out data/qa/qa-2026-02-19.json',
     '',
     'Flags:',
     '  --date YYYY-MM-DD       Analyze one date',
     '  --from YYYY-MM-DD       Start date (inclusive)',
     '  --to YYYY-MM-DD         End date (inclusive)',
     '  --min-date YYYY-MM-DD   Ignore anything older (default: 2026-02-18)',
-    '  --data-root PATH        Data root (default: sol-trader/data/data)',
+    '  --data-root PATH        Data root (default: sol-trader/data)',
     '  --watchlist PATH        Watchlist path (default: sol-trader/config/watchlist.json)',
     '  --out PATH              Optional markdown output path',
     '  --json-out PATH         Optional JSON output path',
@@ -301,12 +301,30 @@ function listDirs(p: string): string[] {
     .map(d => d.name);
 }
 
+function tradeDirCandidates(dataRoot: string): string[] {
+  return [
+    path.join(dataRoot, 'data', 'trades'),
+    path.join(dataRoot, 'trades'),
+  ];
+}
+
+function resolveTradeFilePath(dataRoot: string, date: string): string {
+  for (const dir of tradeDirCandidates(dataRoot)) {
+    const file = path.join(dir, `${date}.jsonl`);
+    if (pathExists(file)) return file;
+  }
+  // Keep deterministic fallback path for "missing file" reporting.
+  return path.join(dataRoot, 'data', 'trades', `${date}.jsonl`);
+}
+
 function collectAvailableDates(dataRoot: string): string[] {
   const dates = new Set<string>();
 
   collectDatesFromFlatDir(path.join(dataRoot, 'signals'), /\.jsonl$/, dates);
   collectDatesFromFlatDir(path.join(dataRoot, 'executions'), /\.jsonl$/, dates);
-  collectDatesFromFlatDir(path.join(dataRoot, 'data', 'trades'), /\.jsonl$/, dates);
+  for (const dir of tradeDirCandidates(dataRoot)) {
+    collectDatesFromFlatDir(dir, /\.jsonl$/, dates);
+  }
   collectDatesFromNestedDirs(path.join(dataRoot, 'prices'), /\.jsonl$/, dates);
   collectDatesFromNestedDirs(path.join(dataRoot, 'candles'), /\.csv$/, dates);
 
@@ -1120,7 +1138,7 @@ function main(): void {
     const candles = analyzeCandleDay(args.dataRoot, date, expectedMints, labelByMint);
     const signals = analyzeSignals(path.join(args.dataRoot, 'signals', `${date}.jsonl`));
     const executions = analyzeExecutions(path.join(args.dataRoot, 'executions', `${date}.jsonl`));
-    const trades = analyzeTrades(path.join(args.dataRoot, 'data', 'trades', `${date}.jsonl`));
+    const trades = analyzeTrades(resolveTradeFilePath(args.dataRoot, date));
 
     const base = { date, prices, candles, signals, executions, trades };
     const scored = evaluateDay(base);

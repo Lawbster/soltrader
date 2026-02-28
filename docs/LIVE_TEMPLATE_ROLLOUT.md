@@ -181,10 +181,10 @@ After each sweep run (owned by Emil):
 npm run sweep -- --cost empirical --from 2026-02-18 --exit-parity both
 
 # 2. Generate ranked candidates
-npm run sweep-candidates -- --file data/data/sweep-results/YYYY-MM-DD-1min.csv --top 300 --top-per-token 75
+npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-1min.csv --top 300 --top-per-token 75
 
 # 3. Generate live-map patch proposal
-npm run build-live-map -- --file data/data/sweep-results/candidates/YYYY-MM-DD-1min.core-ranked.csv
+npm run build-live-map -- --file data/sweep-results/candidates/YYYY-MM-DD-1min.core-ranked.csv
 
 # 4. Review patch output, copy promoted regime blocks into live-strategy-map.v1.json
 # 5. Start with shadow mode, then canary, then full rollout

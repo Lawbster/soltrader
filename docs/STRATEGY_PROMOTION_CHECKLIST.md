@@ -47,7 +47,7 @@ Warn-level (investigate before promote):
 - Execution fail rate > 10%
 
 Required artifact:
-- Save markdown + json QA report under `data/data/qa/`
+- Save markdown + json QA report under `data/qa/`
 
 ## 2) Anti-Leakage and Stability Gate (Required)
 
@@ -158,4 +158,3 @@ Weekly review:
 - Forward paper gate: PASS / FAIL
 - Rollout approved: YES / NO
 - Notes:
-

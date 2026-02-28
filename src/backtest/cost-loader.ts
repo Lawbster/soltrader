@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { CostConfig } from './types';
 
-const DATA_ROOT = path.resolve(__dirname, '../../data/data');
+const DATA_ROOT = path.resolve(__dirname, '../../data');
 const EXECUTIONS_DIR = path.join(DATA_ROOT, 'executions');
 const MIN_EMPIRICAL_TRADES = 30;
 const COMMISSION_PER_SIDE_PCT = 0.25; // Jupiter protocol fee (actual base fee for liquid pools)

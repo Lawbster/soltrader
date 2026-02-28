@@ -41,7 +41,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    dataRoot: path.resolve(__dirname, '../data/data'),
+    dataRoot: path.resolve(__dirname, '../data'),
     last: 50,
     top: 8,
   };
@@ -122,7 +122,7 @@ function printHelp(): void {
     '  npm run slippage-report -- --from 2026-02-24 --to 2026-02-25',
     '',
     'Flags:',
-    '  --data-root PATH     Data root (default: sol-trader/data/data)',
+    '  --data-root PATH     Data root (default: sol-trader/data)',
     '  --date YYYY-MM-DD    Single UTC date',
     '  --from YYYY-MM-DD    UTC start date (inclusive)',
     '  --to YYYY-MM-DD      UTC end date (inclusive)',

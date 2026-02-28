@@ -6,7 +6,7 @@
  * human review before being applied to config/live-strategy-map.v1.json.
  *
  * Usage:
- *   npm run build-live-map -- --file data/data/sweep-results/candidates/2026-02-25-1min.core-ranked.csv
+ *   npm run build-live-map -- --file data/sweep-results/candidates/2026-02-25-1min.core-ranked.csv
  *   npm run build-live-map -- --file <path> [--min-trades 12] [--min-awr 65] [--min-pf 1.2]
  *                                            [--min-parity-delta -10] [--max-hold 600]
  *
