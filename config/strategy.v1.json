@@ -20,8 +20,8 @@
     "minScoreToTrade": 0,
     "indicators": {
       "enabled": true,
-      "candleIntervalMinutes": 1,
-      "candleLookbackMinutes": 120,
+      "candleIntervalMinutes": 5,
+      "candleLookbackMinutes": 720,
       "rsi": {
         "enabled": false,
         "period": 3,
@@ -47,8 +47,8 @@
   },
   "position": {
     "riskPerTradePct": 0.75,
-    "maxPositionUsdc": 15,
-    "maxPositionEquityPct": 8,
+    "maxPositionUsdc": 0,
+    "maxPositionEquityPct": 25,
     "initialStopPct": 0.8,
     "liquidityCapPct": 0.05,
     "maxEntryImpactPct": 0.10,
@@ -67,7 +67,7 @@
   },
   "portfolio": {
     "maxConcurrentPositions": 6,
-    "maxOpenExposurePct": 50,
+    "maxOpenExposurePct": 90,
     "dailyLossLimitPct": -8,
     "consecutiveLossLimit": 99,
     "consecutiveLossCooldownMinutes": 60,

@@ -41,8 +41,10 @@ const trendFallbackCache = new Map<string, TrendFallback | null>();
 
 interface CliArgs {
   file?: string;
+  files?: string[];
   dir: string;
   minWinRate: number;
+  minPnlPct: number;
   probeMinTrades: number;
   probeMaxTrades: number;
   coreMinTrades: number;
@@ -55,6 +57,8 @@ interface CliArgs {
   outDir?: string;
   writeCsv: boolean;
   rankExitParity: 'indicator' | 'price' | 'both';
+  requireTimeframes: number[];
+  timeframeSupportMin: number;
 }
 
 interface SweepRow {
@@ -101,6 +105,14 @@ interface CandidateRow extends SweepRow {
   alphaWindowPct: number | null;
   alphaBlendPct: number | null;
   trendAdjustedScore: number;
+  timeframeSupportCount: number;
+  timeframeSupport: string;
+  timeframeMeanPnlPct: number;
+  timeframeStdPnlPct: number;
+  timeframeMinPnlPct: number;
+  timeframeMaxPnlPct: number;
+  hasRequiredTimeframes: boolean;
+  mtfScore: number;
   parityDelta: number | null; // price.pnlPct - indicator.pnlPct; null if not paired
 }
 
@@ -117,6 +129,8 @@ interface PatternRow {
   avgHoldMinutes: number;
   avgExpectancyPct: number;
   avgTrendAdjustedScore: number;
+  avgMtfScore: number;
+  avgTimeframeSupportCount: number;
   avgAlphaWindowPct: number | null;
   avgAlphaBlendPct: number | null;
 }
@@ -125,6 +139,7 @@ function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     dir: path.resolve(__dirname, '../data/sweep-results'),
     minWinRate: 65,
+    minPnlPct: 0,
     probeMinTrades: 4,
     probeMaxTrades: 11,
     coreMinTrades: 12,
@@ -136,6 +151,8 @@ function parseArgs(argv: string[]): CliArgs {
     topPerToken: 5,
     writeCsv: true,
     rankExitParity: 'indicator',
+    requireTimeframes: [],
+    timeframeSupportMin: 1,
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -155,6 +172,16 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === '--files') {
+      const csv = requireValue(arg, next);
+      args.files = csv
+        .split(',')
+        .map(v => v.trim())
+        .filter(Boolean)
+        .map(v => path.resolve(v));
+      i++;
+      continue;
+    }
     if (arg === '--dir') {
       args.dir = path.resolve(requireValue(arg, next));
       i++;
@@ -162,6 +189,11 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === '--min-win-rate') {
       args.minWinRate = parseNumber(arg, next);
+      i++;
+      continue;
+    }
+    if (arg === '--min-pnl') {
+      args.minPnlPct = parseNumber(arg, next);
       i++;
       continue;
     }
@@ -228,6 +260,22 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === '--require-timeframes') {
+      const csv = requireValue(arg, next);
+      args.requireTimeframes = csv
+        .split(',')
+        .map(v => Number(v.trim()))
+        .filter(v => Number.isFinite(v) && v >= 1)
+        .map(v => Math.round(v));
+      args.requireTimeframes = Array.from(new Set(args.requireTimeframes)).sort((a, b) => a - b);
+      i++;
+      continue;
+    }
+    if (arg === '--timeframe-support-min') {
+      args.timeframeSupportMin = Math.max(1, Math.round(parseNumber(arg, next)));
+      i++;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -244,6 +292,15 @@ function parseArgs(argv: string[]): CliArgs {
   if (args.topPerToken <= 0) {
     throw new Error('--top-per-token must be > 0');
   }
+  if (args.files && args.files.length === 0) {
+    throw new Error('--files provided but empty');
+  }
+  if (args.file && args.files && args.files.length > 0) {
+    throw new Error('Use either --file or --files, not both');
+  }
+  if (args.requireTimeframes.length > 0 && args.timeframeSupportMin < args.requireTimeframes.length) {
+    args.timeframeSupportMin = args.requireTimeframes.length;
+  }
 
   return args;
 }
@@ -254,10 +311,14 @@ function printHelp(): void {
     '  npm run sweep-candidates',
     '  npm run sweep-candidates -- rsi2026-02-22-1min.csv',
     '  npm run sweep-candidates -- --file data/sweep-results/rsi2026-02-22-1min.csv',
+    '  npm run sweep-candidates -- --files data/sweep-results/2026-02-28-1min.csv,data/sweep-results/2026-02-28-5min.csv,data/sweep-results/2026-02-28-15min.csv',
     '',
     'Optional flags:',
+    '  --file PATH               One sweep CSV file (default: newest in --dir)',
+    '  --files A,B,C             Multiple sweep CSV files (comma-separated) for MTF ranking',
     '  --dir PATH                Sweep directory (default: data/sweep-results)',
     '  --min-win-rate N          Minimum raw win rate filter (default: 65)',
+    '  --min-pnl N               Global minimum pnl % filter for all buckets (default: 0)',
     '  --probe-min-trades N      Probe bucket min trades (default: 4)',
     '  --probe-max-trades N      Probe bucket max trades (default: 11)',
     '  --core-min-trades N       Core bucket min trades (default: 12)',
@@ -273,6 +334,8 @@ function printHelp(): void {
     '                            indicator: rank only indicator rows (default when parity data present)',
     '                            price: rank only price rows (use when deploying exitMode=price)',
     '                            both: rank all rows (note: same strategy may appear twice)',
+    '  --require-timeframes CSV  Require candidates to exist on all listed TFs, e.g. 1,5,15',
+    '  --timeframe-support-min N Minimum TF support count for candidate rows (default: 1)',
   ];
   console.log(help.join('\n'));
 }
@@ -340,28 +403,71 @@ function weightedAverageReturns(
   return parts.reduce((s, p) => s + p.v * p.w, 0) / wSum;
 }
 
-function resolveInputFile(args: CliArgs): string {
-  if (args.file) {
-    if (!fs.existsSync(args.file)) {
-      throw new Error(`Sweep file not found: ${args.file}`);
-    }
-    return args.file;
+function findLatestCsvInDir(dir: string): string {
+  if (!fs.existsSync(dir)) {
+    throw new Error(`Sweep directory not found: ${dir}`);
   }
-
-  if (!fs.existsSync(args.dir)) {
-    throw new Error(`Sweep directory not found: ${args.dir}`);
-  }
-
-  const files = fs.readdirSync(args.dir, { withFileTypes: true })
+  const files = fs.readdirSync(dir, { withFileTypes: true })
     .filter(d => d.isFile() && d.name.toLowerCase().endsWith('.csv'))
-    .map(d => path.join(args.dir, d.name))
+    .map(d => path.join(dir, d.name))
     .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-
   if (files.length === 0) {
-    throw new Error(`No CSV files found in ${args.dir}`);
+    throw new Error(`No CSV files found in ${dir}`);
+  }
+  return files[0];
+}
+
+function expandRequiredTimeframes(baseFile: string, requiredTimeframes: number[]): string[] {
+  if (requiredTimeframes.length === 0) return [baseFile];
+  const parsed = path.parse(baseFile);
+  const m = parsed.name.match(/^(.*)-(\d+)min$/);
+  if (!m) {
+    throw new Error(`Cannot infer timeframe variants from file name: ${baseFile}. Expected *-<N>min.csv`);
+  }
+  const prefix = m[1];
+  const files = requiredTimeframes.map(tf => path.join(parsed.dir, `${prefix}-${tf}min.csv`));
+  const missing = files.filter(f => !fs.existsSync(f));
+  if (missing.length > 0) {
+    throw new Error(`Missing required timeframe file(s): ${missing.join(', ')}`);
+  }
+  return files;
+}
+
+function dedupePaths(paths: string[]): string[] {
+  return Array.from(new Set(paths.map(p => path.resolve(p))));
+}
+
+function resolveInputFiles(args: CliArgs): string[] {
+  if (args.files && args.files.length > 0) {
+    const files = dedupePaths(args.files);
+    const missing = files.filter(f => !fs.existsSync(f));
+    if (missing.length > 0) {
+      throw new Error(`Sweep file(s) not found: ${missing.join(', ')}`);
+    }
+    return files;
   }
 
-  return files[0];
+  const singleBase = args.file
+    ? path.resolve(args.file)
+    : findLatestCsvInDir(args.dir);
+
+  if (!fs.existsSync(singleBase)) {
+    throw new Error(`Sweep file not found: ${singleBase}`);
+  }
+
+  return dedupePaths(expandRequiredTimeframes(singleBase, args.requireTimeframes));
+}
+
+function deriveOutputBase(inputFiles: string[]): string {
+  if (inputFiles.length === 1) return path.basename(inputFiles[0], '.csv');
+  const baseNames = inputFiles.map(f => path.basename(f, '.csv'));
+  const dateMatches = baseNames
+    .map(n => n.match(/^(\d{4}-\d{2}-\d{2})-/))
+    .filter((m): m is RegExpMatchArray => m !== null)
+    .map(m => m[1]);
+  const uniqueDates = Array.from(new Set(dateMatches));
+  if (uniqueDates.length === 1) return `${uniqueDates[0]}-mtf`;
+  return `mtf-${new Date().toISOString().slice(0, 10)}`;
 }
 
 function parseCsvLine(line: string): string[] {
@@ -482,7 +588,7 @@ function buildParityDeltaMap(rows: SweepRow[]): Map<string, number | null> {
   const priceMap = new Map<string, number>();
   for (const row of rows) {
     if (row.exitParity === null) continue;
-    const key = `${row.template}||${row.token}||${row.params}`;
+    const key = `${row.template}||${row.token}||${row.timeframe}||${row.params}`;
     if (row.exitParity === 'indicator') indicatorMap.set(key, row.pnlPct);
     else if (row.exitParity === 'price') priceMap.set(key, row.pnlPct);
   }
@@ -541,6 +647,68 @@ function computeTrendAdjustedScore(
   return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend) + parityAdj;
 }
 
+interface TimeframeStats {
+  supportCount: number;
+  support: string;
+  meanPnlPct: number;
+  stdPnlPct: number;
+  minPnlPct: number;
+  maxPnlPct: number;
+  hasRequiredTimeframes: boolean;
+}
+
+function candidateSupportKey(row: SweepRow): string {
+  return `${row.template}||${row.token}||${row.params}||${row.exitParity ?? 'none'}`;
+}
+
+function stdDev(values: number[]): number {
+  if (values.length <= 1) return 0;
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + Math.pow(v - mean, 2), 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function computeMtfStats(rows: SweepRow[], requiredTimeframes: number[]): Map<string, TimeframeStats> {
+  const groups = new Map<string, SweepRow[]>();
+  for (const row of rows) {
+    const key = candidateSupportKey(row);
+    const arr = groups.get(key);
+    if (arr) arr.push(row);
+    else groups.set(key, [row]);
+  }
+
+  const out = new Map<string, TimeframeStats>();
+  for (const [key, group] of groups) {
+    const timeframes = Array.from(new Set(group.map(g => g.timeframe))).sort((a, b) => a - b);
+    const pnls = group.map(g => g.pnlPct);
+    const hasRequired = requiredTimeframes.length === 0
+      ? true
+      : requiredTimeframes.every(tf => timeframes.includes(tf));
+    out.set(key, {
+      supportCount: timeframes.length,
+      support: timeframes.join('|'),
+      meanPnlPct: average(pnls) ?? 0,
+      stdPnlPct: stdDev(pnls),
+      minPnlPct: Math.min(...pnls),
+      maxPnlPct: Math.max(...pnls),
+      hasRequiredTimeframes: hasRequired,
+    });
+  }
+  return out;
+}
+
+function computeMtfScore(
+  trendAdjustedScore: number,
+  supportCount: number,
+  stdPnlPct: number,
+  hasRequiredTimeframes: boolean,
+): number {
+  const supportBonus = (supportCount - 1) * 1.5; // +1.5 for each extra timeframe support
+  const consistencyPenalty = clamp(stdPnlPct, 0, 30) * 0.08; // penalize unstable pnl across TFs
+  const requiredBonus = hasRequiredTimeframes ? 0.5 : -0.5;
+  return trendAdjustedScore + supportBonus - consistencyPenalty + requiredBonus;
+}
+
 function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, parityDelta: number | null = null): CandidateRow {
   const wins = (row.winRate / 100) * row.trades;
   const losses = Math.max(row.trades - wins, 0);
@@ -587,6 +755,14 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, pari
     alphaWindowPct,
     alphaBlendPct,
     trendAdjustedScore,
+    timeframeSupportCount: 1,
+    timeframeSupport: String(row.timeframe),
+    timeframeMeanPnlPct: row.pnlPct,
+    timeframeStdPnlPct: 0,
+    timeframeMinPnlPct: row.pnlPct,
+    timeframeMaxPnlPct: row.pnlPct,
+    hasRequiredTimeframes: true,
+    mtfScore: trendAdjustedScore,
     parityDelta,
   };
 }
@@ -639,8 +815,10 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
 
   const ranked = capPerToken(
     rows.slice().sort((a, b) => {
-      const diff = b.trendAdjustedScore - a.trendAdjustedScore;
+      const diff = b.mtfScore - a.mtfScore;
       if (Math.abs(diff) > 1e-9) return diff;
+      const trendDiff = b.trendAdjustedScore - a.trendAdjustedScore;
+      if (Math.abs(trendDiff) > 1e-9) return trendDiff;
       const combinedDiff = b.combinedStat - a.combinedStat;
       if (Math.abs(combinedDiff) > 1e-9) return combinedDiff;
       return b.pnlPct - a.pnlPct;
@@ -662,6 +840,7 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
     rank: i + 1,
     token: r.token,
     template: r.template,
+    barTf: `${r.timeframe}m`,
     trades: r.trades,
     winRate: `${r.winRate.toFixed(2)}%`,
     adjWR: `${(r.adjustedWinRate * 100).toFixed(2)}%`,
@@ -670,7 +849,8 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
     holdMin: r.avgHoldMinutes.toFixed(1),
     regime: r.trendRegime,
     alphaW: r.alphaWindowPct === null ? 'n/a' : `${r.alphaWindowPct.toFixed(2)}%`,
-    score: r.trendAdjustedScore.toFixed(4),
+    tfSupport: r.timeframeSupport,
+    score: r.mtfScore.toFixed(4),
     params: r.params,
   }));
 
@@ -720,6 +900,8 @@ function buildPatterns(rows: CandidateRow[]): PatternRow[] {
       avgHoldMinutes: average(group.map(g => g.avgHoldMinutes)) ?? 0,
       avgExpectancyPct: average(group.map(g => g.expectancyPct)) ?? 0,
       avgTrendAdjustedScore: average(group.map(g => g.trendAdjustedScore)) ?? 0,
+      avgMtfScore: average(group.map(g => g.mtfScore)) ?? 0,
+      avgTimeframeSupportCount: average(group.map(g => g.timeframeSupportCount)) ?? 0,
       avgAlphaWindowPct: average(group.map(g => g.alphaWindowPct).filter((v): v is number => v !== null)),
       avgAlphaBlendPct: average(group.map(g => g.alphaBlendPct).filter((v): v is number => v !== null)),
     });
@@ -737,6 +919,9 @@ function printPatternTable(title: string, patterns: PatternRow[], top: number): 
   const ranked = patterns
     .slice()
     .sort((a, b) => {
+      if (Math.abs(b.avgMtfScore - a.avgMtfScore) > 1e-9) {
+        return b.avgMtfScore - a.avgMtfScore;
+      }
       if (Math.abs(b.avgTrendAdjustedScore - a.avgTrendAdjustedScore) > 1e-9) {
         return b.avgTrendAdjustedScore - a.avgTrendAdjustedScore;
       }
@@ -757,6 +942,8 @@ function printPatternTable(title: string, patterns: PatternRow[], top: number): 
       avgPF: p.avgProfitFactor === null ? 'n/a' : p.avgProfitFactor.toFixed(3),
       avgTrades: p.avgTrades.toFixed(1),
       avgHold: p.avgHoldMinutes.toFixed(1),
+      avgTfSupport: p.avgTimeframeSupportCount.toFixed(2),
+      mtfScore: p.avgMtfScore.toFixed(3),
       trendScore: p.avgTrendAdjustedScore.toFixed(3),
       params: p.params,
     }));
@@ -791,11 +978,11 @@ function escapeCsvCell(value: unknown): string {
 
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const inputFile = resolveInputFile(args);
-  const rows = parseSweepCsv(inputFile);
+  const inputFiles = resolveInputFiles(args);
+  const rows = inputFiles.flatMap(parseSweepCsv);
 
   if (rows.length === 0) {
-    throw new Error(`No valid rows parsed from ${inputFile}`);
+    throw new Error(`No valid rows parsed from ${inputFiles.join(', ')}`);
   }
 
   const parityDeltaMap = buildParityDeltaMap(rows);
@@ -818,12 +1005,39 @@ function main(): void {
     throw new Error(`No rows match --rank-exit-parity=${args.rankExitParity}. Check that the sweep CSV contains the expected exitParity values.`);
   }
 
-  const filtered = rankingRows
+  const baseCandidates = rankingRows
     .filter(r => r.winRate >= args.minWinRate)
+    .filter(r => r.pnlPct >= args.minPnlPct)
     .map(r => {
-      const key = `${r.template}||${r.token}||${r.params}`;
+      const key = `${r.template}||${r.token}||${r.timeframe}||${r.params}`;
       return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null);
     });
+
+  const mtfStats = computeMtfStats(
+    rankingRows
+      .filter(r => r.winRate >= args.minWinRate)
+      .filter(r => r.pnlPct >= args.minPnlPct),
+    args.requireTimeframes,
+  );
+
+  const filtered = baseCandidates
+    .map(r => {
+      const stats = mtfStats.get(candidateSupportKey(r));
+      if (!stats) return r;
+      return {
+        ...r,
+        timeframeSupportCount: stats.supportCount,
+        timeframeSupport: stats.support,
+        timeframeMeanPnlPct: stats.meanPnlPct,
+        timeframeStdPnlPct: stats.stdPnlPct,
+        timeframeMinPnlPct: stats.minPnlPct,
+        timeframeMaxPnlPct: stats.maxPnlPct,
+        hasRequiredTimeframes: stats.hasRequiredTimeframes,
+        mtfScore: computeMtfScore(r.trendAdjustedScore, stats.supportCount, stats.stdPnlPct, stats.hasRequiredTimeframes),
+      };
+    })
+    .filter(r => r.timeframeSupportCount >= args.timeframeSupportMin)
+    .filter(r => args.requireTimeframes.length === 0 || r.hasRequiredTimeframes);
 
   const probe = filtered.filter(r => r.trades >= args.probeMinTrades && r.trades <= args.probeMaxTrades);
   const core = filtered.filter(
@@ -836,9 +1050,18 @@ function main(): void {
   const probePatterns = buildPatterns(probe);
   const corePatterns = buildPatterns(core);
 
-  console.log(`Input: ${inputFile}`);
+  if (inputFiles.length === 1) {
+    console.log(`Input: ${inputFiles[0]}`);
+  } else {
+    console.log(`Input files (${inputFiles.length}):`);
+    for (const f of inputFiles) console.log(`  - ${f}`);
+  }
   console.log(`Rows parsed: ${rows.length}`);
-  console.log(`Rows after winRate >= ${args.minWinRate}%: ${filtered.length}`);
+  console.log(`Rows after winRate >= ${args.minWinRate}% and pnl >= ${args.minPnlPct}%: ${baseCandidates.length}`);
+  if (args.timeframeSupportMin > 1 || args.requireTimeframes.length > 0) {
+    const req = args.requireTimeframes.length > 0 ? args.requireTimeframes.join('|') : 'none';
+    console.log(`Rows after MTF filters (support>=${args.timeframeSupportMin}, required=${req}): ${filtered.length}`);
+  }
   console.log(`Probe bucket (${args.probeMinTrades}-${args.probeMaxTrades} trades): ${probe.length}`);
   console.log(`Core bucket (trades >= ${args.coreMinTrades}, pnl >= ${args.coreMinPnlPct}%, PF >= ${args.coreMinProfitFactor}): ${core.length}`);
 
@@ -885,8 +1108,8 @@ function main(): void {
 
   if (!args.writeCsv) return;
 
-  const srcBase = path.basename(inputFile, '.csv');
-  const outDir = args.outDir ?? path.join(path.dirname(inputFile), 'candidates');
+  const srcBase = deriveOutputBase(inputFiles);
+  const outDir = args.outDir ?? path.join(path.dirname(inputFiles[0]), 'candidates');
   fs.mkdirSync(outDir, { recursive: true });
 
   const probeOut = path.join(outDir, `${srcBase}.probe-ranked.csv`);
@@ -902,8 +1125,10 @@ function main(): void {
   const rankByTrendScore = (rows: CandidateRow[]): CandidateRow[] => rows
     .slice()
     .sort((a, b) => {
-      const diff = b.trendAdjustedScore - a.trendAdjustedScore;
+      const diff = b.mtfScore - a.mtfScore;
       if (Math.abs(diff) > 1e-9) return diff;
+      const trendDiff = b.trendAdjustedScore - a.trendAdjustedScore;
+      if (Math.abs(trendDiff) > 1e-9) return trendDiff;
       const combinedDiff = b.combinedStat - a.combinedStat;
       if (Math.abs(combinedDiff) > 1e-9) return combinedDiff;
       return b.pnlPct - a.pnlPct;
@@ -915,9 +1140,17 @@ function main(): void {
   ).map(r => ({
       token: r.token,
       template: r.template,
+      timeframe: r.timeframe,
       params: r.params,
       trendRegime: r.trendRegime,
       trendScore: formatOptionalNum(r.trendScore, 4),
+      timeframeSupport: r.timeframeSupport,
+      timeframeSupportCount: r.timeframeSupportCount,
+      hasRequiredTimeframes: r.hasRequiredTimeframes ? 'yes' : 'no',
+      timeframeMeanPnlPct: formatNum(r.timeframeMeanPnlPct, 4),
+      timeframeStdPnlPct: formatNum(r.timeframeStdPnlPct, 4),
+      timeframeMinPnlPct: formatNum(r.timeframeMinPnlPct, 4),
+      timeframeMaxPnlPct: formatNum(r.timeframeMaxPnlPct, 4),
       trades: r.trades,
       winRatePct: formatNum(r.winRate, 2),
       adjustedWinRatePct: formatNum(r.adjustedWinRate * 100, 2),
@@ -938,6 +1171,7 @@ function main(): void {
       scoreProbe: formatNum(r.scoreProbe, 6),
       combinedStat: formatNum(r.combinedStat, 6),
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
+      mtfScore: formatNum(r.mtfScore, 6),
       parityDelta: formatOptionalNum(r.parityDelta, 4),
     }));
 
@@ -947,9 +1181,17 @@ function main(): void {
   ).map(r => ({
       token: r.token,
       template: r.template,
+      timeframe: r.timeframe,
       params: r.params,
       trendRegime: r.trendRegime,
       trendScore: formatOptionalNum(r.trendScore, 4),
+      timeframeSupport: r.timeframeSupport,
+      timeframeSupportCount: r.timeframeSupportCount,
+      hasRequiredTimeframes: r.hasRequiredTimeframes ? 'yes' : 'no',
+      timeframeMeanPnlPct: formatNum(r.timeframeMeanPnlPct, 4),
+      timeframeStdPnlPct: formatNum(r.timeframeStdPnlPct, 4),
+      timeframeMinPnlPct: formatNum(r.timeframeMinPnlPct, 4),
+      timeframeMaxPnlPct: formatNum(r.timeframeMaxPnlPct, 4),
       trades: r.trades,
       winRatePct: formatNum(r.winRate, 2),
       adjustedWinRatePct: formatNum(r.adjustedWinRate * 100, 2),
@@ -970,6 +1212,7 @@ function main(): void {
       scoreCore: formatNum(r.scoreCore, 6),
       combinedStat: formatNum(r.combinedStat, 6),
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
+      mtfScore: formatNum(r.mtfScore, 6),
       parityDelta: formatOptionalNum(r.parityDelta, 4),
     }));
 
@@ -996,6 +1239,8 @@ function main(): void {
       avgExpectancyPct: formatNum(p.avgExpectancyPct, 4),
       avgAlphaWindowPct: formatOptionalNum(p.avgAlphaWindowPct, 4),
       avgAlphaBlendPct: formatOptionalNum(p.avgAlphaBlendPct, 4),
+      avgTimeframeSupportCount: formatNum(p.avgTimeframeSupportCount, 4),
+      avgMtfScore: formatNum(p.avgMtfScore, 6),
       avgTrendAdjustedScore: formatNum(p.avgTrendAdjustedScore, 6),
       bucket: probePatterns.includes(p) ? 'probe' : 'core',
     }));

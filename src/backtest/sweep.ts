@@ -6,6 +6,7 @@
  *   tsx src/backtest/sweep.ts crsi               # one template
  *   tsx src/backtest/sweep.ts crsi POPCAT        # one template x one token
  *   tsx src/backtest/sweep.ts crsi POPCAT 5      # one template x one token x 5-min bars
+ *   tsx src/backtest/sweep.ts --timeframe 15     # all templates x all tokens x 15-min bars
  */
 
 import fs from 'fs';
@@ -830,6 +831,7 @@ function main() {
   let toDate: string | undefined;
   let maxPositions = 2; // default: 2 concurrent positions per token
   let exitParity: 'indicator' | 'price' | 'both' = 'indicator';
+  let timeframeFlag: number | undefined;
   const positional: string[] = [];
 
   for (let i = 0; i < rawArgs.length; i++) {
@@ -838,12 +840,21 @@ function main() {
     else if (rawArgs[i] === '--to' && rawArgs[i + 1]) { toDate = rawArgs[++i]; }
     else if (rawArgs[i] === '--max-positions' && rawArgs[i + 1]) { maxPositions = parseInt(rawArgs[++i], 10); }
     else if (rawArgs[i] === '--exit-parity' && rawArgs[i + 1]) { exitParity = rawArgs[++i] as 'indicator' | 'price' | 'both'; }
+    else if (rawArgs[i] === '--timeframe' && rawArgs[i + 1]) { timeframeFlag = parseInt(rawArgs[++i], 10); }
     else { positional.push(rawArgs[i]); }
   }
 
   const templateFilter = positional[0] || null;
   const tokenFilter = positional[1] || null;
-  const timeframe = parseInt(positional[2] || '1', 10);
+  const timeframePositional = positional[2] ? parseInt(positional[2], 10) : undefined;
+  if (timeframeFlag !== undefined && timeframePositional !== undefined && timeframeFlag !== timeframePositional) {
+    console.warn(`[WARN] Both positional timeframe (${timeframePositional}) and --timeframe (${timeframeFlag}) were provided. Using --timeframe.`);
+  }
+  const timeframe = timeframeFlag ?? timeframePositional ?? 1;
+  if (!Number.isFinite(timeframe) || timeframe < 1) {
+    console.error(`Invalid timeframe: ${timeframe}. Use a positive integer (minutes).`);
+    process.exit(1);
+  }
 
   const selectedTemplates = templateFilter
     ? templates.filter(t => t.name === templateFilter)

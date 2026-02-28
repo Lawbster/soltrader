@@ -434,7 +434,7 @@ function tokenNameFromMint(mint) {
 function formatTradeRangeLabel() {
   const dateLabel = formatDateKey(selectedTradeDate);
   const tokenLabel = selectedTradeMint ? tokenNameFromMint(selectedTradeMint) : 'All tokens';
-  return dateLabel + ' · ' + tokenLabel;
+  return dateLabel + ' | ' + tokenLabel;
 }
 function normalizeTrades(trades) {
   if (!Array.isArray(trades)) return [];
@@ -605,16 +605,19 @@ function renderSignals(signals) {
     const indicatorLabel = s.indicatorKind === 'rsi' ? 'RSI(14)' : 'CRSI';
     const regimeColor = s.trendRegime === 'uptrend' ? '#3fb950' : s.trendRegime === 'downtrend' ? '#f85149' : s.trendRegime === 'sideways' ? '#d29922' : '#484f58';
     const regimeBadge = '<span style="margin-left:6px;font-size:0.6rem;padding:1px 5px;border-radius:3px;background:#0d1117;color:' + regimeColor + ';border:1px solid ' + regimeColor + '40;vertical-align:middle;">' + (s.trendRegime || '--') + '</span>';
-    const regimeScore = s.trendScore !== null ? '<div class="signal-row" style="margin-top:8px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Trend score</span><span style="color:' + regimeColor + ';">' + Number(s.trendScore).toFixed(1) + (s.ret24h !== null ? ' · 24h ' + (s.ret24h >= 0 ? '+' : '') + Number(s.ret24h).toFixed(1) + '%' : '') + (s.ret72h !== null ? ' · 72h ' + (s.ret72h >= 0 ? '+' : '') + Number(s.ret72h).toFixed(1) + '%' : '') + '</span></div>' : '';
+    const regimeScore = s.trendScore !== null ? '<div class="signal-row" style="margin-top:8px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Trend score</span><span style="color:' + regimeColor + ';">' + Number(s.trendScore).toFixed(1) + (s.ret24h !== null ? ' | 24h ' + (s.ret24h >= 0 ? '+' : '') + Number(s.ret24h).toFixed(1) + '%' : '') + (s.ret72h !== null ? ' | 72h ' + (s.ret72h >= 0 ? '+' : '') + Number(s.ret72h).toFixed(1) + '%' : '') + '</span></div>' : '';
     const isSelected = selectedMint ? s.mint === selectedMint : i === 0;
     const cardBorderColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#21262d';
     const statusText = !s.masterEnabled ? 'Master: disabled' : s.regimeActive ? (s.trendRegime || 'unknown') + ': active' : (s.trendRegime || 'unknown') + ': no strategy';
     const statusColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#6e7681';
-    const strategySummary = s.templateId ? (s.templateId + ' · ' + (s.exitMode || 'price')) : '--';
+    const strategySummary = s.templateId ? (s.templateId + ' | ' + (s.exitMode || 'price')) : '--';
     const paramsText = formatStrategyParams(s.strategyParams);
     const stopsText = (isFiniteNumber(s.sl) && isFiniteNumber(s.tp))
       ? ('SL ' + fmt(s.sl, 2) + '% / TP ' + fmt(s.tp, 2) + '%')
       : '--';
+    const maxSizeText = (isFiniteNumber(s.tokenMaxEquityPct))
+      ? (fmt(s.tokenMaxEquityPct, 2) + '% equity' + (isFiniteNumber(s.tokenMaxUsdc) ? (' (cap ' + fmt(s.tokenMaxUsdc, 2) + ' USDC)') : ''))
+      : (isFiniteNumber(s.tokenMaxUsdc) ? (fmt(s.tokenMaxUsdc, 2) + ' USDC') : '--');
     return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" style="border-color:' + cardBorderColor + ';" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
       '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + regimeBadge + '</div>' +
       '<div class="signal-mint">' +
@@ -630,7 +633,7 @@ function renderSignals(signals) {
       '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
         '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position</div>' +
         '<div class="signal-row"><span class="label">Pool liquidity</span><span>' + (s.liquidityUsd > 0 ? '$' + Number(s.liquidityUsd).toLocaleString('en-US', {maximumFractionDigits:0}) : '--') + '</span></div>' +
-        '<div class="signal-row"><span class="label">Max size</span><span class="blue">' + (s.tokenMaxUsdc !== undefined ? fmt(s.tokenMaxUsdc, 2) + ' USDC' : '--') + '</span></div>' +
+        '<div class="signal-row"><span class="label">Max size</span><span class="blue">' + maxSizeText + '</span></div>' +
         '<div class="signal-row"><span class="label">Last impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
         '<div class="signal-row" style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Status</span><span style="color:' + statusColor + ';font-size:0.75rem;">' + statusText + '</span></div>' +
         '<div class="signal-row"><span class="label">Live strategy</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + strategySummary + '</span></div>' +
@@ -763,19 +766,19 @@ function renderPortfolio(s) {
     {
       label: 'SOL (wallet)',
       value: fmt(wb.sol ?? 0, 3) + ' SOL',
-      sub: solPrice > 0 ? '≈ $' + fmt(solUsd, 2) : '--',
+      sub: solPrice > 0 ? '~ $' + fmt(solUsd, 2) : '--',
       cls: 'blue',
     },
     {
       label: 'Open Trades',
       value: s.openPositions.length,
-      sub: openNotional > 0 ? '≈ $' + fmt(openNotional, 2) + ' notional' : 'No open positions',
+      sub: openNotional > 0 ? '~ $' + fmt(openNotional, 2) + ' notional' : 'No open positions',
       cls: s.openPositions.length > 0 ? 'yellow' : '',
     },
     {
       label: 'Daily PnL',
       value: fmtPct(s.portfolio.dailyPnlPct),
-      sub: 'Total equity ≈ $' + fmt(totalEquity, 2),
+      sub: 'Total equity ~ $' + fmt(totalEquity, 2),
       cls: pnlColor(s.portfolio.dailyPnlPct),
     },
   ];
@@ -898,3 +901,4 @@ setInterval(fetchAll, 30000);
 </body>
 </html>`;
 }
+

@@ -119,6 +119,7 @@ function handleSignals(res: http.ServerResponse) {
     const indicatorsCfg = cfg.entry.indicators;
     const watchlist = loadWatchlist();
     const metrics = getAggregateMetrics();
+    const portfolio = getPortfolioState();
     const signals = watchlist.map((entry) => {
       const mint = entry.mint;
       const pricePoints = getPriceHistoryCount(mint);
@@ -170,9 +171,15 @@ function handleSignals(res: http.ServerResponse) {
       if (totalTrades < posCfg.sampleSizeGateMinTrades) {
         maxFromSampleGate = posCfg.sampleSizeGateMaxUsdc;
       }
-      const effectiveMaxUsdc = Math.min(
-        posCfg.maxPositionUsdc, maxFromLiquidity, maxFromSampleGate
+      const tokenCapUsdc = resolveTokenMaxPositionUsdc(
+        tokenStrategy,
+        portfolio.equityUsdc,
+        posCfg.maxPositionUsdc
       );
+      const effectiveMaxUsdc = Math.min(
+        tokenCapUsdc, maxFromLiquidity, maxFromSampleGate
+      );
+      const effectiveMaxUsdcSafe = Number.isFinite(effectiveMaxUsdc) ? effectiveMaxUsdc : 0;
 
       const lastImpact = getLastQuotedImpact();
       const quotedImpact = lastImpact?.mint === mint ? lastImpact.impact : undefined;
@@ -190,12 +197,13 @@ function handleSignals(res: http.ServerResponse) {
         ready: candleCount >= candlesNeeded,
         oversoldThreshold: tokenStrategy?.params.entry ?? indicatorsCfg?.connors?.oversold ?? 20,
         liquidityUsd,
-        effectiveMaxUsdc,
+        effectiveMaxUsdc: effectiveMaxUsdcSafe,
         maxEntryImpactPct: posCfg.maxEntryImpactPct,
         quotedImpact,
         totalTrades,
         sampleSizeGateMinTrades: posCfg.sampleSizeGateMinTrades,
-        tokenMaxUsdc: tokenStrategy?.maxPositionUsdc ?? posCfg.maxPositionUsdc,
+        tokenMaxUsdc: tokenStrategy?.maxPositionUsdc ?? null,
+        tokenMaxEquityPct: tokenStrategy?.maxPositionEquityPct ?? null,
         sl: tokenStrategy?.sl,
         tp: tokenStrategy?.tp,
         tier: tokenStrategy?.tier,
@@ -220,6 +228,25 @@ function handleSignals(res: http.ServerResponse) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to get signals' }));
   }
+}
+
+function resolveTokenMaxPositionUsdc(
+  tokenStrategy: ReturnType<typeof getLiveTokenStrategy>,
+  equityUsdc: number,
+  fallbackUsdc: number
+): number {
+  const fallbackCap = fallbackUsdc > 0 ? fallbackUsdc : Infinity;
+  if (!tokenStrategy) return fallbackCap;
+
+  let cap = Infinity;
+  if (typeof tokenStrategy.maxPositionEquityPct === 'number' && tokenStrategy.maxPositionEquityPct > 0) {
+    cap = Math.min(cap, equityUsdc * (tokenStrategy.maxPositionEquityPct / 100));
+  }
+  if (typeof tokenStrategy.maxPositionUsdc === 'number' && tokenStrategy.maxPositionUsdc > 0) {
+    cap = Math.min(cap, tokenStrategy.maxPositionUsdc);
+  }
+
+  return cap === Infinity ? fallbackCap : cap;
 }
 
 function handlePriceChart(res: http.ServerResponse, mint: string | null) {

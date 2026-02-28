@@ -28,7 +28,8 @@ export interface TokenStrategyParams {
 export interface TokenStrategy {
   label: string;
   tier: 'core' | 'probe';
-  maxPositionUsdc: number;
+  maxPositionUsdc?: number;
+  maxPositionEquityPct?: number;
   enabled: boolean;
   /** Present for RSI/CRSI templates; absent for other template families. */
   indicator?: TokenIndicator;
@@ -65,7 +66,8 @@ type AnyRegimeConfig = RegimeConfig | RegimeConfigNew;
 interface TokenStrategyV2 {
   label: string;
   tier: 'core' | 'probe';
-  maxPositionUsdc: number;
+  maxPositionUsdc?: number;
+  maxPositionEquityPct?: number;
   enabled: boolean;
   indicator?: TokenIndicator;
   regimes: {
@@ -84,6 +86,7 @@ interface TokenStrategyV1 {
   label: string;
   tier: 'core' | 'probe';
   maxPositionUsdc: number;
+  maxPositionEquityPct?: number;
   enabled: boolean;
   indicator: TokenIndicator;
   params: TokenStrategyParams;
@@ -165,6 +168,7 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
         label: v1.label,
         tier: v1.tier,
         maxPositionUsdc: v1.maxPositionUsdc,
+        maxPositionEquityPct: v1.maxPositionEquityPct,
         enabled: v1.enabled,
         indicator: v1.indicator,
         regimes: {
@@ -186,7 +190,7 @@ function loadLiveStrategyMap(): LiveStrategyMapV2 {
 function normalizeRegime(
   entry: TokenStrategyV2,
   regimeConfig: AnyRegimeConfig,
-): Omit<TokenStrategy, 'label' | 'tier' | 'maxPositionUsdc' | 'enabled'> {
+): Omit<TokenStrategy, 'label' | 'tier' | 'maxPositionUsdc' | 'maxPositionEquityPct' | 'enabled'> {
   if (isNewRegimeFormat(regimeConfig)) {
     return {
       indicator: entry.indicator,
@@ -232,6 +236,7 @@ export function getLiveTokenStrategy(mint: string, regime: TrendRegime = 'sidewa
     label: entry.label,
     tier: entry.tier,
     maxPositionUsdc: entry.maxPositionUsdc,
+    maxPositionEquityPct: entry.maxPositionEquityPct,
     enabled: true,
     ...normalized,
   };

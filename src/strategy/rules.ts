@@ -134,9 +134,14 @@ export function evaluateEntry(
       };
     }
 
+    const tokenCapUsdc = resolveTokenMaxPositionUsdc(
+      tokenStrategy,
+      portfolio.equityUsdc,
+      cfg.position.maxPositionUsdc
+    );
     const positionSizeUsdc = Math.min(
       calculatePositionSize(portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades),
-      tokenStrategy.maxPositionUsdc
+      tokenCapUsdc
     );
 
     log.info('ENTRY SIGNAL', {
@@ -145,6 +150,7 @@ export function evaluateEntry(
       templateId: tokenStrategy.templateId,
       exitMode: tokenStrategy.exitMode,
       sizeUsdc: positionSizeUsdc.toFixed(2),
+      tokenCapUsdc: tokenCapUsdc.toFixed(2),
       sl: tokenStrategy.sl,
       tp: tokenStrategy.tp,
     });
@@ -314,7 +320,7 @@ function calculatePositionSize(
 
   // Cap at max position size and equity percentage
   const maxFromEquity = equityUsdc * (cfg.position.maxPositionEquityPct / 100);
-  const maxAbsolute = cfg.position.maxPositionUsdc;
+  const maxAbsolute = cfg.position.maxPositionUsdc > 0 ? cfg.position.maxPositionUsdc : Infinity;
 
   // Liquidity cap: trade size ≤ liquidityCapPct% of pool liquidity (already in USD ≈ USDC)
   let maxFromLiquidity = Infinity;
@@ -336,7 +342,7 @@ function calculatePositionSize(
     equityUsdc,
     sizeFromRisk: sizeFromRisk.toFixed(2),
     maxFromEquity: maxFromEquity.toFixed(2),
-    maxAbsolute,
+    maxAbsolute: maxAbsolute === Infinity ? 'N/A' : maxAbsolute,
     maxFromLiquidity: maxFromLiquidity === Infinity ? 'N/A' : maxFromLiquidity.toFixed(2),
     maxFromSampleGate: maxFromSampleGate === Infinity ? 'N/A' : maxFromSampleGate.toFixed(2),
     totalTrades,
@@ -344,4 +350,22 @@ function calculatePositionSize(
   });
 
   return finalSize;
+}
+
+function resolveTokenMaxPositionUsdc(
+  tokenStrategy: TokenStrategy,
+  equityUsdc: number,
+  fallbackUsdc: number
+): number {
+  const fallbackCap = fallbackUsdc > 0 ? fallbackUsdc : Infinity;
+  let cap = Infinity;
+
+  if (typeof tokenStrategy.maxPositionEquityPct === 'number' && tokenStrategy.maxPositionEquityPct > 0) {
+    cap = Math.min(cap, equityUsdc * (tokenStrategy.maxPositionEquityPct / 100));
+  }
+  if (typeof tokenStrategy.maxPositionUsdc === 'number' && tokenStrategy.maxPositionUsdc > 0) {
+    cap = Math.min(cap, tokenStrategy.maxPositionUsdc);
+  }
+
+  return cap === Infinity ? fallbackCap : cap;
 }
