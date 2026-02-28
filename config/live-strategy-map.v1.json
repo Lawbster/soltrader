@@ -47,12 +47,12 @@
               "priority": 320,
               "templateId": "crsi-dip-recover",
               "params": {
-                "dip": 15,
-                "recover": 20,
+                "dip": 10,
+                "recover": 25,
                 "exit": 90
               },
-              "sl": -3,
-              "tp": 3,
+              "sl": -2,
+              "tp": 4,
               "exitMode": "indicator"
             },
             {
@@ -117,15 +117,14 @@
           "enabled": true,
           "routes": [
             {
-              "routeId": "pump-1m-rsi-session-sideways",
+              "routeId": "pump-1m-rsi-sideways",
               "enabled": true,
               "timeframeMinutes": 1,
               "priority": 220,
-              "templateId": "rsi-session-gate",
+              "templateId": "rsi",
               "params": {
-                "entry": 25,
-                "exit": 85,
-                "session": 8
+                "entry": 20,
+                "exit": 75
               },
               "sl": -5,
               "tp": 1,
@@ -139,8 +138,8 @@
               "templateId": "rsi-session-gate",
               "params": {
                 "entry": 25,
-                "exit": 75,
-                "session": 0
+                "exit": 85,
+                "session": 8
               },
               "sl": -5,
               "tp": 1,
@@ -149,11 +148,11 @@
           ]
         },
         "downtrend": {
-          "enabled": true,
+          "enabled": false,
           "routes": [
             {
               "routeId": "pump-1m-rsi-session-downtrend",
-              "enabled": true,
+              "enabled": false,
               "timeframeMinutes": 1,
               "priority": 240,
               "templateId": "rsi-session-gate",
@@ -168,7 +167,7 @@
             },
             {
               "routeId": "pump-5m-rsi-session-downtrend",
-              "enabled": true,
+              "enabled": false,
               "timeframeMinutes": 5,
               "priority": 160,
               "templateId": "rsi-session-gate",
@@ -469,9 +468,9 @@
           "enabled": true,
           "routes": [
             {
-              "routeId": "popcat-1m-rsi-downtrend",
+              "routeId": "popcat-5m-rsi-downtrend",
               "enabled": true,
-              "timeframeMinutes": 1,
+              "timeframeMinutes": 5,
               "priority": 210,
               "templateId": "rsi",
               "params": {
@@ -480,21 +479,6 @@
               },
               "sl": -5,
               "tp": 6,
-              "exitMode": "indicator"
-            },
-            {
-              "routeId": "popcat-5m-rsi-session-downtrend",
-              "enabled": true,
-              "timeframeMinutes": 5,
-              "priority": 140,
-              "templateId": "rsi-session-gate",
-              "params": {
-                "entry": 20,
-                "exit": 85,
-                "session": 16
-              },
-              "sl": -3,
-              "tp": 4,
               "exitMode": "indicator"
             }
           ]
