@@ -1,4 +1,6 @@
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 import { createLogger, config } from '../utils';
 import { getAggregateMetrics, getTradeMetrics, loadStrategyConfig } from '../strategy';
 import { getPoolLiquidityCached, getTokenPriceCached } from '../analysis/token-data';
@@ -17,6 +19,8 @@ import { getDashboardHtml } from './page';
 const log = createLogger('dashboard');
 
 const DASHBOARD_PORT = parseInt(process.env.DASHBOARD_PORT || '3847');
+const DATA_DIR = path.resolve(__dirname, '../../data');
+const SIGNALS_DIR = path.join(DATA_DIR, 'signals');
 
 let server: http.Server | null = null;
 let pendingTokenCount = 0;
@@ -54,6 +58,11 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
   // CRSI signal status for each watchlist token
   if (url === '/api/signals') {
     handleSignals(res);
+    return;
+  }
+
+  if (url.startsWith('/api/signal-stats')) {
+    handleSignalStats(res, url);
     return;
   }
 
@@ -258,6 +267,185 @@ function resolveTokenMaxPositionUsdc(
   }
 
   return cap === Infinity ? fallbackCap : cap;
+}
+
+type SignalLogRow = {
+  ts?: number;
+  mint?: string;
+  source?: string;
+  entryDecision?: boolean;
+  rejectReason?: string;
+};
+
+function findLatestSignalFileName(): string | null {
+  if (!fs.existsSync(SIGNALS_DIR)) return null;
+  const files = fs.readdirSync(SIGNALS_DIR)
+    .filter(f => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+    .sort();
+  return files.length > 0 ? files[files.length - 1] : null;
+}
+
+function normalizeRejectReason(reason: string): string {
+  const r = (reason || '').trim();
+  if (!r) return 'unknown';
+
+  if (r.startsWith('route-window:')) {
+    if (r.includes('warmup')) return 'route-window:warmup';
+    if (r.includes('waiting candle close')) return 'route-window:candle-boundary';
+    return 'route-window:other';
+  }
+
+  const template = r.match(/template:([a-z0-9-]+)\s+signal=([a-z]+)/i);
+  if (template) return `template:${template[1]} signal=${template[2]}`;
+
+  if (r.startsWith('Score ')) return 'score-gate';
+  if (r.includes('Re-entry lockout')) return 're-entry-lockout';
+  if (r.includes('max positions')) return 'max-positions';
+  if (r.includes('exceed max exposure')) return 'max-exposure';
+
+  return r.length > 96 ? `${r.slice(0, 96)}...` : r;
+}
+
+function mapToSortedRows(
+  counts: Map<string, number>,
+  total: number,
+  keyName: string,
+): Array<Record<string, string | number>> {
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count]) => ({
+      [keyName]: key,
+      count,
+      pct: total > 0 ? (count / total) * 100 : 0,
+    }));
+}
+
+function parseSignalStats(filePath: string) {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const lines = raw.split('\n').filter(line => line.trim().length > 0);
+
+  const reasonCounts = new Map<string, number>();
+  const reasonGroupCounts = new Map<string, number>();
+  const routeRejectCounts = new Map<string, number>();
+  const sourceCounts = new Map<string, number>();
+  const byMint = new Map<string, { total: number; accepted: number; rejected: number }>();
+
+  let totalSignals = 0;
+  let acceptedSignals = 0;
+  let rejectedSignals = 0;
+
+  for (const line of lines) {
+    let row: SignalLogRow;
+    try {
+      row = JSON.parse(line) as SignalLogRow;
+    } catch {
+      continue;
+    }
+
+    totalSignals += 1;
+    const mint = row.mint || 'unknown';
+    const source = row.source || 'unknown';
+    sourceCounts.set(source, (sourceCounts.get(source) || 0) + 1);
+
+    const mintStat = byMint.get(mint) || { total: 0, accepted: 0, rejected: 0 };
+    mintStat.total += 1;
+
+    if (row.entryDecision === true) {
+      acceptedSignals += 1;
+      mintStat.accepted += 1;
+    } else {
+      rejectedSignals += 1;
+      mintStat.rejected += 1;
+
+      const reasonRaw = (row.rejectReason || 'unknown').trim() || 'unknown';
+      reasonCounts.set(reasonRaw, (reasonCounts.get(reasonRaw) || 0) + 1);
+
+      const group = normalizeRejectReason(reasonRaw);
+      reasonGroupCounts.set(group, (reasonGroupCounts.get(group) || 0) + 1);
+
+      const routeMatch = reasonRaw.match(/route:([^\s]+)/);
+      if (routeMatch) {
+        const routeKey = routeMatch[1];
+        routeRejectCounts.set(routeKey, (routeRejectCounts.get(routeKey) || 0) + 1);
+      }
+    }
+
+    byMint.set(mint, mintStat);
+  }
+
+  const byMintRows = Array.from(byMint.entries())
+    .map(([mint, stats]) => ({
+      mint,
+      total: stats.total,
+      accepted: stats.accepted,
+      rejected: stats.rejected,
+      acceptanceRatePct: stats.total > 0 ? (stats.accepted / stats.total) * 100 : 0,
+    }))
+    .sort((a, b) => b.total - a.total);
+
+  return {
+    totalSignals,
+    acceptedSignals,
+    rejectedSignals,
+    acceptanceRatePct: totalSignals > 0 ? (acceptedSignals / totalSignals) * 100 : 0,
+    uniqueMints: byMint.size,
+    uniqueRejectReasons: reasonCounts.size,
+    sourceStats: mapToSortedRows(sourceCounts, totalSignals, 'source'),
+    rejectReasonStats: mapToSortedRows(reasonCounts, rejectedSignals, 'reason'),
+    rejectGroupStats: mapToSortedRows(reasonGroupCounts, rejectedSignals, 'group'),
+    routeRejectStats: mapToSortedRows(routeRejectCounts, rejectedSignals, 'route'),
+    byMintStats: byMintRows,
+  };
+}
+
+function handleSignalStats(res: http.ServerResponse, url: string) {
+  try {
+    const params = new URL(url, 'http://localhost').searchParams;
+    const requestedDate = params.get('date');
+    const fileName = requestedDate ? `${requestedDate}.jsonl` : findLatestSignalFileName();
+
+    if (!fileName) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        file: null,
+        date: null,
+        totalSignals: 0,
+        acceptedSignals: 0,
+        rejectedSignals: 0,
+        acceptanceRatePct: 0,
+        uniqueMints: 0,
+        uniqueRejectReasons: 0,
+        sourceStats: [],
+        rejectReasonStats: [],
+        rejectGroupStats: [],
+        routeRejectStats: [],
+        byMintStats: [],
+      }));
+      return;
+    }
+
+    const filePath = path.join(SIGNALS_DIR, fileName);
+    if (!fs.existsSync(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Signal file not found', file: fileName }));
+      return;
+    }
+
+    const parsed = parseSignalStats(filePath);
+    const stat = fs.statSync(filePath);
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      file: fileName,
+      date: fileName.replace('.jsonl', ''),
+      updatedAt: stat.mtimeMs,
+      ...parsed,
+    }));
+  } catch (err) {
+    log.error('Failed to parse signal stats', { error: err instanceof Error ? err.message : String(err) });
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Failed to parse signal stats' }));
+  }
 }
 
 function handlePriceChart(res: http.ServerResponse, mint: string | null) {

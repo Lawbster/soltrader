@@ -313,6 +313,16 @@ export function getDashboardHtml(): string {
   </div>
 </div>
 
+<!-- Signal QA -->
+<section>
+  <div class="section-title with-subtitle">
+    <span>Signal QA</span>
+    <span class="subtle-note" id="signalStatsMeta">Latest signal file</span>
+  </div>
+  <div class="grid grid-4" id="signalStatsCards"></div>
+  <div class="grid" id="signalStatsTables" style="grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));"></div>
+</section>
+
 <!-- Price Chart -->
 <div class="chart-container">
   <h3 id="chartTitle">Price (1-min candles, 24hr lookback)</h3>
@@ -410,6 +420,14 @@ function formatStrategyParams(params) {
   if (entries.length === 0) return '--';
   entries.sort((a, b) => a[0].localeCompare(b[0]));
   return entries.map(([k, v]) => k + '=' + fmtParamValue(v)).join(' ');
+}
+function escapeHtml(v) {
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 function toDateKey(ts) {
   const d = new Date(ts);
@@ -556,12 +574,13 @@ function renderTradePanels() {
 async function fetchAll() {
   try {
     const chartParam = selectedMint ? '?mint=' + selectedMint : '';
-    const [signals, chart, status, metrics, trades] = await Promise.all([
+    const [signals, chart, status, metrics, trades, signalStats] = await Promise.all([
       fetch(API + '/api/signals').then(r => r.json()),
       fetch(API + '/api/price-chart' + chartParam).then(r => r.json()),
       fetch(API + '/api/status').then(r => r.json()),
       fetch(API + '/api/metrics').then(r => r.json()),
       fetch(API + '/api/trades').then(r => r.json()),
+      fetch(API + '/api/signal-stats').then(r => r.json()),
     ]);
     signalCache = signals;
     renderSignals(signals);
@@ -574,6 +593,7 @@ async function fetchAll() {
     updateTradeMintOptions(latestTrades);
     syncTradeFilterButtons();
     renderTradePanels();
+    renderSignalStats(signalStats, signals);
     renderSystem(status, metrics, signals);
     renderBadges(status, signals);
     document.getElementById('lastUpdate').textContent = 'Updated: ' + new Date().toLocaleTimeString();
@@ -637,7 +657,7 @@ function renderSignals(signals) {
         '<div><div class="crsi-label">Price</div><div class="crsi-sub">' + priceFmt + '</div></div>' +
       '</div>' +
       '<div class="progress-bar"><div class="progress-fill ' + barCls + '" style="width:' + pct + '%"></div></div>' +
-      '<div class="progress-text"><span>' + readyLabel + '</span><span>' + s.candleCount + ' / ' + s.candlesNeeded + ' candles</span></div>' +
+      '<div class="progress-text"><span>' + readyLabel + '</span><span>' + s.candleCount + ' / ' + s.candlesNeeded + ' @ ' + timeframeMinutes + 'm</span></div>' +
       regimeScore +
       '<div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px;">' +
         '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Position</div>' +
@@ -861,6 +881,89 @@ function renderTrades(trades, totalTrades) {
       '<td>' + t.exitType + '</td>' +
       '</tr>';
   }).join('');
+}
+
+function renderMiniStatsTable(title, columns, rows) {
+  const head = columns.map(c => '<th>' + c.label + '</th>').join('');
+  const body = rows.length === 0
+    ? '<tr><td colspan="' + columns.length + '" class="no-data" style="padding:20px;">No data</td></tr>'
+    : rows.slice(0, 10).map(row => {
+        const tds = columns.map(c => {
+          const raw = c.render ? c.render(row) : row[c.key];
+          return '<td>' + raw + '</td>';
+        }).join('');
+        return '<tr>' + tds + '</tr>';
+      }).join('');
+
+  return '<div class="table-container">' +
+    '<div class="table-header">' + title + '</div>' +
+    '<div style="max-height:280px; overflow-y:auto;"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table></div>' +
+    '</div>';
+}
+
+function renderSignalStats(stats, signals) {
+  const cardsEl = document.getElementById('signalStatsCards');
+  const tablesEl = document.getElementById('signalStatsTables');
+  const metaEl = document.getElementById('signalStatsMeta');
+  if (!cardsEl || !tablesEl || !metaEl) return;
+
+  if (!stats || !isFiniteNumber(stats.totalSignals) || stats.totalSignals <= 0) {
+    metaEl.textContent = (stats && stats.file) ? (stats.file + ' | no rows') : 'No signal file';
+    cardsEl.innerHTML = [
+      '<div class="card"><h3>Total Signals</h3><div class="value blue">0</div><div class="sub">Latest jsonl empty or missing</div></div>',
+      '<div class="card"><h3>Accepted</h3><div class="value green">0</div></div>',
+      '<div class="card"><h3>Rejected</h3><div class="value red">0</div></div>',
+      '<div class="card"><h3>Acceptance Rate</h3><div class="value muted">0.0%</div></div>',
+    ].join('');
+    tablesEl.innerHTML = '';
+    return;
+  }
+
+  const updated = isFiniteNumber(stats.updatedAt) ? fmtDate(stats.updatedAt) : '--';
+  metaEl.textContent = (stats.file || 'latest') + ' | updated ' + updated;
+
+  const total = Number(stats.totalSignals || 0);
+  const accepted = Number(stats.acceptedSignals || 0);
+  const rejected = Number(stats.rejectedSignals || 0);
+  const acceptRate = Number(stats.acceptanceRatePct || 0);
+
+  cardsEl.innerHTML = [
+    '<div class="card"><h3>Total Signals</h3><div class="value blue">' + total + '</div><div class="sub">' + (stats.uniqueMints || 0) + ' mints</div></div>',
+    '<div class="card"><h3>Accepted</h3><div class="value green">' + accepted + '</div></div>',
+    '<div class="card"><h3>Rejected</h3><div class="value red">' + rejected + '</div><div class="sub">' + (stats.uniqueRejectReasons || 0) + ' unique reasons</div></div>',
+    '<div class="card"><h3>Acceptance Rate</h3><div class="value ' + (acceptRate >= 10 ? 'green' : 'yellow') + '">' + fmtPct(acceptRate) + '</div></div>',
+  ].join('');
+
+  const reasonGroups = Array.isArray(stats.rejectGroupStats) ? stats.rejectGroupStats : [];
+  const rawReasons = Array.isArray(stats.rejectReasonStats) ? stats.rejectReasonStats : [];
+  const routes = Array.isArray(stats.routeRejectStats) ? stats.routeRejectStats : [];
+  const mintStats = Array.isArray(stats.byMintStats) ? stats.byMintStats : [];
+
+  const tables = [
+    renderMiniStatsTable('Reject Groups', [
+      { label: 'Group', key: 'group', render: r => '<span title="' + escapeHtml(r.group || '') + '">' + escapeHtml(r.group || '--') + '</span>' },
+      { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
+      { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
+    ], reasonGroups),
+    renderMiniStatsTable('Top Reject Reasons', [
+      { label: 'Reason', key: 'reason', render: r => '<span title="' + escapeHtml(r.reason || '') + '" style="display:inline-block;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(r.reason || '--') + '</span>' },
+      { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
+      { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
+    ], rawReasons),
+    renderMiniStatsTable('Route Rejects', [
+      { label: 'Route', key: 'route', render: r => '<span title="' + escapeHtml(r.route || '') + '">' + escapeHtml(r.route || '--') + '</span>' },
+      { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
+      { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
+    ], routes),
+    renderMiniStatsTable('Signals By Mint', [
+      { label: 'Mint', key: 'mint', render: r => escapeHtml(tokenNameFromMint(r.mint || '')) },
+      { label: 'Total', key: 'total', render: r => Number(r.total || 0).toLocaleString() },
+      { label: 'Accepted', key: 'accepted', render: r => '<span class="green">' + Number(r.accepted || 0).toLocaleString() + '</span>' },
+      { label: 'Acc %', key: 'acceptanceRatePct', render: r => fmt(r.acceptanceRatePct || 0, 1) + '%' },
+    ], mintStats),
+  ];
+
+  tablesEl.innerHTML = tables.join('');
 }
 
 function renderSystem(status, metrics, signals) {
