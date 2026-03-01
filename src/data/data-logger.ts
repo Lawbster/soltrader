@@ -150,6 +150,7 @@ export function exportCandles(mint: string, priceHistory: PricePoint[]) {
 // --- Phase 5: Persistence ---
 
 const SNAPSHOT_PATH = path.join(DATA_DIR, 'price-history-snapshot.json');
+const HISTORY_RETENTION_MS = 48 * 60 * 60_000; // Keep in sync with analysis/price-feed.ts
 
 export function savePriceHistory(history: Map<string, PricePoint[]>) {
   ensureDir(DATA_DIR);
@@ -171,7 +172,7 @@ export function loadPriceHistorySnapshot(): Map<string, PricePoint[]> {
     const raw = fs.readFileSync(SNAPSHOT_PATH, 'utf-8');
     const obj = JSON.parse(raw) as Record<string, PricePoint[]>;
     const history = new Map<string, PricePoint[]>();
-    const cutoff = Date.now() - 150 * 60_000; // Keep last 150 minutes
+    const cutoff = Date.now() - HISTORY_RETENTION_MS;
 
     for (const [mint, points] of Object.entries(obj)) {
       const recent = points.filter(p => p.timestamp >= cutoff);
@@ -189,4 +190,67 @@ export function loadPriceHistorySnapshot(): Map<string, PricePoint[]> {
     log.warn('Failed to load price history snapshot', { error: err });
     return new Map();
   }
+}
+
+export function loadPriceHistoryFromCandles(
+  mints: string[],
+  lookbackHours = 48
+): Map<string, PricePoint[]> {
+  const history = new Map<string, PricePoint[]>();
+  const cutoff = Date.now() - lookbackHours * 60 * 60_000;
+
+  for (const mint of mints) {
+    const dir = path.join(DATA_DIR, `candles/${mint}`);
+    if (!fs.existsSync(dir)) continue;
+
+    const files = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.csv'))
+      .sort()
+      .slice(-4); // 48h typically spans <= 3 UTC-date files
+    if (files.length === 0) continue;
+
+    const rows: PricePoint[] = [];
+    for (const file of files) {
+      const fullPath = path.join(dir, file);
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      const lines = content.split('\n');
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (!line) continue;
+        const [tsStr, , , , closeStr] = line.split(',');
+        const timestamp = Number(tsStr);
+        const price = Number(closeStr);
+        if (!Number.isFinite(timestamp) || !Number.isFinite(price) || price <= 0) continue;
+        if (timestamp < cutoff) continue;
+        rows.push({ timestamp, price });
+      }
+    }
+
+    if (rows.length === 0) continue;
+
+    rows.sort((a, b) => a.timestamp - b.timestamp);
+    const deduped: PricePoint[] = [];
+    for (const row of rows) {
+      const prev = deduped[deduped.length - 1];
+      if (prev && prev.timestamp === row.timestamp) {
+        deduped[deduped.length - 1] = row;
+      } else {
+        deduped.push(row);
+      }
+    }
+
+    if (deduped.length > 0) {
+      history.set(mint, deduped);
+    }
+  }
+
+  if (history.size > 0) {
+    log.info('Candle bootstrap history loaded', {
+      mints: history.size,
+      totalPoints: Array.from(history.values()).reduce((sum, points) => sum + points.length, 0),
+      lookbackHours,
+    });
+  }
+
+  return history;
 }

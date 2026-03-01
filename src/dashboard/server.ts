@@ -10,6 +10,7 @@ import { loadCandles } from '../backtest/data-loader';
 import { loadWatchlist } from '../monitor';
 import { getLiveTokenStrategy, isTokenMasterEnabled } from '../strategy/live-strategy-map';
 import { getTokenRegimeCached } from '../strategy/regime-detector';
+import { getTemplateMetadata } from '../strategy/templates/catalog';
 import { getJupiterMetrics } from '../execution/jupiter-client';
 import { getDashboardHtml } from './page';
 
@@ -134,7 +135,14 @@ function handleSignals(res: http.ServerResponse) {
             ? rsiPeriod + 1
             : (tokenStrategy.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod))
         : indicatorsCfg.connors.percentRankPeriod;
-      const candlesNeeded = connorsPercentRankPeriod + 1;
+      const timeframeMinutes = tokenStrategy?.timeframeMinutes ?? indicatorsCfg.candleIntervalMinutes;
+      const candlesNeeded = tokenStrategy?.templateId
+        ? getTemplateMetadata(tokenStrategy.templateId).requiredHistory
+        : (connorsPercentRankPeriod + 1);
+      const lookbackMinutes = Math.max(
+        indicatorsCfg.candleLookbackMinutes,
+        timeframeMinutes * (candlesNeeded + 10)
+      );
 
       let crsi: number | undefined;
       let rsi: number | undefined;
@@ -143,8 +151,8 @@ function handleSignals(res: http.ServerResponse) {
 
       if (indicatorsCfg?.enabled) {
         const snap = getIndicatorSnapshot(mint, {
-          intervalMinutes: indicatorsCfg.candleIntervalMinutes,
-          lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+          intervalMinutes: timeframeMinutes,
+          lookbackMinutes,
           rsiPeriod,
           connorsRsiPeriod: tokenStrategy ? rsiPeriod : indicatorsCfg.connors.rsiPeriod,
           connorsStreakRsiPeriod: tokenStrategy?.indicator?.streakRsiPeriod ?? indicatorsCfg.connors.streakRsiPeriod,
@@ -210,7 +218,7 @@ function handleSignals(res: http.ServerResponse) {
         indicatorKind: tokenStrategy?.indicator?.kind ?? 'crsi',
         templateId: tokenStrategy?.templateId ?? null,
         routeId: tokenStrategy?.routeId ?? null,
-        timeframeMinutes: tokenStrategy?.timeframeMinutes ?? indicatorsCfg.candleIntervalMinutes,
+        timeframeMinutes,
         routePriority: tokenStrategy?.priority ?? null,
         strategyParams: tokenStrategy?.params ?? null,
         exitMode: tokenStrategy?.exitMode ?? null,

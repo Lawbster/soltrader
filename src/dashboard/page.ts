@@ -596,8 +596,10 @@ function renderSignals(signals) {
     const rsiCls = crsiColor(s.rsi, s.oversoldThreshold);
     const priceFmt = s.priceUsd > 0 ? '$' + (s.priceUsd < 0.01 ? s.priceUsd.toExponential(2) : fmt(s.priceUsd, 4)) : '--';
     const pct = Math.min(100, Math.round((s.candleCount / s.candlesNeeded) * 100));
-    const minsLeft = Math.max(0, s.candlesNeeded - s.candleCount);
-    const readyLabel = s.ready ? 'Ready' : 'Warming up (~' + minsLeft + ' min)';
+    const timeframeMinutes = isFiniteNumber(s.timeframeMinutes) && s.timeframeMinutes > 0 ? s.timeframeMinutes : 1;
+    const minsLeft = Math.max(0, (s.candlesNeeded - s.candleCount) * timeframeMinutes);
+    const etaLabel = minsLeft >= 120 ? ('~' + (minsLeft / 60).toFixed(1) + 'h') : ('~' + Math.round(minsLeft) + ' min');
+    const readyLabel = s.ready ? 'Ready' : 'Warming up (' + etaLabel + ')';
     const barCls = s.ready ? 'ready' : 'warming';
     const signalLabel = hasRsi && s.rsi <= s.oversoldThreshold
       ? '<span class="green" style="font-weight:700;font-size:0.8rem;">OVERSOLD</span>'

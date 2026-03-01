@@ -10,7 +10,7 @@ interface PricePoint {
 // Per-mint rolling price history from Jupiter polls
 const priceHistory = new Map<string, PricePoint[]>();
 
-const MAX_HISTORY_MS = 150 * 60_000; // Keep 150 minutes (enough for 120min CRSI lookback)
+export const MAX_HISTORY_MS = 48 * 60 * 60_000; // Keep 48 hours for 1m/5m/15m route warmup
 
 export function recordPrice(mint: string, price: number) {
   if (price <= 0) return;
@@ -84,10 +84,28 @@ export function getPriceHistory(): Map<string, PricePoint[]> {
 }
 
 export function loadPriceHistoryFrom(data: Map<string, { timestamp: number; price: number }[]>) {
+  const cutoff = Date.now() - MAX_HISTORY_MS;
   for (const [mint, points] of data) {
-    const existing = priceHistory.get(mint);
-    if (existing && existing.length > 0) continue; // Don't overwrite live data
-    priceHistory.set(mint, points);
-    log.info('Restored price history', { mint, points: points.length });
+    const incoming = points
+      .filter(p => p.timestamp >= cutoff && p.price > 0)
+      .sort((a, b) => a.timestamp - b.timestamp);
+    if (incoming.length === 0) continue;
+
+    const existing = priceHistory.get(mint) ?? [];
+    const merged = [...existing, ...incoming].sort((a, b) => a.timestamp - b.timestamp);
+
+    const deduped: PricePoint[] = [];
+    for (const p of merged) {
+      const prev = deduped[deduped.length - 1];
+      if (prev && prev.timestamp === p.timestamp) {
+        deduped[deduped.length - 1] = p;
+      } else {
+        deduped.push(p);
+      }
+    }
+
+    const pruned = deduped.filter(p => p.timestamp >= cutoff);
+    priceHistory.set(mint, pruned);
+    log.info('Restored price history', { mint, points: pruned.length });
   }
 }

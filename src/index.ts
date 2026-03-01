@@ -12,9 +12,10 @@ import {
 } from './strategy';
 import { getLiveTokenStrategies, type TokenStrategy } from './strategy/live-strategy-map';
 import { startRegimeRefresh, getTokenRegimeCached } from './strategy/regime-detector';
+import { getTemplateMetadata } from './strategy/templates/catalog';
 import { StrategyPlan } from './execution/types';
 import type { IndicatorSnapshot } from './analysis/types';
-import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot } from './data';
+import { logPricePoint, logSignal, exportCandles, savePriceHistory, loadPriceHistorySnapshot, loadPriceHistoryFromCandles } from './data';
 import {
   initPortfolio,
   loadPositionHistory,
@@ -183,6 +184,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   }> = [];
 
   const skippedByBoundary: string[] = [];
+  const skippedByWarmup: string[] = [];
   const indicatorCache = new Map<string, IndicatorSnapshot>();
   const defaultTimeframeMinutes = indicatorsCfg?.candleIntervalMinutes ?? 1;
   const nowMs = Date.now();
@@ -205,9 +207,14 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
         ? (rsiPeriod + 1)
         : (route.indicator?.percentRankPeriod ?? indicatorsCfg.connors.percentRankPeriod);
       const intervalMinutes = evalGate.timeframeMinutes;
+      const requiredHistory = getTemplateMetadata(route.templateId).requiredHistory;
+      const lookbackMinutes = Math.max(
+        indicatorsCfg.candleLookbackMinutes,
+        intervalMinutes * (requiredHistory + 10)
+      );
       const cacheKey = [
         intervalMinutes,
-        indicatorsCfg.candleLookbackMinutes,
+        lookbackMinutes,
         rsiPeriod,
         connorsRsiPeriod,
         connorsStreakRsiPeriod,
@@ -220,13 +227,20 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       } else {
         indicators = getIndicatorSnapshot(mint, {
           intervalMinutes,
-          lookbackMinutes: indicatorsCfg.candleLookbackMinutes,
+          lookbackMinutes,
           rsiPeriod,
           connorsRsiPeriod,
           connorsStreakRsiPeriod,
           connorsPercentRankPeriod,
         });
         indicatorCache.set(cacheKey, indicators);
+      }
+
+      if ((indicators?.candleCount ?? 0) < requiredHistory) {
+        skippedByWarmup.push(
+          `${route.routeId ?? route.templateId}@${intervalMinutes}m ${indicators?.candleCount ?? 0}/${requiredHistory}`
+        );
+        continue;
       }
     }
 
@@ -250,7 +264,14 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   }
 
   if (routeCandidates.length === 0) {
-    if (skippedByBoundary.length > 0) {
+    if (skippedByBoundary.length > 0 || skippedByWarmup.length > 0) {
+      const reasons: string[] = [];
+      if (skippedByBoundary.length > 0) {
+        reasons.push(`waiting candle close (${skippedByBoundary.join(', ')})`);
+      }
+      if (skippedByWarmup.length > 0) {
+        reasons.push(`warmup (${skippedByWarmup.join(', ')})`);
+      }
       logSignal({
         mint,
         crsi: undefined,
@@ -258,7 +279,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
         source: 'none',
         candleCount: 0,
         entryDecision: false,
-        rejectReason: `route-window: waiting candle close (${skippedByBoundary.join(', ')})`,
+        rejectReason: `route-window: ${reasons.join(' | ')}`,
         liquidityUsd: tokenData.liquidityUsd,
         effectiveMaxUsdc: 0,
       });
@@ -439,6 +460,12 @@ async function main() {
   const snapshot = loadPriceHistorySnapshot();
   if (snapshot.size > 0) {
     loadPriceHistoryFrom(snapshot);
+  }
+  if (watchlist.length > 0) {
+    const candleBootstrap = loadPriceHistoryFromCandles(watchlist.map(w => w.mint), 48);
+    if (candleBootstrap.size > 0) {
+      loadPriceHistoryFrom(candleBootstrap);
+    }
   }
 
   await initPortfolio();

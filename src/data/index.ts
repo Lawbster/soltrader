@@ -5,5 +5,6 @@ export {
   exportCandles,
   savePriceHistory,
   loadPriceHistorySnapshot,
+  loadPriceHistoryFromCandles,
 } from './data-logger';
 export type { SignalLogEntry, ExecutionLogEntry } from './data-logger';

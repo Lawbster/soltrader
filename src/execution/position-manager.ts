@@ -7,7 +7,7 @@ import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
 import { getIndicatorSnapshot, snapshotToIndicatorValues } from '../analysis';
 import type { IndicatorSnapshot } from '../analysis/types';
-import { evaluateSignal } from '../strategy/templates/catalog';
+import { evaluateSignal, getTemplateMetadata } from '../strategy/templates/catalog';
 import type { LiveTemplateContext } from '../strategy/templates/types';
 import { buyToken, sellToken, USDC_MINT, SOL_MINT } from './jupiter-swap';
 import { jupiterGet } from './jupiter-client';
@@ -507,29 +507,45 @@ async function updatePosition(position: Position) {
           const connorsPercentRankPeriod = planIndicator?.kind === 'rsi'
             ? (rsiPeriod + 1)
             : (planIndicator?.percentRankPeriod ?? indCfg.connors.percentRankPeriod);
+          const requiredHistory = getTemplateMetadata(position.strategyPlan.templateId).requiredHistory;
+          const lookbackMinutes = Math.max(
+            indCfg.candleLookbackMinutes,
+            timeframeMinutes * (requiredHistory + 10),
+          );
 
           const snap = getIndicatorSnapshot(position.mint, {
             intervalMinutes: timeframeMinutes,
-            lookbackMinutes: indCfg.candleLookbackMinutes,
+            lookbackMinutes,
             rsiPeriod,
             connorsRsiPeriod,
             connorsStreakRsiPeriod,
             connorsPercentRankPeriod,
           });
-          const liveCtx: LiveTemplateContext = {
-            close: position.currentPrice,
-            indicators: snapshotToIndicatorValues(snap),
-            prevIndicators: snap.prevIndicators
-              ? snapshotToIndicatorValues(snap.prevIndicators)
-              : undefined,
-            hourUtc: new Date().getUTCHours(),
-            hasPosition: true,
-          };
-          templateSig = evaluateSignal(
-            position.strategyPlan.templateId,
-            position.strategyPlan.templateParams,
-            liveCtx,
-          );
+          if (snap.candleCount >= requiredHistory) {
+            const liveCtx: LiveTemplateContext = {
+              close: position.currentPrice,
+              indicators: snapshotToIndicatorValues(snap),
+              prevIndicators: snap.prevIndicators
+                ? snapshotToIndicatorValues(snap.prevIndicators)
+                : undefined,
+              hourUtc: new Date().getUTCHours(),
+              hasPosition: true,
+            };
+            templateSig = evaluateSignal(
+              position.strategyPlan.templateId,
+              position.strategyPlan.templateParams,
+              liveCtx,
+            );
+          } else {
+            log.debug('Template exit warmup', {
+              mint: position.mint,
+              routeId: position.strategyPlan.routeId,
+              templateId: position.strategyPlan.templateId,
+              timeframeMinutes,
+              candleCount: snap.candleCount,
+              requiredHistory,
+            });
+          }
           log.debug('Template exit eval', {
             mint: position.mint,
             routeId: position.strategyPlan.routeId,
