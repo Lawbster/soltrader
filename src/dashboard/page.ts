@@ -626,6 +626,13 @@ function renderSignals(signals) {
       : '';
     const indicatorLabel = s.indicatorKind === 'rsi' ? 'RSI(14)' : 'CRSI';
     const regimeColor = s.trendRegime === 'uptrend' ? '#3fb950' : s.trendRegime === 'downtrend' ? '#f85149' : s.trendRegime === 'sideways' ? '#d29922' : '#484f58';
+    const tier = s.tier === 'core' || s.tier === 'probe' ? s.tier : null;
+    const tierColor = tier === 'core' ? '#58a6ff' : '#d29922';
+    const tierBadge = tier
+      ? '<span style="margin-left:6px;font-size:0.6rem;padding:1px 5px;border-radius:3px;background:#0d1117;color:' + tierColor + ';border:1px solid ' + tierColor + '40;vertical-align:middle;">' + tier + '</span>'
+      : '';
+    const tierText = tier ? tier : '--';
+    const tierTextClass = tier === 'core' ? 'blue' : tier === 'probe' ? 'yellow' : 'muted';
     const regimeBadge = '<span style="margin-left:6px;font-size:0.6rem;padding:1px 5px;border-radius:3px;background:#0d1117;color:' + regimeColor + ';border:1px solid ' + regimeColor + '40;vertical-align:middle;">' + (s.trendRegime || '--') + '</span>';
     const regimeScore = s.trendScore !== null ? '<div class="signal-row" style="margin-top:8px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Trend score</span><span style="color:' + regimeColor + ';">' + Number(s.trendScore).toFixed(1) + (s.ret24h !== null ? ' | 24h ' + (s.ret24h >= 0 ? '+' : '') + Number(s.ret24h).toFixed(1) + '%' : '') + (s.ret72h !== null ? ' | 72h ' + (s.ret72h >= 0 ? '+' : '') + Number(s.ret72h).toFixed(1) + '%' : '') + '</span></div>' : '';
     const isSelected = selectedMint ? s.mint === selectedMint : i === 0;
@@ -648,7 +655,7 @@ function renderSignals(signals) {
       ? (fmt(s.tokenMaxEquityPct, 2) + '% equity' + (isFiniteNumber(s.tokenMaxUsdc) ? (' (cap ' + fmt(s.tokenMaxUsdc, 2) + ' USDC)') : ''))
       : (isFiniteNumber(s.tokenMaxUsdc) ? (fmt(s.tokenMaxUsdc, 2) + ' USDC') : '--');
     return '<div class="signal-card' + (isSelected ? ' selected' : '') + '" data-mint="' + s.mint + '" style="border-color:' + cardBorderColor + ';" onclick="selectToken(\\''+s.mint+'\\');event.stopPropagation();">' +
-      '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + regimeBadge + '</div>' +
+      '<div class="signal-label">' + labelFor(s) + ' ' + signalLabel + tierBadge + regimeBadge + '</div>' +
       '<div class="signal-mint">' +
         '<a href="https://solscan.io/token/' + s.mint + '" target="_blank" onclick="event.stopPropagation();">' + shortMint(s.mint) + '</a>' +
       '</div>' +
@@ -665,6 +672,7 @@ function renderSignals(signals) {
         '<div class="signal-row"><span class="label">Max size</span><span class="blue">' + maxSizeText + '</span></div>' +
         '<div class="signal-row"><span class="label">Last impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
         '<div class="signal-row" style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Status</span><span style="color:' + statusColor + ';font-size:0.75rem;">' + statusText + '</span></div>' +
+        '<div class="signal-row"><span class="label">Tier</span><span class="' + tierTextClass + '">' + tierText + '</span></div>' +
         '<div class="signal-row"><span class="label">Live strategy</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + strategySummary + '</span></div>' +
         '<div class="signal-row"><span class="label">Params</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + paramsText + '</span></div>' +
         '<div class="signal-row"><span class="label">Stops</span><span style="font-size:0.75rem;color:#c9d1d9;">' + stopsText + '</span></div>' +
