@@ -9,6 +9,18 @@ const log = createLogger('live-strategy-map');
 export type TrendRegime = 'uptrend' | 'sideways' | 'downtrend';
 export type ExitMode = 'indicator' | 'price';
 
+export interface RouteProtectionConfig {
+  // Arm lock once PnL reaches this threshold (pct), then protect at lockPct.
+  profitLockArmPct?: number;
+  profitLockPct?: number;
+  // Arm trailing once PnL reaches this threshold (pct), then trail by gap (pct).
+  trailArmPct?: number;
+  trailGapPct?: number;
+  // Force stale-position exit after hold minutes if PnL is below threshold.
+  staleMaxHoldMinutes?: number;
+  staleMinPnlPct?: number;
+}
+
 export interface TokenIndicator {
   kind: 'rsi' | 'crsi';
   rsiPeriod: number;
@@ -39,6 +51,7 @@ export interface TokenStrategy {
   routeId?: string;
   timeframeMinutes?: number;
   priority?: number;
+  protection?: RouteProtectionConfig;
 }
 
 export interface RegimeConfig {
@@ -56,6 +69,7 @@ interface RegimeConfigNewSingle {
   routeId?: string;
   timeframeMinutes?: number;
   priority?: number;
+  protection?: RouteProtectionConfig;
   indicator?: TokenIndicator;
   maxPositionUsdc?: number;
   maxPositionEquityPct?: number;
@@ -66,6 +80,7 @@ interface RegimeRouteConfig {
   enabled: boolean;
   timeframeMinutes: number;
   priority?: number;
+  protection?: RouteProtectionConfig;
   indicator?: TokenIndicator;
   templateId: TemplateId;
   params: Record<string, number>;
@@ -133,6 +148,7 @@ function cloneRegimeConfig(r: AnyRegimeConfig): AnyRegimeConfig {
       routes: (r.routes ?? []).map(route => ({
         ...route,
         params: { ...(route.params ?? {}) },
+        protection: route.protection ? { ...route.protection } : undefined,
         indicator: route.indicator ? { ...route.indicator } : undefined,
       })),
     };
@@ -141,6 +157,7 @@ function cloneRegimeConfig(r: AnyRegimeConfig): AnyRegimeConfig {
     return {
       ...r,
       params: { ...(r.params ?? {}) },
+      protection: r.protection ? { ...r.protection } : undefined,
       indicator: r.indicator ? { ...r.indicator } : undefined,
     };
   }
@@ -258,6 +275,57 @@ function normalizeTimeframeMinutes(tf?: number): number | undefined {
   return rounded;
 }
 
+function normalizePositiveNumber(v?: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  const n = v as number;
+  if (n <= 0) return undefined;
+  return n;
+}
+
+function normalizeNonNegativeNumber(v?: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  const n = v as number;
+  if (n < 0) return undefined;
+  return n;
+}
+
+function normalizeProtectionConfig(
+  protection?: RouteProtectionConfig,
+): RouteProtectionConfig | undefined {
+  if (!protection) return undefined;
+  const normalized: RouteProtectionConfig = {};
+
+  const profitLockArmPct = normalizePositiveNumber(protection.profitLockArmPct);
+  if (profitLockArmPct !== undefined) normalized.profitLockArmPct = profitLockArmPct;
+
+  const profitLockPct = normalizeNonNegativeNumber(protection.profitLockPct);
+  if (profitLockPct !== undefined) normalized.profitLockPct = profitLockPct;
+
+  const trailArmPct = normalizePositiveNumber(protection.trailArmPct);
+  if (trailArmPct !== undefined) normalized.trailArmPct = trailArmPct;
+
+  const trailGapPct = normalizePositiveNumber(protection.trailGapPct);
+  if (trailGapPct !== undefined) normalized.trailGapPct = trailGapPct;
+
+  const staleMaxHoldMinutes = normalizePositiveNumber(protection.staleMaxHoldMinutes);
+  if (staleMaxHoldMinutes !== undefined) normalized.staleMaxHoldMinutes = staleMaxHoldMinutes;
+
+  if (Number.isFinite(protection.staleMinPnlPct)) {
+    normalized.staleMinPnlPct = protection.staleMinPnlPct;
+  }
+
+  if (
+    Number.isFinite(normalized.profitLockArmPct) &&
+    Number.isFinite(normalized.profitLockPct) &&
+    (normalized.profitLockPct as number) > (normalized.profitLockArmPct as number)
+  ) {
+    normalized.profitLockPct = normalized.profitLockArmPct;
+  }
+
+  if (Object.keys(normalized).length === 0) return undefined;
+  return normalized;
+}
+
 function sortByPriority(strategies: TokenStrategy[]): TokenStrategy[] {
   return strategies.sort((a, b) => {
     const pa = a.priority ?? 0;
@@ -291,6 +359,7 @@ function normalizeLegacyRegime(
     exitMode: 'price',
     routeId: `${regime}:legacy`,
     priority: 100,
+    protection: undefined,
   }];
 }
 
@@ -315,6 +384,7 @@ function normalizeSingleRegime(
     routeId: rc.routeId ?? `${regime}:${rc.templateId}`,
     timeframeMinutes: normalizeTimeframeMinutes(rc.timeframeMinutes),
     priority: rc.priority ?? 100,
+    protection: normalizeProtectionConfig(rc.protection),
   }];
 }
 
@@ -354,6 +424,7 @@ function normalizeRouteRegime(
       routeId: route.routeId ?? `${regime}-${i + 1}`,
       timeframeMinutes: normalizeTimeframeMinutes(route.timeframeMinutes),
       priority: route.priority ?? 100,
+      protection: normalizeProtectionConfig(route.protection),
     });
   }
 
@@ -396,4 +467,3 @@ export function getLiveTokenStrategy(
   const routes = getLiveTokenStrategies(mint, regime);
   return routes.length > 0 ? routes[0] : null;
 }
-

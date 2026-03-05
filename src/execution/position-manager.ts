@@ -427,6 +427,72 @@ export async function updatePositions() {
   }
 }
 
+function evaluateRouteProtectionExit(
+  position: Position,
+  holdTimeMinutes: number,
+): ReturnType<typeof evaluateExit> {
+  const protection = position.strategyPlan?.protection;
+  if (!protection) return null;
+
+  const currentPnlPct = position.currentPnlPct;
+  const peakPnlPct = position.peakPnlPct;
+
+  // Trailing protection: once armed, lock gains by exiting on pullback from peak.
+  if (
+    Number.isFinite(protection.trailArmPct) &&
+    Number.isFinite(protection.trailGapPct) &&
+    (protection.trailArmPct as number) > 0 &&
+    (protection.trailGapPct as number) > 0 &&
+    peakPnlPct >= (protection.trailArmPct as number)
+  ) {
+    const trailStopPct = peakPnlPct - (protection.trailGapPct as number);
+    if (currentPnlPct <= trailStopPct) {
+      return {
+        type: 'tp1',
+        sellPct: 100,
+        reason: `Trailing protect: pnl ${currentPnlPct.toFixed(1)}% <= ${trailStopPct.toFixed(1)}% (peak ${peakPnlPct.toFixed(1)}%)`,
+      };
+    }
+  }
+
+  // Profit lock: after arm threshold is reached, do not allow full round-trip.
+  if (
+    Number.isFinite(protection.profitLockArmPct) &&
+    Number.isFinite(protection.profitLockPct) &&
+    (protection.profitLockArmPct as number) > 0 &&
+    (protection.profitLockPct as number) >= 0 &&
+    peakPnlPct >= (protection.profitLockArmPct as number)
+  ) {
+    if (currentPnlPct <= (protection.profitLockPct as number)) {
+      return {
+        type: 'tp1',
+        sellPct: 100,
+        reason: `Profit lock: pnl ${currentPnlPct.toFixed(1)}% <= ${(protection.profitLockPct as number).toFixed(1)}%`,
+      };
+    }
+  }
+
+  // Stale stop: time-based guard for long, low-conviction holds.
+  if (
+    Number.isFinite(protection.staleMaxHoldMinutes) &&
+    (protection.staleMaxHoldMinutes as number) > 0 &&
+    holdTimeMinutes >= (protection.staleMaxHoldMinutes as number)
+  ) {
+    const minPnlPct = Number.isFinite(protection.staleMinPnlPct)
+      ? (protection.staleMinPnlPct as number)
+      : 0;
+    if (currentPnlPct <= minPnlPct) {
+      return {
+        type: 'hard_stop',
+        sellPct: 100,
+        reason: `Stale stop: hold ${Math.round(holdTimeMinutes)}m >= ${Math.round(protection.staleMaxHoldMinutes as number)}m, pnl ${currentPnlPct.toFixed(1)}% <= ${minPnlPct.toFixed(1)}%`,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function updatePosition(position: Position) {
   const cfg = loadStrategyConfig();
 
@@ -478,107 +544,112 @@ async function updatePosition(position: Position) {
         sellPct: 100,
         reason: `LP dropped ${lpChangePct.toFixed(1)}% in ${cfg.exits.emergencyLpDropWindowMinutes}m`,
       };
-    } else if (
-      effectiveExitMode === 'indicator' &&
-      position.strategyPlan.templateId &&
-      position.strategyPlan.templateParams
-    ) {
-      // Template indicator exit: evaluate at most once per candle boundary
-      const indCfg = cfg.entry.indicators;
-      const timeframeMinutes = Math.max(
-        1,
-        Math.round(position.strategyPlan.timeframeMinutes ?? indCfg?.candleIntervalMinutes ?? 1),
-      );
-      const candleMs = timeframeMinutes * 60_000;
-      const lastCandleTs = Math.floor(Date.now() / candleMs) * candleMs;
+    } else {
+      const protectionExit = evaluateRouteProtectionExit(position, holdTimeMinutes);
+      if (protectionExit) {
+        exitSignal = protectionExit;
+      } else if (
+        effectiveExitMode === 'indicator' &&
+        position.strategyPlan.templateId &&
+        position.strategyPlan.templateParams
+      ) {
+        // Template indicator exit: evaluate at most once per candle boundary
+        const indCfg = cfg.entry.indicators;
+        const timeframeMinutes = Math.max(
+          1,
+          Math.round(position.strategyPlan.timeframeMinutes ?? indCfg?.candleIntervalMinutes ?? 1),
+        );
+        const candleMs = timeframeMinutes * 60_000;
+        const lastCandleTs = Math.floor(Date.now() / candleMs) * candleMs;
 
-      let templateSig: 'buy' | 'sell' | 'hold' = 'hold';
+        let templateSig: 'buy' | 'sell' | 'hold' = 'hold';
 
-      if (lastCandleTs > (position.lastTemplateExitEvalMs ?? 0)) {
-        position.lastTemplateExitEvalMs = lastCandleTs;
-        // Evaluate template signal when indicators are available; otherwise templateSig stays 'hold'
-        if (indCfg?.enabled) {
-          const planIndicator = position.strategyPlan.indicator;
-          const rsiPeriod = planIndicator?.rsiPeriod ?? indCfg.rsi.period;
-          const connorsRsiPeriod = planIndicator?.kind === 'rsi'
-            ? rsiPeriod
-            : (planIndicator?.rsiPeriod ?? indCfg.connors.rsiPeriod);
-          const connorsStreakRsiPeriod = planIndicator?.streakRsiPeriod ?? indCfg.connors.streakRsiPeriod;
-          const connorsPercentRankPeriod = planIndicator?.kind === 'rsi'
-            ? (rsiPeriod + 1)
-            : (planIndicator?.percentRankPeriod ?? indCfg.connors.percentRankPeriod);
-          const requiredHistory = getTemplateMetadata(position.strategyPlan.templateId).requiredHistory;
-          const lookbackMinutes = Math.max(
-            indCfg.candleLookbackMinutes,
-            timeframeMinutes * (requiredHistory + 10),
-          );
-
-          const snap = getIndicatorSnapshot(position.mint, {
-            intervalMinutes: timeframeMinutes,
-            lookbackMinutes,
-            rsiPeriod,
-            connorsRsiPeriod,
-            connorsStreakRsiPeriod,
-            connorsPercentRankPeriod,
-          });
-          if (snap.candleCount >= requiredHistory) {
-            const liveCtx: LiveTemplateContext = {
-              close: position.currentPrice,
-              indicators: snapshotToIndicatorValues(snap),
-              prevIndicators: snap.prevIndicators
-                ? snapshotToIndicatorValues(snap.prevIndicators)
-                : undefined,
-              hourUtc: new Date().getUTCHours(),
-              hasPosition: true,
-            };
-            templateSig = evaluateSignal(
-              position.strategyPlan.templateId,
-              position.strategyPlan.templateParams,
-              liveCtx,
+        if (lastCandleTs > (position.lastTemplateExitEvalMs ?? 0)) {
+          position.lastTemplateExitEvalMs = lastCandleTs;
+          // Evaluate template signal when indicators are available; otherwise templateSig stays 'hold'
+          if (indCfg?.enabled) {
+            const planIndicator = position.strategyPlan.indicator;
+            const rsiPeriod = planIndicator?.rsiPeriod ?? indCfg.rsi.period;
+            const connorsRsiPeriod = planIndicator?.kind === 'rsi'
+              ? rsiPeriod
+              : (planIndicator?.rsiPeriod ?? indCfg.connors.rsiPeriod);
+            const connorsStreakRsiPeriod = planIndicator?.streakRsiPeriod ?? indCfg.connors.streakRsiPeriod;
+            const connorsPercentRankPeriod = planIndicator?.kind === 'rsi'
+              ? (rsiPeriod + 1)
+              : (planIndicator?.percentRankPeriod ?? indCfg.connors.percentRankPeriod);
+            const requiredHistory = getTemplateMetadata(position.strategyPlan.templateId).requiredHistory;
+            const lookbackMinutes = Math.max(
+              indCfg.candleLookbackMinutes,
+              timeframeMinutes * (requiredHistory + 10),
             );
-          } else {
-            log.debug('Template exit warmup', {
+
+            const snap = getIndicatorSnapshot(position.mint, {
+              intervalMinutes: timeframeMinutes,
+              lookbackMinutes,
+              rsiPeriod,
+              connorsRsiPeriod,
+              connorsStreakRsiPeriod,
+              connorsPercentRankPeriod,
+            });
+            if (snap.candleCount >= requiredHistory) {
+              const liveCtx: LiveTemplateContext = {
+                close: position.currentPrice,
+                indicators: snapshotToIndicatorValues(snap),
+                prevIndicators: snap.prevIndicators
+                  ? snapshotToIndicatorValues(snap.prevIndicators)
+                  : undefined,
+                hourUtc: new Date().getUTCHours(),
+                hasPosition: true,
+              };
+              templateSig = evaluateSignal(
+                position.strategyPlan.templateId,
+                position.strategyPlan.templateParams,
+                liveCtx,
+              );
+            } else {
+              log.debug('Template exit warmup', {
+                mint: position.mint,
+                routeId: position.strategyPlan.routeId,
+                templateId: position.strategyPlan.templateId,
+                timeframeMinutes,
+                candleCount: snap.candleCount,
+                requiredHistory,
+              });
+            }
+            log.debug('Template exit eval', {
               mint: position.mint,
               routeId: position.strategyPlan.routeId,
               templateId: position.strategyPlan.templateId,
               timeframeMinutes,
-              candleCount: snap.candleCount,
-              requiredHistory,
+              signal: templateSig,
+              pnl: pnlPct.toFixed(1),
             });
           }
-          log.debug('Template exit eval', {
-            mint: position.mint,
-            routeId: position.strategyPlan.routeId,
-            templateId: position.strategyPlan.templateId,
-            timeframeMinutes,
-            signal: templateSig,
-            pnl: pnlPct.toFixed(1),
-          });
         }
-      }
 
-      // Template sell wins; otherwise fall through to SL/TP
-      if (templateSig === 'sell') {
-        exitSignal = {
-          type: 'tp1',
-          sellPct: 100,
-          reason: `template-indicator-exit: ${position.strategyPlan.templateId}`,
-        };
-      } else if (pnlPct <= sl) {
-        exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
-      } else if (pnlPct >= tp) {
-        exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+        // Template sell wins; otherwise fall through to SL/TP
+        if (templateSig === 'sell') {
+          exitSignal = {
+            type: 'tp1',
+            sellPct: 100,
+            reason: `template-indicator-exit: ${position.strategyPlan.templateId}`,
+          };
+        } else if (pnlPct <= sl) {
+          exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
+        } else if (pnlPct >= tp) {
+          exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+        } else {
+          exitSignal = null;
+        }
       } else {
-        exitSignal = null;
-      }
-    } else {
-      // Price-only exit (exitMode='price' or absent)
-      if (pnlPct <= sl) {
-        exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
-      } else if (pnlPct >= tp) {
-        exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
-      } else {
-        exitSignal = null;
+        // Price-only exit (exitMode='price' or absent)
+        if (pnlPct <= sl) {
+          exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
+        } else if (pnlPct >= tp) {
+          exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+        } else {
+          exitSignal = null;
+        }
       }
     }
   } else {

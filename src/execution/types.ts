@@ -1,5 +1,5 @@
 import type { TemplateId } from '../strategy/templates/types';
-import type { ExitMode } from '../strategy/live-strategy-map';
+import type { ExitMode, RouteProtectionConfig } from '../strategy/live-strategy-map';
 
 export interface SwapQuote {
   inputMint: string;
@@ -40,6 +40,7 @@ export interface StrategyPlan {
   routeId?: string;                        // unique per-token route identifier
   timeframeMinutes?: number;               // route timeframe (1/5/15)
   priority?: number;                       // route priority used for arbitration
+  protection?: RouteProtectionConfig;      // optional dynamic protection rules
   indicator?: {
     kind: 'rsi' | 'crsi';
     rsiPeriod: number;

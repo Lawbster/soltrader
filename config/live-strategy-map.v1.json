@@ -33,6 +33,14 @@
           "templateId": "crsi-dip-recover",
           "timeframeMinutes": 5,
           "priority": 320,
+          "protection": {
+            "profitLockArmPct": 1,
+            "profitLockPct": 0.15,
+            "trailArmPct": 2,
+            "trailGapPct": 1,
+            "staleMaxHoldMinutes": 240,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "dip": 10,
             "recover": 20,
@@ -74,6 +82,12 @@
           "templateId": "rsi-session-gate",
           "timeframeMinutes": 5,
           "priority": 280,
+          "protection": {
+            "profitLockArmPct": 0.8,
+            "profitLockPct": 0.1,
+            "staleMaxHoldMinutes": 180,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "entry": 25,
             "exit": 75,
@@ -89,6 +103,14 @@
           "templateId": "rsi",
           "timeframeMinutes": 1,
           "priority": 260,
+          "protection": {
+            "profitLockArmPct": 1,
+            "profitLockPct": 0.15,
+            "trailArmPct": 2,
+            "trailGapPct": 1,
+            "staleMaxHoldMinutes": 240,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "entry": 20,
             "exit": 85
@@ -354,6 +376,10 @@
           "templateId": "vwap-rsi-range-revert",
           "timeframeMinutes": 1,
           "priority": 200,
+          "protection": {
+            "staleMaxHoldMinutes": 180,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "adxMax": 25,
             "rsiEntry": 30

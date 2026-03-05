@@ -381,6 +381,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     routeId: winnerRoute.routeId,
     timeframeMinutes: winner.timeframeMinutes,
     priority: winnerRoute.priority,
+    protection: winnerRoute.protection,
     indicator: winnerRoute.indicator,
   };
 
