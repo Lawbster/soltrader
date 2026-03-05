@@ -45,8 +45,10 @@ export interface TokenStrategy {
   indicator?: TokenIndicator;
   templateId: TemplateId;
   params: Record<string, number>;
-  sl: number;
-  tp: number;
+  sl?: number;
+  tp?: number;
+  slAtr?: number;
+  tpAtr?: number;
   exitMode: ExitMode;
   routeId?: string;
   timeframeMinutes?: number;
@@ -63,8 +65,10 @@ interface RegimeConfigNewSingle {
   enabled: boolean;
   templateId: TemplateId;
   params: Record<string, number>;
-  sl: number;
-  tp: number;
+  sl?: number;
+  tp?: number;
+  slAtr?: number;
+  tpAtr?: number;
   exitMode?: ExitMode;
   routeId?: string;
   timeframeMinutes?: number;
@@ -84,8 +88,10 @@ interface RegimeRouteConfig {
   indicator?: TokenIndicator;
   templateId: TemplateId;
   params: Record<string, number>;
-  sl: number;
-  tp: number;
+  sl?: number;
+  tp?: number;
+  slAtr?: number;
+  tpAtr?: number;
   exitMode?: ExitMode;
   maxPositionUsdc?: number;
   maxPositionEquityPct?: number;
@@ -289,6 +295,30 @@ function normalizeNonNegativeNumber(v?: number): number | undefined {
   return n;
 }
 
+function normalizeNegativeNumber(v?: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  const n = v as number;
+  if (n >= 0) return undefined;
+  return n;
+}
+
+function normalizePositivePctNumber(v?: number): number | undefined {
+  if (!Number.isFinite(v)) return undefined;
+  const n = v as number;
+  if (n <= 0) return undefined;
+  return n;
+}
+
+function resolveAtrMult(
+  direct: number | undefined,
+  params: Record<string, number>,
+  key: 'slAtr' | 'tpAtr',
+): number | undefined {
+  const fromDirect = normalizePositiveNumber(direct);
+  if (fromDirect !== undefined) return fromDirect;
+  return normalizePositiveNumber(params[key]);
+}
+
 function normalizeProtectionConfig(
   protection?: RouteProtectionConfig,
 ): RouteProtectionConfig | undefined {
@@ -356,6 +386,8 @@ function normalizeLegacyRegime(
     params: { entry: rc.params.entry, exit: rc.params.exit, sl: rc.params.sl, tp: rc.params.tp },
     sl: rc.params.sl,
     tp: rc.params.tp,
+    slAtr: undefined,
+    tpAtr: undefined,
     exitMode: 'price',
     routeId: `${regime}:legacy`,
     priority: 100,
@@ -369,6 +401,10 @@ function normalizeSingleRegime(
   rc: RegimeConfigNewSingle,
 ): TokenStrategy[] {
   if (!rc.enabled) return [];
+  const sl = normalizeNegativeNumber(rc.sl);
+  const tp = normalizePositivePctNumber(rc.tp);
+  const slAtr = resolveAtrMult(rc.slAtr, rc.params, 'slAtr');
+  const tpAtr = resolveAtrMult(rc.tpAtr, rc.params, 'tpAtr');
   return [{
     label: entry.label,
     tier: entry.tier,
@@ -378,8 +414,10 @@ function normalizeSingleRegime(
     indicator: rc.indicator ?? entry.indicator,
     templateId: rc.templateId,
     params: rc.params,
-    sl: rc.sl,
-    tp: rc.tp,
+    sl,
+    tp,
+    slAtr,
+    tpAtr,
     exitMode: rc.exitMode ?? 'price',
     routeId: rc.routeId ?? `${regime}:${rc.templateId}`,
     timeframeMinutes: normalizeTimeframeMinutes(rc.timeframeMinutes),
@@ -409,6 +447,10 @@ function normalizeRouteRegime(
       });
       continue;
     }
+    const sl = normalizeNegativeNumber(route.sl);
+    const tp = normalizePositivePctNumber(route.tp);
+    const slAtr = resolveAtrMult(route.slAtr, route.params, 'slAtr');
+    const tpAtr = resolveAtrMult(route.tpAtr, route.params, 'tpAtr');
     out.push({
       label: entry.label,
       tier: entry.tier,
@@ -418,8 +460,10 @@ function normalizeRouteRegime(
       indicator: route.indicator ?? entry.indicator,
       templateId: route.templateId,
       params: route.params,
-      sl: route.sl,
-      tp: route.tp,
+      sl,
+      tp,
+      slAtr,
+      tpAtr,
       exitMode: route.exitMode ?? 'price',
       routeId: route.routeId ?? `${regime}-${i + 1}`,
       timeframeMinutes: normalizeTimeframeMinutes(route.timeframeMinutes),

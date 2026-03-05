@@ -24,6 +24,8 @@
     "sweeprobustness": "tsx scripts/sweep-window-robustness.ts",
     "robustness-report": "tsx scripts/robustness-report.ts",
     "robustnessreport": "tsx scripts/robustness-report.ts",
+    "template-health": "tsx scripts/template-health.ts",
+    "templatehealth": "tsx scripts/template-health.ts",
     "build-live-map": "tsx scripts/build-live-map.ts",
     "buildlivemap": "tsx scripts/build-live-map.ts",
     "slippage-report": "tsx scripts/slippage-report.ts",

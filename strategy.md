@@ -112,6 +112,25 @@ npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timefra
 npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 15
 ```
 
+For routine iteration, use template subsets instead of the full catalog:
+
+```bash
+npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 1 --template-set core
+npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 5 --template-set core
+npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 15 --template-set trend
+```
+
+Available template sets:
+- `core`: currently productive mean-reversion / session templates
+- `extended`: broader research set without the full catalog cost
+- `trend`: trend / breakout continuation templates
+
+For validation or smoke runs, write to a scratch file to avoid overwriting the daily canonical sweep artifact:
+
+```bash
+npm run sweep -- --template-set trend --timeframe 15 --from 2026-03-04 --to 2026-03-04 --out-file data/sweep-results/smoke/2026-03-04-trend-15min.csv
+```
+
 ## 2) Build candidates from explicit files
 
 Always pass explicit `--files` to avoid stale path/source confusion:
@@ -133,6 +152,24 @@ npm run sweep-robustness -- --from 2026-02-18 --window-days 1,2 --step-days 1 --
 ```
 
 If empirical sample is too small in some windows, fallback mode should be used (`fixed`) for those windows.
+
+## Template Health
+
+Use the template health report to decide which strategies deserve compute budget:
+
+```bash
+npm run template-health
+```
+
+Optional explicit files:
+
+```bash
+npm run template-health -- --files "data/sweep-results/YYYY-MM-DD-1min.csv,data/sweep-results/YYYY-MM-DD-5min.csv,data/sweep-results/YYYY-MM-DD-15min.csv"
+```
+
+Outputs:
+- `data/sweep-results/template-health/YYYY-MM-DD.template-health.csv`
+- `data/sweep-results/template-health/YYYY-MM-DD.template-health.md`
 
 ## Promotion Criteria (Profit-First)
 
@@ -160,4 +197,3 @@ When ranking routes for live:
 
 - A high win rate can still lose money if large-size routes carry asymmetric loss (`SL`) versus small gains.
 - Route-level protection is now available and should be part of promotion policy for volatile tokens.
-

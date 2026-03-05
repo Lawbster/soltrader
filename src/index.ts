@@ -106,17 +106,17 @@ function shouldEvaluateRouteNow(
   route: TokenStrategy,
   defaultTimeframeMinutes: number,
   nowMs: number,
-): { evaluate: boolean; timeframeMinutes: number } {
+): { evaluate: boolean; timeframeMinutes: number; asOfMs: number } {
   const timeframeMinutes = resolveRouteTimeframeMinutes(route, defaultTimeframeMinutes);
   const candleMs = timeframeMinutes * 60_000;
-  const candleTs = Math.floor(nowMs / candleMs) * candleMs;
+  const asOfMs = Math.floor(nowMs / candleMs) * candleMs;
   const routeKey = `${mint}:${route.routeId ?? route.templateId}:${timeframeMinutes}`;
   const prev = lastRouteEvalByCandle.get(routeKey) ?? 0;
-  if (candleTs <= prev) {
-    return { evaluate: false, timeframeMinutes };
+  if (asOfMs <= prev) {
+    return { evaluate: false, timeframeMinutes, asOfMs };
   }
-  lastRouteEvalByCandle.set(routeKey, candleTs);
-  return { evaluate: true, timeframeMinutes };
+  lastRouteEvalByCandle.set(routeKey, asOfMs);
+  return { evaluate: true, timeframeMinutes, asOfMs };
 }
 
 function compareRouteCandidates(
@@ -132,6 +132,10 @@ function compareRouteCandidates(
   if (ta !== tb) return ta - tb;
   if (a.sizeUsdc !== b.sizeUsdc) return b.sizeUsdc - a.sizeUsdc;
   return (a.route.routeId ?? '').localeCompare(b.route.routeId ?? '');
+}
+
+function routeRequiresAtrExit(route: TokenStrategy): boolean {
+  return Number.isFinite(route.slAtr) || Number.isFinite(route.tpAtr);
 }
 
 async function analyzeCandidate(mint: string, launch: TokenLaunch) {
@@ -232,6 +236,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
           connorsRsiPeriod,
           connorsStreakRsiPeriod,
           connorsPercentRankPeriod,
+          asOfMs: evalGate.asOfMs,
         });
         indicatorCache.set(cacheKey, indicators);
       }
@@ -239,6 +244,13 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       if ((indicators?.candleCount ?? 0) < requiredHistory) {
         skippedByWarmup.push(
           `${route.routeId ?? route.templateId}@${intervalMinutes}m ${indicators?.candleCount ?? 0}/${requiredHistory}`
+        );
+        continue;
+      }
+
+      if (routeRequiresAtrExit(route) && !Number.isFinite(indicators?.atr)) {
+        skippedByWarmup.push(
+          `${route.routeId ?? route.templateId}@${intervalMinutes}m atr-missing`
         );
         continue;
       }
@@ -375,6 +387,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     exit: winnerRoute.params.exit ?? 100,
     sl: winnerRoute.sl,
     tp: winnerRoute.tp,
+    slAtr: winnerRoute.slAtr,
+    tpAtr: winnerRoute.tpAtr,
+    entryAtr: winnerIndicators?.atr,
     templateId: winnerRoute.templateId,
     templateParams: winnerRoute.params,
     exitMode: winnerRoute.exitMode,

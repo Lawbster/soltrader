@@ -48,6 +48,10 @@ export interface IndicatorSnapshot {
   mint: string;
   candleIntervalMinutes: number;
   candleCount: number;
+  lastCandleTimestamp?: number;
+  lastCandleClose?: number;
+  prevCandleClose?: number;
+  prevCandleHigh?: number;
   rsi?: number;
   connorsRsi?: number;
   // Extended live indicators (PR2) ─────────────────────────────────────

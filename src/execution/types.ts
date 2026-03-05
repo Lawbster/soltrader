@@ -32,8 +32,11 @@ export interface StrategyPlan {
   kind: 'rsi' | 'crsi';
   entry: number;  // oversold threshold used at entry (0 for non-RSI/CRSI templates)
   exit: number;   // overbought threshold (100 for non-RSI/CRSI templates)
-  sl: number;     // stop loss pct (negative, e.g. -5)
-  tp: number;     // take profit pct (positive, e.g. 1)
+  sl?: number;    // stop loss pct (negative, e.g. -5)
+  tp?: number;    // take profit pct (positive, e.g. 1)
+  slAtr?: number; // stop loss in ATR multiples from entry price
+  tpAtr?: number; // take profit in ATR multiples from entry price
+  entryAtr?: number; // ATR captured at entry for ATR-based exit parity
   templateId?: TemplateId;                 // always set for template-routed tokens
   templateParams?: Record<string, number>; // template-specific params
   exitMode?: ExitMode;                     // 'price' (default) | 'indicator'

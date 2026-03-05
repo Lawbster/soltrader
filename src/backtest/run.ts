@@ -70,21 +70,24 @@ function main() {
   const results: Array<{ strategyName: string; label: string; trades: number; winRate: number; totalPnl: number }> = [];
 
   for (const token of tokens) {
-    let candles = loadCandles(token.mint, fromDate, toDate);
-    if (candles.length === 0) {
+    const executionCandles = loadCandles(token.mint, fromDate, toDate);
+    if (executionCandles.length === 0) {
       console.warn(`No candle data for ${token.label} (${token.mint.slice(0, 8)}...)`);
       continue;
     }
-    if (timeframe > 1) {
-      candles = aggregateCandles(candles, timeframe);
-    }
+    const signalCandles = timeframe > 1
+      ? aggregateCandles(executionCandles, timeframe)
+      : executionCandles;
 
     for (const name of strategyNames) {
-      const result = runBacktest(candles, {
+      const result = runBacktest(signalCandles, {
         mint: token.mint,
         label: token.label,
         strategy: STRATEGIES[name],
         roundTripCostPct: costCfg.roundTripPct,
+        executionCandles,
+        signalTimeframeMinutes: timeframe,
+        executionTimeframeMinutes: 1,
       });
 
       printReport(result);

@@ -23,6 +23,14 @@ const evaluators: Record<TemplateId, Evaluator> = {
     return 'hold';
   },
 
+  'rsi-atr-protect': (p, ctx) => {
+    const { rsi } = ctx.indicators;
+    if (rsi === undefined) return 'hold';
+    if (ctx.hasPosition && rsi > p.exit) return 'sell';
+    if (rsi < p.entry) return 'buy';
+    return 'hold';
+  },
+
   'crsi': (p, ctx) => {
     const { connorsRsi } = ctx.indicators;
     if (connorsRsi === undefined) return 'hold';
@@ -48,6 +56,15 @@ const evaluators: Record<TemplateId, Evaluator> = {
   },
 
   'crsi-dip-recover': (p, ctx) => {
+    const { connorsRsi } = ctx.indicators;
+    const prev = ctx.prevIndicators;
+    if (connorsRsi === undefined || prev?.connorsRsi === undefined) return 'hold';
+    if (ctx.hasPosition && connorsRsi > p.exit) return 'sell';
+    if (prev.connorsRsi < p.dip && connorsRsi >= p.recover) return 'buy';
+    return 'hold';
+  },
+
+  'crsi-dip-recover-atr': (p, ctx) => {
     const { connorsRsi } = ctx.indicators;
     const prev = ctx.prevIndicators;
     if (connorsRsi === undefined || prev?.connorsRsi === undefined) return 'hold';
@@ -159,6 +176,14 @@ const evaluators: Record<TemplateId, Evaluator> = {
     return 'hold';
   },
 
+  'vwap-rsi-range-revert-atr': (p, ctx) => {
+    const { adx, rsi, vwapProxy } = ctx.indicators;
+    if (adx === undefined || rsi === undefined || vwapProxy === undefined) return 'hold';
+    if (ctx.hasPosition && ctx.close >= vwapProxy) return 'sell';
+    if (adx < p.adxMax && ctx.close < vwapProxy && rsi < p.rsiEntry) return 'buy';
+    return 'hold';
+  },
+
   'connors-sma50-pullback': (p, ctx) => {
     const { connorsRsi, sma } = ctx.indicators;
     if (connorsRsi === undefined || !sma) return 'hold';
@@ -210,10 +235,12 @@ const evaluators: Record<TemplateId, Evaluator> = {
 
 const metadataMap: Record<TemplateId, TemplateMetadata> = {
   'rsi':                     { id: 'rsi',                     requiredHistory: 15,  requiredIndicators: ['rsi'],                                  liveCompatible: true },
+  'rsi-atr-protect':         { id: 'rsi-atr-protect',         requiredHistory: 15,  requiredIndicators: ['rsi', 'atr'],                           liveCompatible: true },
   'crsi':                    { id: 'crsi',                    requiredHistory: 102, requiredIndicators: ['connorsRsi'],                            liveCompatible: true },
   'bb-rsi':                  { id: 'bb-rsi',                  requiredHistory: 21,  requiredIndicators: ['bollingerBands', 'rsi'],                 liveCompatible: true },
   'rsi-crsi-confluence':     { id: 'rsi-crsi-confluence',     requiredHistory: 102, requiredIndicators: ['rsi', 'connorsRsi'],                     liveCompatible: true },
   'crsi-dip-recover':        { id: 'crsi-dip-recover',        requiredHistory: 102, requiredIndicators: ['connorsRsi'],                            liveCompatible: true },
+  'crsi-dip-recover-atr':    { id: 'crsi-dip-recover-atr',    requiredHistory: 102, requiredIndicators: ['connorsRsi', 'atr'],                     liveCompatible: true },
   'trend-pullback-rsi':      { id: 'trend-pullback-rsi',      requiredHistory: 51,  requiredIndicators: ['rsi', 'sma'],                           liveCompatible: true },
   'vwap-rsi-reclaim':        { id: 'vwap-rsi-reclaim',        requiredHistory: 15,  requiredIndicators: ['rsi', 'vwapProxy'],                     liveCompatible: true },
   'bb-rsi-crsi-reversal':    { id: 'bb-rsi-crsi-reversal',    requiredHistory: 102, requiredIndicators: ['bollingerBands', 'rsi', 'connorsRsi'],   liveCompatible: true },
@@ -225,6 +252,7 @@ const metadataMap: Record<TemplateId, TemplateMetadata> = {
   'bb-squeeze-breakout':     { id: 'bb-squeeze-breakout',     requiredHistory: 21,  requiredIndicators: ['bollingerBands'],                        liveCompatible: true },
   'vwap-trend-pullback':     { id: 'vwap-trend-pullback',     requiredHistory: 15,  requiredIndicators: ['rsi', 'vwapProxy'],                     liveCompatible: true },
   'vwap-rsi-range-revert':   { id: 'vwap-rsi-range-revert',   requiredHistory: 15,  requiredIndicators: ['adx', 'rsi', 'vwapProxy'],              liveCompatible: true },
+  'vwap-rsi-range-revert-atr': { id: 'vwap-rsi-range-revert-atr', requiredHistory: 15, requiredIndicators: ['adx', 'rsi', 'vwapProxy', 'atr'],    liveCompatible: true },
   'connors-sma50-pullback':  { id: 'connors-sma50-pullback',  requiredHistory: 102, requiredIndicators: ['connorsRsi', 'sma'],                    liveCompatible: true },
   'rsi2-micro-range':        { id: 'rsi2-micro-range',        requiredHistory: 15,  requiredIndicators: ['rsiShort', 'adx'],                      liveCompatible: true },
   'atr-breakout-follow':     { id: 'atr-breakout-follow',     requiredHistory: 15,  requiredIndicators: ['atr', 'adx'],                           liveCompatible: true },
@@ -236,10 +264,12 @@ const metadataMap: Record<TemplateId, TemplateMetadata> = {
 
 const REQUIRED_PARAMS: Record<TemplateId, string[]> = {
   'rsi':                     ['entry', 'exit'],
+  'rsi-atr-protect':         ['entry', 'exit', 'slAtr', 'tpAtr'],
   'crsi':                    ['entry', 'exit'],
   'bb-rsi':                  ['rsiEntry', 'rsiExit'],
   'rsi-crsi-confluence':     ['entryRsi', 'entryCrsi', 'exitRsi', 'exitCrsi'],
   'crsi-dip-recover':        ['dip', 'recover', 'exit'],
+  'crsi-dip-recover-atr':    ['dip', 'recover', 'exit', 'slAtr', 'tpAtr'],
   'trend-pullback-rsi':      ['entry', 'exit'],
   'vwap-rsi-reclaim':        ['rsiMax', 'exitRsi'],
   'bb-rsi-crsi-reversal':    ['rsiEntry', 'crsiEntry', 'rsiExit'],
@@ -251,6 +281,7 @@ const REQUIRED_PARAMS: Record<TemplateId, string[]> = {
   'bb-squeeze-breakout':     ['widthThreshold'],
   'vwap-trend-pullback':     ['rsiEntry', 'rsiExit'],
   'vwap-rsi-range-revert':   ['adxMax', 'rsiEntry'],
+  'vwap-rsi-range-revert-atr': ['adxMax', 'rsiEntry', 'slAtr', 'tpAtr'],
   'connors-sma50-pullback':  ['entry', 'exit'],
   'rsi2-micro-range':        ['rsi2Entry', 'rsi2Exit', 'adxMax'],
   'atr-breakout-follow':     ['adxMin'],

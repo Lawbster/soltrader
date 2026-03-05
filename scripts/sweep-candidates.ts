@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 
 type TrendRegime = 'uptrend' | 'sideways' | 'downtrend' | 'unknown';
+type CandidatePreset = 'profit-first' | 'legacy';
 
 const TREND_WEIGHTS = {
   ret24h: 0.5,
@@ -43,8 +44,10 @@ interface CliArgs {
   file?: string;
   files?: string[];
   dir: string;
+  preset: CandidatePreset;
   minWinRate: number;
   minPnlPct: number;
+  minExpectancyPct: number;
   probeMinTrades: number;
   probeMaxTrades: number;
   coreMinTrades: number;
@@ -65,6 +68,7 @@ interface SweepRow {
   template: string;
   token: string;
   timeframe: number;
+  executionTimeframe?: number | null;
   maxPositions: number;
   params: string;
   trades: number;
@@ -89,6 +93,13 @@ interface SweepRow {
   relRet24hVsSolPct: number | null;
   trendCoverageDays: number | null;
   exitParity: 'indicator' | 'price' | null; // null if column absent (pre-parity CSVs)
+  entryTrendRegime?: TrendRegime | null;
+  entryTrendScore?: number | null;
+  entryRet24hPct?: number | null;
+  entryRet48hPct?: number | null;
+  entryRet72hPct?: number | null;
+  entryCoverageHours?: number | null;
+  entrySignalCount?: number | null;
 }
 
 interface CandidateRow extends SweepRow {
@@ -135,11 +146,34 @@ interface PatternRow {
   avgAlphaBlendPct: number | null;
 }
 
-function parseArgs(argv: string[]): CliArgs {
-  const args: CliArgs = {
-    dir: path.resolve(__dirname, '../data/sweep-results'),
-    minWinRate: 65,
+function presetDefaults(preset: CandidatePreset): Omit<CliArgs, 'file' | 'files' | 'dir' | 'outDir'> {
+  if (preset === 'legacy') {
+    return {
+      preset,
+      minWinRate: 65,
+      minPnlPct: 0,
+      minExpectancyPct: Number.NEGATIVE_INFINITY,
+      probeMinTrades: 4,
+      probeMaxTrades: 11,
+      coreMinTrades: 12,
+      coreMinProfitFactor: 1.2,
+      coreMinPnlPct: 0,
+      priorWins: 3,
+      priorLosses: 3,
+      top: 25,
+      topPerToken: 5,
+      writeCsv: true,
+      rankExitParity: 'indicator',
+      requireTimeframes: [],
+      timeframeSupportMin: 1,
+    };
+  }
+
+  return {
+    preset: 'profit-first',
+    minWinRate: 0,
     minPnlPct: 0,
+    minExpectancyPct: 0,
     probeMinTrades: 4,
     probeMaxTrades: 11,
     coreMinTrades: 12,
@@ -153,6 +187,25 @@ function parseArgs(argv: string[]): CliArgs {
     rankExitParity: 'indicator',
     requireTimeframes: [],
     timeframeSupportMin: 1,
+  };
+}
+
+function parseArgs(argv: string[]): CliArgs {
+  let preset: CandidatePreset = 'profit-first';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--preset') {
+      const value = requireValue(argv[i], argv[i + 1]);
+      if (value !== 'profit-first' && value !== 'legacy') {
+        throw new Error(`--preset must be profit-first|legacy, got: ${value}`);
+      }
+      preset = value;
+      i++;
+    }
+  }
+
+  const args: CliArgs = {
+    dir: path.resolve(__dirname, '../data/sweep-results'),
+    ...presetDefaults(preset),
   };
 
   for (let i = 0; i < argv.length; i++) {
@@ -187,6 +240,15 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === '--preset') {
+      const value = requireValue(arg, next);
+      if (value !== 'profit-first' && value !== 'legacy') {
+        throw new Error(`--preset must be profit-first|legacy, got: ${value}`);
+      }
+      args.preset = value;
+      i++;
+      continue;
+    }
     if (arg === '--min-win-rate') {
       args.minWinRate = parseNumber(arg, next);
       i++;
@@ -194,6 +256,11 @@ function parseArgs(argv: string[]): CliArgs {
     }
     if (arg === '--min-pnl') {
       args.minPnlPct = parseNumber(arg, next);
+      i++;
+      continue;
+    }
+    if (arg === '--min-expectancy') {
+      args.minExpectancyPct = parseNumber(arg, next);
       i++;
       continue;
     }
@@ -317,8 +384,12 @@ function printHelp(): void {
     '  --file PATH               One sweep CSV file (default: newest in --dir)',
     '  --files A,B,C             Multiple sweep CSV files (comma-separated) for MTF ranking',
     '  --dir PATH                Sweep directory (default: data/sweep-results)',
-    '  --min-win-rate N          Minimum raw win rate filter (default: 65)',
+    '  --preset NAME             profit-first (default) | legacy',
+    '                            profit-first: no WR gate, requires non-negative expectancy',
+    '                            legacy: preserves the old 65% WR bias',
+    '  --min-win-rate N          Minimum raw win rate filter (default: 0 profit-first / 65 legacy)',
     '  --min-pnl N               Global minimum pnl % filter for all buckets (default: 0)',
+    '  --min-expectancy N        Global minimum expectancy % filter (default: 0 profit-first)',
     '  --probe-min-trades N      Probe bucket min trades (default: 4)',
     '  --probe-max-trades N      Probe bucket max trades (default: 11)',
     '  --core-min-trades N       Core bucket min trades (default: 12)',
@@ -529,6 +600,7 @@ function parseSweepCsv(filePath: string): SweepRow[] {
       template: parts[idx.template],
       token: parts[idx.token],
       timeframe: Number(parts[idx.timeframe]),
+      executionTimeframe: parseOptionalNumber(parts, idx.executionTimeframe),
       maxPositions: idx.maxPositions !== undefined ? Number(parts[idx.maxPositions]) : 1,
       params: parts[idx.params],
       trades: Number(parts[idx.trades]),
@@ -555,23 +627,38 @@ function parseSweepCsv(filePath: string): SweepRow[] {
       exitParity: idx.exitParity !== undefined
         ? (parts[idx.exitParity] === 'price' ? 'price' : parts[idx.exitParity] === 'indicator' ? 'indicator' : null)
         : null,
+      entryTrendRegime: idx.entryTrendRegime !== undefined ? parseTrendRegime(parts[idx.entryTrendRegime]) : null,
+      entryTrendScore: parseOptionalNumber(parts, idx.entryTrendScore),
+      entryRet24hPct: parseOptionalNumber(parts, idx.entryRet24hPct),
+      entryRet48hPct: parseOptionalNumber(parts, idx.entryRet48hPct),
+      entryRet72hPct: parseOptionalNumber(parts, idx.entryRet72hPct),
+      entryCoverageHours: parseOptionalNumber(parts, idx.entryCoverageHours),
+      entrySignalCount: parseOptionalNumber(parts, idx.entrySignalCount),
     };
 
-    row.trendRegime = idx.trendRegime !== undefined
-      ? parseTrendRegime(parts[idx.trendRegime])
-      : classifyRegimeFromReturns(
-        row.tokenRet24hPct,
-        row.tokenRet48hPct,
-        row.tokenRet72hPct,
-        row.trendScore,
-      );
-    if (row.trendRegime === 'unknown') {
-      row.trendRegime = classifyRegimeFromReturns(
-        row.tokenRet24hPct,
-        row.tokenRet48hPct,
-        row.tokenRet72hPct,
-        row.trendScore,
-      );
+    if (row.entryTrendRegime && row.entryTrendRegime !== 'unknown') {
+      row.trendRegime = row.entryTrendRegime;
+      row.trendScore = row.entryTrendScore ?? row.trendScore;
+      row.tokenRet24hPct = row.entryRet24hPct ?? row.tokenRet24hPct;
+      row.tokenRet48hPct = row.entryRet48hPct ?? row.tokenRet48hPct;
+      row.tokenRet72hPct = row.entryRet72hPct ?? row.tokenRet72hPct;
+    } else {
+      row.trendRegime = idx.trendRegime !== undefined
+        ? parseTrendRegime(parts[idx.trendRegime])
+        : classifyRegimeFromReturns(
+          row.tokenRet24hPct,
+          row.tokenRet48hPct,
+          row.tokenRet72hPct,
+          row.trendScore,
+        );
+      if (row.trendRegime === 'unknown') {
+        row.trendRegime = classifyRegimeFromReturns(
+          row.tokenRet24hPct,
+          row.tokenRet48hPct,
+          row.tokenRet72hPct,
+          row.trendScore,
+        );
+      }
     }
 
     if (!Number.isFinite(row.trades) || row.trades <= 0) continue;
@@ -765,6 +852,12 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, pari
     mtfScore: trendAdjustedScore,
     parityDelta,
   };
+}
+
+function matchesCandidateFloor(row: CandidateRow, args: CliArgs): boolean {
+  return row.winRate >= args.minWinRate
+    && row.pnlPct >= args.minPnlPct
+    && row.expectancyPct >= args.minExpectancyPct;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -982,7 +1075,32 @@ function main(): void {
   const rows = inputFiles.flatMap(parseSweepCsv);
 
   if (rows.length === 0) {
-    throw new Error(`No valid rows parsed from ${inputFiles.join(', ')}`);
+    if (inputFiles.length === 1) {
+      console.log(`Input: ${inputFiles[0]}`);
+    } else {
+      console.log(`Input files (${inputFiles.length}):`);
+      for (const f of inputFiles) console.log(`  - ${f}`);
+    }
+    console.log('Rows parsed: 0');
+    console.log(`Preset: ${args.preset}`);
+    console.log('No valid sweep rows found after parsing. Writing empty candidate outputs.');
+
+    if (args.writeCsv) {
+      const srcBase = deriveOutputBase(inputFiles);
+      const outDir = args.outDir ?? path.join(path.dirname(inputFiles[0]), 'candidates');
+      fs.mkdirSync(outDir, { recursive: true });
+      const empty = '';
+      fs.writeFileSync(path.join(outDir, `${srcBase}.probe-ranked.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.core-ranked.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.patterns.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.core-up.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.core-sideways.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.core-down.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.probe-up.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.probe-sideways.csv`), empty, 'utf8');
+      fs.writeFileSync(path.join(outDir, `${srcBase}.probe-down.csv`), empty, 'utf8');
+    }
+    return;
   }
 
   const parityDeltaMap = buildParityDeltaMap(rows);
@@ -1005,18 +1123,16 @@ function main(): void {
     throw new Error(`No rows match --rank-exit-parity=${args.rankExitParity}. Check that the sweep CSV contains the expected exitParity values.`);
   }
 
-  const baseCandidates = rankingRows
-    .filter(r => r.winRate >= args.minWinRate)
-    .filter(r => r.pnlPct >= args.minPnlPct)
-    .map(r => {
-      const key = `${r.template}||${r.token}||${r.timeframe}||${r.params}`;
-      return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null);
-    });
+  const candidateRows = rankingRows.map(r => {
+    const key = `${r.template}||${r.token}||${r.timeframe}||${r.params}`;
+    return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null);
+  });
+
+  const baseCandidates = candidateRows.filter(r => matchesCandidateFloor(r, args));
+  const candidateKeys = new Set(baseCandidates.map(r => candidateSupportKey(r)));
 
   const mtfStats = computeMtfStats(
-    rankingRows
-      .filter(r => r.winRate >= args.minWinRate)
-      .filter(r => r.pnlPct >= args.minPnlPct),
+    rankingRows.filter(r => candidateKeys.has(candidateSupportKey(r))),
     args.requireTimeframes,
   );
 
@@ -1057,7 +1173,13 @@ function main(): void {
     for (const f of inputFiles) console.log(`  - ${f}`);
   }
   console.log(`Rows parsed: ${rows.length}`);
-  console.log(`Rows after winRate >= ${args.minWinRate}% and pnl >= ${args.minPnlPct}%: ${baseCandidates.length}`);
+  const expectancyLabel = Number.isFinite(args.minExpectancyPct)
+    ? `${args.minExpectancyPct}%`
+    : 'any';
+  console.log(`Preset: ${args.preset}`);
+  console.log(
+    `Rows after floors (winRate >= ${args.minWinRate}%, pnl >= ${args.minPnlPct}%, expectancy >= ${expectancyLabel}): ${baseCandidates.length}`
+  );
   if (args.timeframeSupportMin > 1 || args.requireTimeframes.length > 0) {
     const req = args.requireTimeframes.length > 0 ? args.requireTimeframes.join('|') : 'none';
     console.log(`Rows after MTF filters (support>=${args.timeframeSupportMin}, required=${req}): ${filtered.length}`);

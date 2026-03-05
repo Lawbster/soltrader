@@ -22,15 +22,27 @@ interface PrecomputedIndicators {
   adx: number[];
   vwapProxy: number[];
   obvProxy: number[];
+  snapshots: IndicatorValues[];
 }
 
+interface BacktestOpenPosition extends BacktestPosition {
+  entryRegime?: BacktestConfig['entryRegimeFilter'];
+}
+
+const precomputedCache = new WeakMap<Candle[], PrecomputedIndicators>();
+
 function precompute(candles: Candle[]): PrecomputedIndicators {
+  const cached = precomputedCache.get(candles);
+  if (cached) {
+    return cached;
+  }
+
   const closes = closeSeries(candles);
   const highs = highSeries(candles);
   const lows = lowSeries(candles);
   const volumes = volumeSeries(candles);
 
-  return {
+  const pre: PrecomputedIndicators = {
     rsi: computeRsiSeries(closes, 14),
     rsiShort: computeRsiSeries(closes, 2),
     connorsRsi: computeConnorsRsiSeries(closes, 3, 2, 100),
@@ -50,7 +62,12 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
     adx: computeAdx(highs, lows, closes, 14),
     vwapProxy: computeVwapProxy(candles),
     obvProxy: computeObvProxy(closes, volumes),
+    snapshots: [],
   };
+
+  pre.snapshots = candles.map((_, index) => snapshotAt(pre, index));
+  precomputedCache.set(candles, pre);
+  return pre;
 }
 
 function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues {
@@ -82,162 +99,338 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
   };
 }
 
+function inferTimeframeMs(candles: Candle[]): number {
+  for (let i = 1; i < candles.length; i++) {
+    const delta = candles[i].timestamp - candles[i - 1].timestamp;
+    if (delta > 0) return delta;
+  }
+  return 60_000;
+}
+
+function pnlPctAtPrice(entryPrice: number, exitPrice: number): number {
+  return ((exitPrice - entryPrice) / entryPrice) * 100;
+}
+
+function stopLossHit(strategy: BacktestConfig['strategy'], position: BacktestPosition, price: number): boolean {
+  if (strategy.stopLossPct !== undefined) {
+    const stopPrice = position.entryPrice * (1 + strategy.stopLossPct / 100);
+    return price <= stopPrice;
+  }
+  if (strategy.stopLossAtrMult !== undefined && position.entryAtr !== undefined && position.entryAtr > 0) {
+    const stopPrice = position.entryPrice - (strategy.stopLossAtrMult * position.entryAtr);
+    return price <= stopPrice;
+  }
+  return false;
+}
+
+function takeProfitHit(strategy: BacktestConfig['strategy'], position: BacktestPosition, price: number): boolean {
+  if (strategy.takeProfitPct !== undefined) {
+    const takeProfitPrice = position.entryPrice * (1 + strategy.takeProfitPct / 100);
+    return price >= takeProfitPrice;
+  }
+  if (strategy.takeProfitAtrMult !== undefined && position.entryAtr !== undefined && position.entryAtr > 0) {
+    const takeProfitPrice = position.entryPrice + (strategy.takeProfitAtrMult * position.entryAtr);
+    return price >= takeProfitPrice;
+  }
+  return false;
+}
+
+function protectionExitReason(
+  strategy: BacktestConfig['strategy'],
+  position: BacktestPosition,
+  currentPnlPct: number,
+  holdTimeMinutes: number,
+): string | null {
+  const protection = strategy.protection;
+  if (!protection) return null;
+
+  if (
+    Number.isFinite(protection.trailArmPct) &&
+    Number.isFinite(protection.trailGapPct) &&
+    (protection.trailArmPct as number) > 0 &&
+    (protection.trailGapPct as number) > 0 &&
+    position.peakPnlPct >= (protection.trailArmPct as number)
+  ) {
+    const trailStopPct = position.peakPnlPct - (protection.trailGapPct as number);
+    if (currentPnlPct <= trailStopPct) {
+      return 'protection-trailing';
+    }
+  }
+
+  if (
+    Number.isFinite(protection.profitLockArmPct) &&
+    Number.isFinite(protection.profitLockPct) &&
+    (protection.profitLockArmPct as number) > 0 &&
+    (protection.profitLockPct as number) >= 0 &&
+    position.peakPnlPct >= (protection.profitLockArmPct as number) &&
+    currentPnlPct <= (protection.profitLockPct as number)
+  ) {
+    return 'protection-profit-lock';
+  }
+
+  if (
+    Number.isFinite(protection.staleMaxHoldMinutes) &&
+    (protection.staleMaxHoldMinutes as number) > 0 &&
+    holdTimeMinutes >= (protection.staleMaxHoldMinutes as number)
+  ) {
+    const minPnlPct = Number.isFinite(protection.staleMinPnlPct)
+      ? (protection.staleMinPnlPct as number)
+      : 0;
+    if (currentPnlPct <= minPnlPct) {
+      return 'protection-stale';
+    }
+  }
+
+  return null;
+}
+
+function closePosition(
+  trades: BacktestTrade[],
+  mint: string,
+  roundTripCost: number,
+  position: BacktestOpenPosition,
+  exitTime: number,
+  exitPrice: number,
+  exitReason: string,
+  exitIndex: number,
+): void {
+  trades.push({
+    mint,
+    entryTime: position.entryTime,
+    exitTime,
+    entryPrice: position.entryPrice,
+    exitPrice,
+    pnlPct: pnlPctAtPrice(position.entryPrice, exitPrice) - roundTripCost,
+    holdBars: exitIndex - position.entryIndex,
+    holdTimeMinutes: (exitTime - position.entryTime) / 60_000,
+    exitReason,
+    entryRegime: position.entryRegime,
+  });
+}
+
+function closeAllPositionsAtPrice(
+  positions: BacktestOpenPosition[],
+  trades: BacktestTrade[],
+  mint: string,
+  roundTripCost: number,
+  exitTime: number,
+  exitPrice: number,
+  exitReason: string,
+  exitIndex: number,
+): void {
+  for (let i = positions.length - 1; i >= 0; i--) {
+    closePosition(trades, mint, roundTripCost, positions[i], exitTime, exitPrice, exitReason, exitIndex);
+    positions.splice(i, 1);
+  }
+}
+
+function updatePeakStats(positions: BacktestOpenPosition[], price: number): void {
+  for (const pos of positions) {
+    if (price > pos.peakPrice) {
+      pos.peakPrice = price;
+    }
+    const pnlPct = pnlPctAtPrice(pos.entryPrice, price);
+    if (pnlPct > pos.peakPnlPct) {
+      pos.peakPnlPct = pnlPct;
+    }
+  }
+}
+
+function processPriceExitsAtPrice(
+  strategy: BacktestConfig['strategy'],
+  positions: BacktestOpenPosition[],
+  trades: BacktestTrade[],
+  mint: string,
+  roundTripCost: number,
+  price: number,
+  exitTime: number,
+  exitIndex: number,
+): void {
+  for (let i = positions.length - 1; i >= 0; i--) {
+    const pos = positions[i];
+    const currentPnlPct = pnlPctAtPrice(pos.entryPrice, price);
+    const holdTimeMinutes = (exitTime - pos.entryTime) / 60_000;
+
+    const protectionReason = protectionExitReason(strategy, pos, currentPnlPct, holdTimeMinutes);
+    if (protectionReason) {
+      closePosition(trades, mint, roundTripCost, pos, exitTime, price, protectionReason, exitIndex);
+      positions.splice(i, 1);
+      continue;
+    }
+
+    if (stopLossHit(strategy, pos, price)) {
+      closePosition(trades, mint, roundTripCost, pos, exitTime, price, 'stop-loss', exitIndex);
+      positions.splice(i, 1);
+      continue;
+    }
+
+    if (takeProfitHit(strategy, pos, price)) {
+      closePosition(trades, mint, roundTripCost, pos, exitTime, price, 'take-profit', exitIndex);
+      positions.splice(i, 1);
+    }
+  }
+}
+
 export function runBacktest(candles: Candle[], config: BacktestConfig): BacktestResult {
-  const { strategy, mint, label, commissionPct = 0.3, slippagePct = 0.1, roundTripCostPct, maxPositions = 1, exitParityMode = 'indicator' } = config;
-  // Round-trip cost: use explicit override if provided, otherwise derive from commission+slippage
+  const {
+    strategy,
+    mint,
+    label,
+    commissionPct = 0.3,
+    slippagePct = 0.1,
+    roundTripCostPct,
+    maxPositions = 1,
+    exitParityMode = 'indicator',
+    executionCandles,
+    signalRegimes,
+    entryRegimeFilter,
+  } = config;
   const roundTripCost = roundTripCostPct ?? (commissionPct + slippagePct) * 2;
 
-  if (candles.length === 0) {
+  const signalCandles = candles;
+  const execCandles = executionCandles ?? candles;
+  const signalTimeframeMs = Math.max(60_000, config.signalTimeframeMinutes
+    ? config.signalTimeframeMinutes * 60_000
+    : inferTimeframeMs(signalCandles));
+  const executionTimeframeMs = Math.max(60_000, config.executionTimeframeMinutes
+    ? config.executionTimeframeMinutes * 60_000
+    : inferTimeframeMs(execCandles));
+  const signalTimeframeMinutes = Math.round(signalTimeframeMs / 60_000);
+  const executionTimeframeMinutes = Math.round(executionTimeframeMs / 60_000);
+
+  if (signalCandles.length === 0 || execCandles.length === 0) {
     return {
-      strategyName: strategy.name, mint, label,
-      trades: [], totalCandles: 0,
+      strategyName: strategy.name,
+      mint,
+      label,
+      trades: [],
+      totalCandles: 0,
       dateRange: { start: 0, end: 0 },
+      signalTimeframeMinutes,
+      executionTimeframeMinutes,
     };
   }
 
-  const pre = precompute(candles);
+  const pre = precompute(signalCandles);
   const trades: BacktestTrade[] = [];
-  const positions: BacktestPosition[] = []; // active positions (capped at maxPositions)
-  let pendingBuy = false;
-  let pendingSell = false;
+  const positions: BacktestOpenPosition[] = [];
+  const signalCloseTimes = signalCandles.map(candle => candle.timestamp + signalTimeframeMs);
+  let nextSignalIndex = Math.max(strategy.requiredHistory, 0);
 
-  // Stop one bar early — signals on bar i execute at bar i+1 open
-  for (let i = strategy.requiredHistory; i < candles.length; i++) {
-    const candle = candles[i];
+  for (let execIndex = 0; execIndex < execCandles.length; execIndex++) {
+    const execCandle = execCandles[execIndex];
 
-    // Execute pending signals at this bar's open (next-bar execution)
-    if (pendingBuy && positions.length < maxPositions) {
-      positions.push({
-        entryIndex: i,
-        entryPrice: candle.open,
-        entryTime: candle.timestamp,
-        peakPrice: candle.open,
-        peakPnlPct: 0,
-      });
-      pendingBuy = false;
-    } else if (pendingSell && positions.length > 0) {
-      // All-out on sell signal: close every open position at this bar's open
-      for (const pos of positions.splice(0)) {
-        const grossPnlPct = ((candle.open - pos.entryPrice) / pos.entryPrice) * 100;
-        trades.push({
+    if (positions.length > 0) {
+      updatePeakStats(positions, execCandle.open);
+      processPriceExitsAtPrice(
+        strategy,
+        positions,
+        trades,
+        mint,
+        roundTripCost,
+        execCandle.open,
+        execCandle.timestamp,
+        execIndex,
+      );
+    }
+
+    let latestSignalIndex: number | null = null;
+    while (nextSignalIndex < signalCandles.length && signalCloseTimes[nextSignalIndex] <= execCandle.timestamp) {
+      latestSignalIndex = nextSignalIndex;
+      nextSignalIndex++;
+    }
+
+    if (latestSignalIndex !== null) {
+      const signalCandle = signalCandles[latestSignalIndex];
+      const indicators = pre.snapshots[latestSignalIndex];
+      const prevIndicators = latestSignalIndex > 0 ? pre.snapshots[latestSignalIndex - 1] : undefined;
+      const hour = new Date(signalCloseTimes[latestSignalIndex]).getUTCHours();
+
+      const ctx: StrategyContext = {
+        candle: signalCandle,
+        index: latestSignalIndex,
+        indicators,
+        prevIndicators,
+        positions,
+        history: signalCandles,
+        hour,
+      };
+
+      const signal: Signal = strategy.evaluate(ctx);
+
+      if (positions.length > 0 && signal === 'sell' && exitParityMode !== 'price') {
+        closeAllPositionsAtPrice(
+          positions,
+          trades,
           mint,
-          entryTime: pos.entryTime,
-          exitTime: candle.timestamp,
-          entryPrice: pos.entryPrice,
-          exitPrice: candle.open,
-          pnlPct: grossPnlPct - roundTripCost,
-          holdBars: i - pos.entryIndex,
-          holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
-          exitReason: 'strategy',
+          roundTripCost,
+          execCandle.timestamp,
+          execCandle.open,
+          'strategy',
+          execIndex,
+        );
+      }
+
+      if (signal === 'buy' && positions.length < maxPositions) {
+        const signalRegime = signalRegimes?.[latestSignalIndex];
+        const regimeAllowsEntry = entryRegimeFilter === undefined
+          ? true
+          : signalRegime === entryRegimeFilter;
+        if (!regimeAllowsEntry) {
+          continue;
+        }
+        positions.push({
+          entryIndex: execIndex,
+          entryPrice: execCandle.open,
+          entryTime: execCandle.timestamp,
+          peakPrice: execCandle.open,
+          peakPnlPct: 0,
+          entryAtr: indicators.atr,
+          entryRegime: signalRegime,
         });
       }
-      pendingSell = false;
+
+      if (positions.length > 0) {
+        processPriceExitsAtPrice(
+          strategy,
+          positions,
+          trades,
+          mint,
+          roundTripCost,
+          execCandle.open,
+          execCandle.timestamp,
+          execIndex,
+        );
+      }
     }
 
-    // Intra-bar SL/TP check — evaluated per position, SL priority over TP
     if (positions.length > 0) {
-      for (let j = positions.length - 1; j >= 0; j--) {
-        const pos = positions[j];
-        let closedThisPos = false;
-
-        // Stop loss (priority over TP — conservative)
-        if (strategy.stopLossPct !== undefined) {
-          const stopPrice = pos.entryPrice * (1 + strategy.stopLossPct / 100);
-          if (candle.low <= stopPrice) {
-            trades.push({
-              mint,
-              entryTime: pos.entryTime,
-              exitTime: candle.timestamp,
-              entryPrice: pos.entryPrice,
-              exitPrice: stopPrice,
-              pnlPct: strategy.stopLossPct - roundTripCost,
-              holdBars: i - pos.entryIndex,
-              holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
-              exitReason: 'stop-loss',
-            });
-            positions.splice(j, 1);
-            closedThisPos = true;
-            pendingSell = false; // stale after any forced close
-          }
-        }
-
-        // Take profit
-        if (!closedThisPos && strategy.takeProfitPct !== undefined) {
-          const tpPrice = pos.entryPrice * (1 + strategy.takeProfitPct / 100);
-          if (candle.high >= tpPrice) {
-            trades.push({
-              mint,
-              entryTime: pos.entryTime,
-              exitTime: candle.timestamp,
-              entryPrice: pos.entryPrice,
-              exitPrice: tpPrice,
-              pnlPct: strategy.takeProfitPct - roundTripCost,
-              holdBars: i - pos.entryIndex,
-              holdTimeMinutes: (candle.timestamp - pos.entryTime) / 60_000,
-              exitReason: 'take-profit',
-            });
-            positions.splice(j, 1);
-            pendingSell = false; // stale after any forced close
-          }
-        }
-      }
-      // If all positions closed by SL/TP, cancel pending re-entry for this signal cycle
-      if (positions.length === 0) {
-        pendingBuy = false;
-      }
-    }
-
-    // Track peak for each open position
-    for (const pos of positions) {
-      if (candle.close > pos.peakPrice) {
-        pos.peakPrice = candle.close;
-      }
-      const pnlPct = ((candle.close - pos.entryPrice) / pos.entryPrice) * 100;
-      if (pnlPct > pos.peakPnlPct) {
-        pos.peakPnlPct = pnlPct;
-      }
-    }
-
-    const indicators = snapshotAt(pre, i);
-    const prevIndicators = i > 0 ? snapshotAt(pre, i - 1) : undefined;
-    const hour = new Date(candle.timestamp).getUTCHours();
-
-    const ctx: StrategyContext = {
-      candle,
-      index: i,
-      indicators,
-      prevIndicators,
-      positions,
-      history: candles,
-      hour,
-    };
-
-    const signal: Signal = strategy.evaluate(ctx);
-
-    // Queue signal for next-bar execution.
-    // In 'price' parity mode: suppress indicator sell signals — positions only close via intra-bar SL/TP.
-    if (signal === 'buy' && positions.length < maxPositions) {
-      pendingBuy = true;
-    } else if (signal === 'sell' && positions.length > 0 && exitParityMode !== 'price') {
-      pendingSell = true;
+      updatePeakStats(positions, execCandle.close);
+      processPriceExitsAtPrice(
+        strategy,
+        positions,
+        trades,
+        mint,
+        roundTripCost,
+        execCandle.close,
+        execCandle.timestamp + executionTimeframeMs,
+        execIndex,
+      );
     }
   }
 
-  // Force-close any open positions at end of data
+  const lastExecCandle = execCandles[execCandles.length - 1];
   for (const pos of positions) {
-    const last = candles[candles.length - 1];
-    const grossPnlPct = ((last.close - pos.entryPrice) / pos.entryPrice) * 100;
-    trades.push({
+    closePosition(
+      trades,
       mint,
-      entryTime: pos.entryTime,
-      exitTime: last.timestamp,
-      entryPrice: pos.entryPrice,
-      exitPrice: last.close,
-      pnlPct: grossPnlPct - roundTripCost,
-      holdBars: candles.length - 1 - pos.entryIndex,
-      holdTimeMinutes: (last.timestamp - pos.entryTime) / 60_000,
-      exitReason: 'end-of-data',
-    });
+      roundTripCost,
+      pos,
+      lastExecCandle.timestamp + executionTimeframeMs,
+      lastExecCandle.close,
+      'end-of-data',
+      execCandles.length - 1,
+    );
   }
 
   return {
@@ -245,10 +438,12 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     mint,
     label,
     trades,
-    totalCandles: candles.length,
+    totalCandles: signalCandles.length,
     dateRange: {
-      start: candles[0].timestamp,
-      end: candles[candles.length - 1].timestamp,
+      start: Math.min(signalCandles[0].timestamp, execCandles[0].timestamp),
+      end: lastExecCandle.timestamp + executionTimeframeMs,
     },
+    signalTimeframeMinutes,
+    executionTimeframeMinutes,
   };
 }

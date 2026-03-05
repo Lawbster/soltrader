@@ -71,7 +71,10 @@ export function printReport(result: BacktestResult): void {
   console.log('\n' + '='.repeat(60));
   console.log(`Strategy: ${result.strategyName}`);
   console.log(`Token:    ${result.label} (${result.mint.slice(0, 8)}...)`);
-  console.log(`Period:   ${startDate} to ${endDate} (${result.totalCandles} candles)`);
+  console.log(
+    `Period:   ${startDate} to ${endDate} ` +
+    `(${result.totalCandles} signal candles, ${result.signalTimeframeMinutes}m signal / ${result.executionTimeframeMinutes}m exec)`
+  );
   console.log('='.repeat(60));
   console.log(`Trades:        ${metrics.totalTrades} (${metrics.wins}W / ${metrics.losses}L)`);
   console.log(`Win rate:      ${metrics.winRate.toFixed(1)}%`);

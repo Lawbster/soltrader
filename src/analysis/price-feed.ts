@@ -42,18 +42,19 @@ export function recordPrice(mint: string, price: number) {
 export function buildCloseSeriesFromPrices(
   mint: string,
   intervalMs: number,
-  lookbackMs: number
+  lookbackMs: number,
+  asOfMs = Date.now(),
 ): number[] {
   const history = priceHistory.get(mint);
   if (!history || history.length === 0) return [];
 
-  const now = Date.now();
-  const start = now - lookbackMs;
+  const end = asOfMs;
+  const start = end - lookbackMs;
   const bucketCount = Math.ceil(lookbackMs / intervalMs);
   const closes: Array<number | undefined> = new Array(bucketCount).fill(undefined);
 
   for (const point of history) {
-    if (point.timestamp < start || point.timestamp > now) continue;
+    if (point.timestamp < start || point.timestamp >= end) continue;
     const idx = Math.floor((point.timestamp - start) / intervalMs);
     if (idx >= 0 && idx < bucketCount) {
       closes[idx] = point.price; // Last price in each bucket wins

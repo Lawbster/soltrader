@@ -23,6 +23,8 @@ export interface IndicatorOptions {
   connorsRsiPeriod: number;
   connorsStreakRsiPeriod: number;
   connorsPercentRankPeriod: number;
+  asOfMs?: number;
+  closedOnly?: boolean;
 }
 
 // ── OHLC types ────────────────────────────────────────────────────────
@@ -37,16 +39,25 @@ interface OhlcCandle {
   volume: number; // trade count as volume proxy
 }
 
+function resolveSeriesEndMs(intervalMs: number, asOfMs = Date.now(), closedOnly = true): number {
+  if (!closedOnly) return asOfMs;
+  return Math.floor(asOfMs / intervalMs) * intervalMs;
+}
+
 // ── Close series builder ──────────────────────────────────────────────
 
-function buildCloseSeries(trades: TradeEvent[], intervalMs: number, lookbackMs: number): number[] {
-  const now = Date.now();
-  const start = now - lookbackMs;
+function buildCloseSeries(
+  trades: TradeEvent[],
+  intervalMs: number,
+  lookbackMs: number,
+  endMs: number,
+): number[] {
+  const start = endMs - lookbackMs;
   const bucketCount = Math.ceil(lookbackMs / intervalMs);
   const closes: Array<number | undefined> = new Array(bucketCount).fill(undefined);
 
   for (const trade of trades) {
-    if (trade.timestamp < start || trade.timestamp > now) continue;
+    if (trade.timestamp < start || trade.timestamp >= endMs) continue;
     if (trade.pricePerToken <= 0) continue;
     const idx = Math.floor((trade.timestamp - start) / intervalMs);
     if (idx >= 0 && idx < bucketCount) {
@@ -75,9 +86,9 @@ function buildOhlcSeries(
   intervalMs: number,
   lookbackMs: number,
   minCandles: number,
+  endMs: number,
 ): { candles: OhlcCandle[]; source: OhlcSource } {
-  const now = Date.now();
-  const start = now - lookbackMs;
+  const start = endMs - lookbackMs;
   const bucketCount = Math.ceil(lookbackMs / intervalMs);
 
   // Priority 1: trade-derived OHLC (real high/low from individual trade prices)
@@ -87,7 +98,7 @@ function buildOhlcSeries(
     const buckets: Bucket[] = Array.from({ length: bucketCount }, () => ({ high: -Infinity, low: Infinity, count: 0 }));
 
     for (const trade of trades) {
-      if (trade.timestamp < start || trade.timestamp > now) continue;
+      if (trade.timestamp < start || trade.timestamp >= endMs) continue;
       if (trade.pricePerToken <= 0) continue;
       const idx = Math.floor((trade.timestamp - start) / intervalMs);
       if (idx < 0 || idx >= bucketCount) continue;
@@ -121,7 +132,7 @@ function buildOhlcSeries(
     const buckets: Bucket[] = Array.from({ length: bucketCount }, () => ({ high: -Infinity, low: Infinity, count: 0 }));
 
     for (const point of history) {
-      if (point.timestamp < start || point.timestamp > now) continue;
+      if (point.timestamp < start || point.timestamp >= endMs) continue;
       const idx = Math.floor((point.timestamp - start) / intervalMs);
       if (idx < 0 || idx >= bucketCount) continue;
       const b = buckets[idx];
@@ -327,10 +338,11 @@ function computeIndicatorsFromSeries(
 export function getIndicatorSnapshot(mint: string, options: IndicatorOptions): IndicatorSnapshot {
   const intervalMs = options.intervalMinutes * 60_000;
   const lookbackMs = options.lookbackMinutes * 60_000;
+  const seriesEndMs = resolveSeriesEndMs(intervalMs, options.asOfMs, options.closedOnly ?? true);
 
   // ── Close series ──────────────────────────────────────────────────
   const trades      = getTradesForMint(mint);
-  const tradeCloses = buildCloseSeries(trades, intervalMs, lookbackMs);
+  const tradeCloses = buildCloseSeries(trades, intervalMs, lookbackMs, seriesEndMs);
 
   const minCandles = options.connorsPercentRankPeriod + 1;
   let closes: number[];
@@ -340,7 +352,7 @@ export function getIndicatorSnapshot(mint: string, options: IndicatorOptions): I
     closes = tradeCloses;
     closeSource = 'trades';
   } else {
-    const priceCloses = buildCloseSeriesFromPrices(mint, intervalMs, lookbackMs);
+    const priceCloses = buildCloseSeriesFromPrices(mint, intervalMs, lookbackMs, seriesEndMs);
     if (priceCloses.length > tradeCloses.length) {
       closes = priceCloses;
       closeSource = 'price-feed';
@@ -354,7 +366,7 @@ export function getIndicatorSnapshot(mint: string, options: IndicatorOptions): I
 
   // ── OHLC series for ADX / ATR / VWAP ─────────────────────────────
   const adxMinCandles = 29; // 2 * ADX period (14) + 1
-  const { candles: ohlcCandles, source: ohlcSource } = buildOhlcSeries(mint, intervalMs, lookbackMs, adxMinCandles);
+  const { candles: ohlcCandles, source: ohlcSource } = buildOhlcSeries(mint, intervalMs, lookbackMs, adxMinCandles, seriesEndMs);
   const adxSource: IndicatorSnapshot['adxSource'] = ohlcSource ?? 'unavailable';
   log.debug('OHLC source', { mint, adxSource, ohlcCandles: ohlcCandles.length });
 
@@ -376,11 +388,19 @@ export function getIndicatorSnapshot(mint: string, options: IndicatorOptions): I
     options.connorsStreakRsiPeriod,
     options.connorsPercentRankPeriod,
   );
+  const lastCandleTimestamp = closes.length > 0 ? seriesEndMs - intervalMs : undefined;
+  const lastCandleClose = closes.length > 0 ? closes[closes.length - 1] : undefined;
+  const prevCandleClose = closes.length > 1 ? closes[closes.length - 2] : undefined;
+  const prevCandleHigh = ohlcCandles.length > 1 ? ohlcCandles[ohlcCandles.length - 2].high : undefined;
 
   return {
     mint,
     candleIntervalMinutes: options.intervalMinutes,
     candleCount: closes.length,
+    lastCandleTimestamp,
+    lastCandleClose,
+    prevCandleClose,
+    prevCandleHigh,
     rsi:          rsi         === null ? undefined : rsi,
     connorsRsi:   connorsRsi  === null ? undefined : connorsRsi,
     rsiShort:     current?.rsiShort,

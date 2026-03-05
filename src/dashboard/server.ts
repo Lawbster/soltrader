@@ -157,6 +157,7 @@ function handleSignals(res: http.ServerResponse) {
       let rsi: number | undefined;
       let candleCount = 0;
       let source = 'none';
+      let atrReady = false;
 
       if (indicatorsCfg?.enabled) {
         const snap = getIndicatorSnapshot(mint, {
@@ -170,6 +171,7 @@ function handleSignals(res: http.ServerResponse) {
         crsi = snap.connorsRsi;
         rsi = snap.rsi;
         candleCount = snap.candleCount;
+        atrReady = Number.isFinite(snap.atr);
         source = candleCount > 0 ? 'price-feed' : 'none';
       }
 
@@ -201,6 +203,8 @@ function handleSignals(res: http.ServerResponse) {
       const lastImpact = getLastQuotedImpact();
       const quotedImpact = lastImpact?.mint === mint ? lastImpact.impact : undefined;
 
+      const requiresAtr = Number.isFinite(tokenStrategy?.slAtr) || Number.isFinite(tokenStrategy?.tpAtr);
+
       return {
         mint,
         label: entry.label,
@@ -211,7 +215,7 @@ function handleSignals(res: http.ServerResponse) {
         candlesNeeded,
         pricePoints,
         source,
-        ready: candleCount >= candlesNeeded,
+        ready: candleCount >= candlesNeeded && (!requiresAtr || atrReady),
         oversoldThreshold: tokenStrategy?.params.entry ?? indicatorsCfg?.connors?.oversold ?? 20,
         liquidityUsd,
         effectiveMaxUsdc: effectiveMaxUsdcSafe,
@@ -223,6 +227,8 @@ function handleSignals(res: http.ServerResponse) {
         tokenMaxEquityPct: tokenStrategy?.maxPositionEquityPct ?? null,
         sl: tokenStrategy?.sl,
         tp: tokenStrategy?.tp,
+        slAtr: tokenStrategy?.slAtr ?? null,
+        tpAtr: tokenStrategy?.tpAtr ?? null,
         tier: tokenStrategy?.tier,
         indicatorKind: tokenStrategy?.indicator?.kind ?? 'crsi',
         templateId: tokenStrategy?.templateId ?? null,

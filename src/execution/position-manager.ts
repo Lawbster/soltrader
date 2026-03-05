@@ -493,6 +493,78 @@ function evaluateRouteProtectionExit(
   return null;
 }
 
+function pnlPctFromPrices(entryPrice: number, currentPrice: number): number {
+  return ((currentPrice - entryPrice) / entryPrice) * 100;
+}
+
+function resolveStrategyStopLossExit(position: Position): ReturnType<typeof evaluateExit> {
+  const plan = position.strategyPlan;
+  if (!plan) return null;
+
+  if (
+    Number.isFinite(plan.slAtr) &&
+    Number.isFinite(plan.entryAtr) &&
+    (plan.slAtr as number) > 0 &&
+    (plan.entryAtr as number) > 0
+  ) {
+    const stopPrice = position.entryPrice - ((plan.slAtr as number) * (plan.entryAtr as number));
+    if (position.currentPrice <= stopPrice) {
+      const stopPct = pnlPctFromPrices(position.entryPrice, stopPrice);
+      return {
+        type: 'hard_stop',
+        sellPct: 100,
+        reason: `ATR SL hit: ${position.currentPnlPct.toFixed(1)}% <= ${stopPct.toFixed(1)}% (x${(plan.slAtr as number).toFixed(2)} ATR)`,
+      };
+    }
+  }
+
+  if (Number.isFinite(plan.sl)) {
+    if (position.currentPnlPct <= (plan.sl as number)) {
+      return {
+        type: 'hard_stop',
+        sellPct: 100,
+        reason: `SL hit: ${position.currentPnlPct.toFixed(1)}% <= ${(plan.sl as number)}%`,
+      };
+    }
+  }
+
+  return null;
+}
+
+function resolveStrategyTakeProfitExit(position: Position): ReturnType<typeof evaluateExit> {
+  const plan = position.strategyPlan;
+  if (!plan) return null;
+
+  if (
+    Number.isFinite(plan.tpAtr) &&
+    Number.isFinite(plan.entryAtr) &&
+    (plan.tpAtr as number) > 0 &&
+    (plan.entryAtr as number) > 0
+  ) {
+    const targetPrice = position.entryPrice + ((plan.tpAtr as number) * (plan.entryAtr as number));
+    if (position.currentPrice >= targetPrice) {
+      const targetPct = pnlPctFromPrices(position.entryPrice, targetPrice);
+      return {
+        type: 'tp1',
+        sellPct: 100,
+        reason: `ATR TP hit: ${position.currentPnlPct.toFixed(1)}% >= ${targetPct.toFixed(1)}% (x${(plan.tpAtr as number).toFixed(2)} ATR)`,
+      };
+    }
+  }
+
+  if (Number.isFinite(plan.tp)) {
+    if (position.currentPnlPct >= (plan.tp as number)) {
+      return {
+        type: 'tp1',
+        sellPct: 100,
+        reason: `TP hit: ${position.currentPnlPct.toFixed(1)}% >= ${(plan.tp as number)}%`,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function updatePosition(position: Position) {
   const cfg = loadStrategyConfig();
 
@@ -502,7 +574,7 @@ async function updatePosition(position: Position) {
   // Use priceUsd as the USDC price (USDC ≈ $1)
   position.currentPrice = tokenData.priceUsd;
 
-  const pnlPct = ((position.currentPrice - position.entryPrice) / position.entryPrice) * 100;
+  const pnlPct = pnlPctFromPrices(position.entryPrice, position.currentPrice);
   position.currentPnlPct = pnlPct;
   if (pnlPct > position.peakPnlPct) {
     position.peakPnlPct = pnlPct;
@@ -531,10 +603,11 @@ async function updatePosition(position: Position) {
   const holdTimeMinutes = (Date.now() - position.entryTime) / 60_000;
 
   let exitSignal: ReturnType<typeof evaluateExit>;
+  const stopLossExit = resolveStrategyStopLossExit(position);
+  const takeProfitExit = resolveStrategyTakeProfitExit(position);
 
   if (position.strategyPlan) {
     // Per-token strategy: SL/TP exit with optional template-indicator exit
-    const { sl, tp } = position.strategyPlan;
     const effectiveExitMode = position.strategyPlan.exitMode ?? 'price';
 
     // Emergency LP drop — always highest priority regardless of exit mode
@@ -560,12 +633,12 @@ async function updatePosition(position: Position) {
           Math.round(position.strategyPlan.timeframeMinutes ?? indCfg?.candleIntervalMinutes ?? 1),
         );
         const candleMs = timeframeMinutes * 60_000;
-        const lastCandleTs = Math.floor(Date.now() / candleMs) * candleMs;
+        const signalBoundaryMs = Math.floor(Date.now() / candleMs) * candleMs;
 
         let templateSig: 'buy' | 'sell' | 'hold' = 'hold';
 
-        if (lastCandleTs > (position.lastTemplateExitEvalMs ?? 0)) {
-          position.lastTemplateExitEvalMs = lastCandleTs;
+        if (signalBoundaryMs > (position.lastTemplateExitEvalMs ?? 0)) {
+          position.lastTemplateExitEvalMs = signalBoundaryMs;
           // Evaluate template signal when indicators are available; otherwise templateSig stays 'hold'
           if (indCfg?.enabled) {
             const planIndicator = position.strategyPlan.indicator;
@@ -590,15 +663,22 @@ async function updatePosition(position: Position) {
               connorsRsiPeriod,
               connorsStreakRsiPeriod,
               connorsPercentRankPeriod,
+              asOfMs: signalBoundaryMs,
             });
             if (snap.candleCount >= requiredHistory) {
+              const signalClose = snap.lastCandleClose ?? position.currentPrice;
+              const signalHourUtc = snap.lastCandleTimestamp !== undefined
+                ? new Date(snap.lastCandleTimestamp + (timeframeMinutes * 60_000)).getUTCHours()
+                : new Date().getUTCHours();
               const liveCtx: LiveTemplateContext = {
-                close: position.currentPrice,
+                close: signalClose,
+                prevClose: snap.prevCandleClose,
+                prevHigh: snap.prevCandleHigh,
                 indicators: snapshotToIndicatorValues(snap),
                 prevIndicators: snap.prevIndicators
                   ? snapshotToIndicatorValues(snap.prevIndicators)
                   : undefined,
-                hourUtc: new Date().getUTCHours(),
+                hourUtc: signalHourUtc,
                 hasPosition: true,
               };
               templateSig = evaluateSignal(
@@ -634,19 +714,19 @@ async function updatePosition(position: Position) {
             sellPct: 100,
             reason: `template-indicator-exit: ${position.strategyPlan.templateId}`,
           };
-        } else if (pnlPct <= sl) {
-          exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
-        } else if (pnlPct >= tp) {
-          exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+        } else if (stopLossExit) {
+          exitSignal = stopLossExit;
+        } else if (takeProfitExit) {
+          exitSignal = takeProfitExit;
         } else {
           exitSignal = null;
         }
       } else {
         // Price-only exit (exitMode='price' or absent)
-        if (pnlPct <= sl) {
-          exitSignal = { type: 'hard_stop', sellPct: 100, reason: `SL hit: ${pnlPct.toFixed(1)}% <= ${sl}%` };
-        } else if (pnlPct >= tp) {
-          exitSignal = { type: 'tp1', sellPct: 100, reason: `TP hit: ${pnlPct.toFixed(1)}% >= ${tp}%` };
+        if (stopLossExit) {
+          exitSignal = stopLossExit;
+        } else if (takeProfitExit) {
+          exitSignal = takeProfitExit;
         } else {
           exitSignal = null;
         }

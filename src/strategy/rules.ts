@@ -114,13 +114,19 @@ export function evaluateEntry(
 
   // Per-token strategy: evaluate via shared template catalog
   if (tokenStrategy) {
+    const signalClose = indicators?.lastCandleClose ?? token.priceUsd;
+    const signalHourUtc = indicators?.lastCandleTimestamp !== undefined
+      ? new Date(indicators.lastCandleTimestamp + ((indicators.candleIntervalMinutes || 1) * 60_000)).getUTCHours()
+      : new Date().getUTCHours();
     const liveCtx: LiveTemplateContext = {
-      close: token.priceUsd,
+      close: signalClose,
+      prevClose: indicators?.prevCandleClose,
+      prevHigh: indicators?.prevCandleHigh,
       indicators: snapshotToIndicatorValues(indicators ?? {}),
       prevIndicators: indicators?.prevIndicators
         ? snapshotToIndicatorValues(indicators.prevIndicators)
         : undefined,
-      hourUtc: new Date().getUTCHours(),
+      hourUtc: signalHourUtc,
       hasPosition: false, // evaluateEntry is only called when no open position for this token
     };
 
@@ -151,8 +157,10 @@ export function evaluateEntry(
       exitMode: tokenStrategy.exitMode,
       sizeUsdc: positionSizeUsdc.toFixed(2),
       tokenCapUsdc: tokenCapUsdc.toFixed(2),
-      sl: tokenStrategy.sl,
-      tp: tokenStrategy.tp,
+      sl: tokenStrategy.sl ?? null,
+      tp: tokenStrategy.tp ?? null,
+      slAtr: tokenStrategy.slAtr ?? null,
+      tpAtr: tokenStrategy.tpAtr ?? null,
     });
 
     return {
@@ -161,7 +169,7 @@ export function evaluateEntry(
       filterResult,
       scoreResult,
       positionSizeUsdc,
-      stopLossPct: tokenStrategy.sl,
+      stopLossPct: tokenStrategy.sl ?? 0,
     };
   }
 

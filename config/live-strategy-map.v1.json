@@ -6,63 +6,113 @@
       "tier": "core",
       "maxPositionEquityPct": 25,
       "enabled": true,
-      "indicator": {
-        "kind": "crsi",
-        "rsiPeriod": 3,
-        "streakRsiPeriod": 2,
-        "percentRankPeriod": 100
-      },
       "regimes": {
         "uptrend": {
-          "enabled": false,
-          "templateId": "crsi-dip-recover",
-          "timeframeMinutes": 5,
-          "priority": 100,
-          "params": {
-            "dip": 10,
-            "recover": 20,
-            "exit": 90
-          },
-          "sl": -5,
-          "tp": 3,
-          "exitMode": "indicator"
+          "enabled": true,
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "pippin-5m-rsi2-up-core",
+              "templateId": "rsi2-micro-range",
+              "timeframeMinutes": 5,
+              "priority": 420,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.25,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 480,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsi2Entry": 10,
+                "rsi2Exit": 95,
+                "adxMax": 25
+              },
+              "sl": -1.5,
+              "tp": 3,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "sideways": {
           "enabled": true,
-          "routeId": "pippin-5m-crsi-dip-recover-core",
-          "templateId": "crsi-dip-recover",
-          "timeframeMinutes": 5,
-          "priority": 320,
-          "protection": {
-            "profitLockArmPct": 1,
-            "profitLockPct": 0.15,
-            "trailArmPct": 2,
-            "trailGapPct": 1,
-            "staleMaxHoldMinutes": 240,
-            "staleMinPnlPct": 0
-          },
-          "params": {
-            "dip": 10,
-            "recover": 20,
-            "exit": 90
-          },
-          "sl": -5,
-          "tp": 3,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "pippin-1m-crsi-side-core",
+              "templateId": "crsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 390,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 240,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 10,
+                "exit": 95,
+                "session": 8
+              },
+              "sl": -3,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "pippin-5m-rsi2-side-secondary",
+              "templateId": "rsi2-micro-range",
+              "timeframeMinutes": 5,
+              "priority": 340,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsi2Entry": 15,
+                "rsi2Exit": 95,
+                "adxMax": 25
+              },
+              "sl": -1,
+              "tp": 3,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "downtrend": {
-          "enabled": false,
-          "templateId": "crsi-dip-recover",
-          "timeframeMinutes": 5,
-          "priority": 100,
-          "params": {
-            "dip": 10,
-            "recover": 20,
-            "exit": 90
-          },
-          "sl": -5,
-          "tp": 3,
-          "exitMode": "indicator"
+          "enabled": true,
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "pippin-1m-rsi-session-down-core",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 300,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 240,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 25,
+                "exit": 70,
+                "session": 0
+              },
+              "sl": -3,
+              "tp": 4,
+              "exitMode": "indicator"
+            }
+          ]
         }
       }
     },
@@ -71,23 +121,12 @@
       "tier": "core",
       "maxPositionEquityPct": 15,
       "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
       "regimes": {
         "uptrend": {
-          "enabled": true,
-          "routeId": "pump-5m-rsi-session-uptrend-core",
+          "enabled": false,
           "templateId": "rsi-session-gate",
           "timeframeMinutes": 5,
-          "priority": 280,
-          "protection": {
-            "profitLockArmPct": 0.8,
-            "profitLockPct": 0.1,
-            "staleMaxHoldMinutes": 180,
-            "staleMinPnlPct": 0
-          },
+          "priority": 100,
           "params": {
             "entry": 25,
             "exit": 75,
@@ -99,95 +138,134 @@
         },
         "sideways": {
           "enabled": true,
-          "routeId": "pump-1m-rsi-sideways-core",
-          "templateId": "rsi",
-          "timeframeMinutes": 1,
-          "priority": 260,
-          "protection": {
-            "profitLockArmPct": 1,
-            "profitLockPct": 0.15,
-            "trailArmPct": 2,
-            "trailGapPct": 1,
-            "staleMaxHoldMinutes": 240,
-            "staleMinPnlPct": 0
-          },
-          "params": {
-            "entry": 20,
-            "exit": 85
-          },
-          "sl": -5,
-          "tp": 3,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "pump-15m-rsi-crsi-midpoint-side-core",
+              "templateId": "rsi-crsi-midpoint-exit",
+              "timeframeMinutes": 15,
+              "priority": 320,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2.5,
+                "trailGapPct": 1.25,
+                "staleMaxHoldMinutes": 600,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entryRsi": 30,
+                "entryCrsi": 20
+              },
+              "sl": -5,
+              "tp": 99,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "pump-5m-rsi-side-secondary",
+              "templateId": "rsi",
+              "timeframeMinutes": 5,
+              "priority": 280,
+              "protection": {
+                "profitLockArmPct": 0.75,
+                "profitLockPct": 0.15,
+                "trailArmPct": 1.5,
+                "trailGapPct": 0.75,
+                "staleMaxHoldMinutes": 240,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 25,
+                "exit": 70
+              },
+              "sl": -5,
+              "tp": 1,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "downtrend": {
-          "enabled": false,
-          "templateId": "rsi",
-          "timeframeMinutes": 1,
-          "priority": 100,
-          "params": {
-            "entry": 20,
-            "exit": 85
-          },
-          "sl": -5,
-          "tp": 3,
-          "exitMode": "indicator"
+          "enabled": true,
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "pump-1m-rsi-down-core",
+              "templateId": "rsi",
+              "timeframeMinutes": 1,
+              "priority": 300,
+              "protection": {
+                "profitLockArmPct": 0.75,
+                "profitLockPct": 0.15,
+                "trailArmPct": 1.5,
+                "trailGapPct": 0.75,
+                "staleMaxHoldMinutes": 180,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 25,
+                "exit": 70
+              },
+              "sl": -3,
+              "tp": 1,
+              "exitMode": "indicator"
+            }
+          ]
         }
       }
     },
     "hntyVP6YFm1Hg25TN9WGLqM12b8TQmcknKrdu1oxWux": {
       "label": "HNT",
       "tier": "core",
-      "maxPositionEquityPct": 20,
-      "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
+      "maxPositionEquityPct": 15,
+      "enabled": false,
       "regimes": {
         "uptrend": {
           "enabled": false,
-          "templateId": "rsi-crsi-confluence",
+          "templateId": "rsi-crsi-midpoint-exit",
           "timeframeMinutes": 15,
           "priority": 100,
           "params": {
             "entryRsi": 25,
-            "entryCrsi": 20,
-            "exitRsi": 75,
-            "exitCrsi": 90
+            "entryCrsi": 20
           },
           "sl": -2,
-          "tp": 4,
+          "tp": 99,
           "exitMode": "indicator"
         },
         "sideways": {
           "enabled": true,
-          "routeId": "hnt-15m-rsi-crsi-confluence-core",
-          "templateId": "rsi-crsi-confluence",
+          "routeId": "hnt-15m-rsi-crsi-midpoint-side-core",
+          "templateId": "rsi-crsi-midpoint-exit",
           "timeframeMinutes": 15,
-          "priority": 250,
+          "priority": 300,
+          "protection": {
+            "profitLockArmPct": 1,
+            "profitLockPct": 0.2,
+            "trailArmPct": 2.5,
+            "trailGapPct": 1.25,
+            "staleMaxHoldMinutes": 600,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "entryRsi": 25,
-            "entryCrsi": 20,
-            "exitRsi": 75,
-            "exitCrsi": 90
+            "entryCrsi": 20
           },
           "sl": -2,
-          "tp": 4,
+          "tp": 99,
           "exitMode": "indicator"
         },
         "downtrend": {
           "enabled": false,
-          "templateId": "rsi-crsi-confluence",
+          "templateId": "rsi-crsi-midpoint-exit",
           "timeframeMinutes": 15,
           "priority": 100,
           "params": {
             "entryRsi": 25,
-            "entryCrsi": 20,
-            "exitRsi": 75,
-            "exitCrsi": 90
+            "entryCrsi": 20
           },
           "sl": -2,
-          "tp": 4,
+          "tp": 99,
           "exitMode": "indicator"
         }
       }
@@ -197,10 +275,6 @@
       "tier": "probe",
       "maxPositionEquityPct": 2,
       "enabled": false,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
       "regimes": {
         "uptrend": {
           "enabled": false,
@@ -241,11 +315,7 @@
       "label": "cbBTC",
       "tier": "core",
       "maxPositionEquityPct": 1.5,
-      "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
+      "enabled": false,
       "regimes": {
         "uptrend": {
           "enabled": false,
@@ -263,7 +333,7 @@
           "exitMode": "indicator"
         },
         "sideways": {
-          "enabled": true,
+          "enabled": false,
           "routeId": "cbbtc-15m-rsi-crsi-confluence-core",
           "templateId": "rsi-crsi-confluence",
           "timeframeMinutes": 15,
@@ -299,11 +369,7 @@
       "label": "BONK",
       "tier": "core",
       "maxPositionEquityPct": 1.5,
-      "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
+      "enabled": false,
       "regimes": {
         "uptrend": {
           "enabled": false,
@@ -319,7 +385,7 @@
           "exitMode": "indicator"
         },
         "sideways": {
-          "enabled": true,
+          "enabled": false,
           "routeId": "bonk-15m-rsi-core",
           "templateId": "rsi",
           "timeframeMinutes": 15,
@@ -351,11 +417,7 @@
       "label": "TRUMP",
       "tier": "core",
       "maxPositionEquityPct": 1,
-      "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
+      "enabled": false,
       "regimes": {
         "uptrend": {
           "enabled": false,
@@ -371,7 +433,7 @@
           "exitMode": "indicator"
         },
         "sideways": {
-          "enabled": true,
+          "enabled": false,
           "routeId": "trump-1m-vwap-rsi-range-revert-core",
           "templateId": "vwap-rsi-range-revert",
           "timeframeMinutes": 1,
@@ -406,39 +468,82 @@
     "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr": {
       "label": "POPCAT",
       "tier": "probe",
-      "maxPositionEquityPct": 20,
+      "maxPositionEquityPct": 8,
       "enabled": true,
-      "indicator": {
-        "kind": "rsi",
-        "rsiPeriod": 14
-      },
       "regimes": {
         "uptrend": {
           "enabled": false,
-          "templateId": "rsi",
-          "timeframeMinutes": 5,
-          "priority": 100,
+          "routeId": "popcat-15m-crsi-session-up-probe",
+          "templateId": "crsi-session-gate",
+          "timeframeMinutes": 15,
+          "priority": 280,
+          "protection": {
+            "profitLockArmPct": 1,
+            "profitLockPct": 0.2,
+            "trailArmPct": 2.5,
+            "trailGapPct": 1.25,
+            "staleMaxHoldMinutes": 600,
+            "staleMinPnlPct": 0
+          },
           "params": {
             "entry": 20,
-            "exit": 75
+            "exit": 95,
+            "session": 8
           },
           "sl": -3,
-          "tp": 10,
+          "tp": 6,
           "exitMode": "indicator"
         },
         "sideways": {
           "enabled": true,
-          "routeId": "popcat-5m-rsi-probe-primary",
-          "templateId": "rsi",
-          "timeframeMinutes": 5,
-          "priority": 190,
-          "params": {
-            "entry": 20,
-            "exit": 75
-          },
-          "sl": -3,
-          "tp": 10,
-          "exitMode": "indicator"
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "popcat-15m-rsi-session-side-probe",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 15,
+              "priority": 260,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2.5,
+                "trailGapPct": 1.25,
+                "staleMaxHoldMinutes": 720,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 30,
+                "exit": 75,
+                "session": 16
+              },
+              "sl": -3,
+              "tp": 6,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "popcat-15m-bb-rsi-crsi-side-probe",
+              "templateId": "bb-rsi-crsi-reversal",
+              "timeframeMinutes": 15,
+              "priority": 230,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2.5,
+                "trailGapPct": 1.25,
+                "staleMaxHoldMinutes": 720,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsiEntry": 30,
+                "crsiEntry": 15,
+                "rsiExit": 55
+              },
+              "sl": -5,
+              "tp": 3,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "downtrend": {
           "enabled": false,

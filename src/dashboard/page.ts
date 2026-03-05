@@ -421,6 +421,16 @@ function formatStrategyParams(params) {
   entries.sort((a, b) => a[0].localeCompare(b[0]));
   return entries.map(([k, v]) => k + '=' + fmtParamValue(v)).join(' ');
 }
+function formatStops(sl, tp, slAtr, tpAtr) {
+  const parts = [];
+  if (isFiniteNumber(slAtr)) parts.push('SL ' + fmt(slAtr, 2) + ' ATR');
+  else if (isFiniteNumber(sl)) parts.push('SL ' + fmt(sl, 2) + '%');
+
+  if (isFiniteNumber(tpAtr)) parts.push('TP ' + fmt(tpAtr, 2) + ' ATR');
+  else if (isFiniteNumber(tp)) parts.push('TP ' + fmt(tp, 2) + '%');
+
+  return parts.length > 0 ? parts.join(' / ') : '--';
+}
 function escapeHtml(v) {
   return String(v)
     .replace(/&/g, '&amp;')
@@ -648,9 +658,7 @@ function renderSignals(signals) {
         )
       : '--';
     const paramsText = formatStrategyParams(s.strategyParams);
-    const stopsText = (isFiniteNumber(s.sl) && isFiniteNumber(s.tp))
-      ? ('SL ' + fmt(s.sl, 2) + '% / TP ' + fmt(s.tp, 2) + '%')
-      : '--';
+    const stopsText = formatStops(s.sl, s.tp, s.slAtr, s.tpAtr);
     const maxSizeText = (isFiniteNumber(s.tokenMaxEquityPct))
       ? (fmt(s.tokenMaxEquityPct, 2) + '% equity' + (isFiniteNumber(s.tokenMaxUsdc) ? (' (cap ' + fmt(s.tokenMaxUsdc, 2) + ' USDC)') : ''))
       : (isFiniteNumber(s.tokenMaxUsdc) ? (fmt(s.tokenMaxUsdc, 2) + ' USDC') : '--');

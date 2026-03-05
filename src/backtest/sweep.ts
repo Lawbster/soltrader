@@ -11,7 +11,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { BacktestStrategy, Signal, BacktestMetrics, Candle } from './types';
+import { BacktestStrategy, Signal, BacktestMetrics, Candle, BacktestProtectionConfig, type BacktestTrendRegime } from './types';
 import { loadCandles, loadTokenList, aggregateCandles, closeSeries, highSeries, lowSeries, volumeSeries } from './data-loader';
 import { runBacktest } from './engine';
 import { computeMetrics } from './report';
@@ -20,6 +20,7 @@ import { computeAtr } from './indicators';
 import { evaluateSignal } from '../strategy/templates/catalog';
 import type { TemplateId } from '../strategy/templates/types';
 import type { StrategyContext } from './types';
+import { buildRegimeSeriesFromCandles } from '../strategy/regime-core';
 
 /** Adapter: maps StrategyContext to LiveTemplateContext for catalog evaluators */
 function toTemplateCtx(ctx: StrategyContext) {
@@ -48,10 +49,12 @@ interface SweepResult {
   params: Record<string, number>;
   token: string;
   timeframe: number;
+  executionTimeframe: number;
   maxPositions: number;
   exitParity: 'indicator' | 'price';
   metrics: BacktestMetrics;
   trend: TrendMetrics;
+  entryRegime: EntryRegimeMetrics;
 }
 
 interface TrendMetrics {
@@ -70,6 +73,16 @@ interface TrendMetrics {
   windowEndDayOfWeek: number;    // UTC day-of-week of last candle (0=Sun…6=Sat)
   atrPercentile: number | null;  // ATR at last candle as percentile [0-100] of window ATR distribution
   volumeZScore: number | null;   // Z-score of last 24h pricePoints vs full-window mean
+}
+
+interface EntryRegimeMetrics {
+  regime: BacktestTrendRegime;
+  signalCount: number;
+  coverageHours: number | null;
+  ret24hPct: number | null;
+  ret48hPct: number | null;
+  ret72hPct: number | null;
+  trendScore: number | null;
 }
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -203,6 +216,69 @@ function computeTrendMetrics(
   };
 }
 
+interface SignalRegimePoint {
+  regime: BacktestTrendRegime;
+  trendScore: number | null;
+  ret24h: number | null;
+  ret48h: number | null;
+  ret72h: number | null;
+  coverageHours: number;
+}
+
+function averageNullable(values: Array<number | null | undefined>): number | null {
+  const valid = values.filter((value): value is number => value !== null && value !== undefined && Number.isFinite(value));
+  if (valid.length === 0) return null;
+  return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function buildSignalRegimeSeries(
+  executionCandles: Candle[],
+  signalCandles: Candle[],
+  signalTimeframeMinutes: number,
+): SignalRegimePoint[] {
+  const regimeSeries = buildRegimeSeriesFromCandles(executionCandles, 60_000);
+  if (signalCandles.length === 0 || regimeSeries.length === 0) return [];
+
+  const out: SignalRegimePoint[] = [];
+  const signalTfMs = signalTimeframeMinutes * 60_000;
+  let regimeIdx = 0;
+
+  for (const signalCandle of signalCandles) {
+    const signalCloseMs = signalCandle.timestamp + signalTfMs;
+    while (regimeIdx + 1 < regimeSeries.length && regimeSeries[regimeIdx + 1].asOfMs <= signalCloseMs) {
+      regimeIdx++;
+    }
+    const point = regimeSeries[regimeIdx];
+    out.push({
+      regime: point.confirmed,
+      trendScore: point.trendScore,
+      ret24h: point.ret24h,
+      ret48h: point.ret48h,
+      ret72h: point.ret72h,
+      coverageHours: point.coverageHours,
+    });
+  }
+
+  return out;
+}
+
+function computeEntryRegimeMetrics(
+  signalRegimes: SignalRegimePoint[],
+  regime: BacktestTrendRegime,
+): EntryRegimeMetrics | null {
+  const matching = signalRegimes.filter(point => point.regime === regime);
+  if (matching.length === 0) return null;
+  return {
+    regime,
+    signalCount: matching.length,
+    coverageHours: averageNullable(matching.map(point => point.coverageHours)),
+    ret24hPct: averageNullable(matching.map(point => point.ret24h)),
+    ret48hPct: averageNullable(matching.map(point => point.ret48h)),
+    ret72hPct: averageNullable(matching.map(point => point.ret72h)),
+    trendScore: averageNullable(matching.map(point => point.trendScore)),
+  };
+}
+
 function fmtNullable(value: number | null, digits = 4): string {
   if (value === null || !Number.isFinite(value)) return '';
   return value.toFixed(digits);
@@ -216,6 +292,26 @@ interface SweepTemplate {
   name: string;
   paramGrid: Record<string, number[]>;
   build(params: Record<string, number>): BacktestStrategy;
+}
+
+const DEFAULT_LIVE_PROTECTION: BacktestProtectionConfig = {
+  profitLockArmPct: 1,
+  profitLockPct: 0.15,
+  trailArmPct: 2,
+  trailGapPct: 1,
+  staleMaxHoldMinutes: 240,
+  staleMinPnlPct: 0,
+};
+
+const SESSION_LIVE_PROTECTION: BacktestProtectionConfig = {
+  profitLockArmPct: 0.8,
+  profitLockPct: 0.1,
+  staleMaxHoldMinutes: 180,
+  staleMinPnlPct: 0,
+};
+
+function withProtection(protection: BacktestProtectionConfig): BacktestProtectionConfig {
+  return { ...protection };
 }
 
 const templates: SweepTemplate[] = [
@@ -235,7 +331,30 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('rsi', p),
+      };
+    },
+  },
+
+  // Simple RSI entry with ATR-scaled exits and live-style protection.
+  {
+    name: 'rsi-atr-protect',
+    paramGrid: {
+      entry: [20, 25, 30],
+      exit: [70, 75, 85],
+      slAtr: [1.25, 1.5, 2],
+      tpAtr: [1.5, 2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `rsi-atr-${p.entry}-${p.exit}-sl${p.slAtr}a-tp${p.tpAtr}a`,
+        description: `RSI(14) entry<${p.entry} exit>${p.exit} with ATR exits`,
+        requiredHistory: 15,
+        stopLossAtrMult: p.slAtr,
+        takeProfitAtrMult: p.tpAtr,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('rsi-atr-protect', p),
       };
     },
   },
@@ -256,6 +375,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('crsi', p),
       };
     },
@@ -277,6 +397,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 21,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('bb-rsi', p),
       };
     },
@@ -300,6 +421,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('rsi-crsi-confluence', p),
       };
     },
@@ -322,7 +444,31 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('crsi-dip-recover', p),
+      };
+    },
+  },
+
+  // CRSI recovery entry with ATR-scaled exits to avoid static % stops across vol regimes.
+  {
+    name: 'crsi-dip-recover-atr',
+    paramGrid: {
+      dip:     [5, 10, 15],
+      recover: [20, 25, 30],
+      exit:    [70, 80, 90],
+      slAtr:   [1.5, 2, 2.5],
+      tpAtr:   [2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `crsi-dip-rec-atr-d${p.dip}-r${p.recover}-e${p.exit}-sl${p.slAtr}a-tp${p.tpAtr}a`,
+        description: `CRSI dip<${p.dip} recover>=${p.recover} with ATR exits`,
+        requiredHistory: 102,
+        stopLossAtrMult: p.slAtr,
+        takeProfitAtrMult: p.tpAtr,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('crsi-dip-recover-atr', p),
       };
     },
   },
@@ -364,6 +510,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('vwap-rsi-reclaim', p),
       };
     },
@@ -530,6 +677,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('vwap-trend-pullback', p),
       };
     },
@@ -551,7 +699,30 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
         evaluate: catalogEvaluate('vwap-rsi-range-revert', p),
+      };
+    },
+  },
+
+  // Same low-ADX VWAP reversion entry, but risk is scaled by entry ATR.
+  {
+    name: 'vwap-rsi-range-revert-atr',
+    paramGrid: {
+      adxMax:   [20, 25],
+      rsiEntry: [25, 30, 35],
+      slAtr:    [1.25, 1.5, 2],
+      tpAtr:    [1.5, 2, 3],
+    },
+    build(p) {
+      return {
+        name: `vwap-rng-rev-atr-adx${p.adxMax}-r${p.rsiEntry}-sl${p.slAtr}a-tp${p.tpAtr}a`,
+        description: `ADX<${p.adxMax} + below VWAP + RSI<${p.rsiEntry} with ATR exits`,
+        requiredHistory: 15,
+        stopLossAtrMult: p.slAtr,
+        takeProfitAtrMult: p.tpAtr,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('vwap-rsi-range-revert-atr', p),
       };
     },
   },
@@ -635,6 +806,7 @@ const templates: SweepTemplate[] = [
         requiredHistory: 15,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(SESSION_LIVE_PROTECTION),
         evaluate: catalogEvaluate('rsi-session-gate', p),
       };
     },
@@ -657,11 +829,52 @@ const templates: SweepTemplate[] = [
         requiredHistory: 102,
         stopLossPct: p.sl,
         takeProfitPct: p.tp,
+        protection: withProtection(SESSION_LIVE_PROTECTION),
         evaluate: catalogEvaluate('crsi-session-gate', p),
       };
     },
   },
 ];
+
+const TEMPLATE_SETS: Record<string, string[]> = {
+  core: [
+    'rsi',
+    'crsi',
+    'bb-rsi',
+    'rsi-crsi-confluence',
+    'crsi-dip-recover',
+    'vwap-rsi-range-revert',
+    'rsi-session-gate',
+    'crsi-session-gate',
+  ],
+  extended: [
+    'rsi',
+    'rsi-atr-protect',
+    'crsi',
+    'bb-rsi',
+    'rsi-crsi-confluence',
+    'crsi-dip-recover',
+    'crsi-dip-recover-atr',
+    'vwap-rsi-range-revert',
+    'vwap-rsi-range-revert-atr',
+    'rsi-session-gate',
+    'crsi-session-gate',
+    'bb-rsi-crsi-reversal',
+    'adx-range-rsi-bb',
+    'vwap-rsi-reclaim',
+    'rsi2-micro-range',
+    'bb-squeeze-breakout',
+  ],
+  trend: [
+    'trend-pullback-rsi',
+    'adx-trend-rsi-pullback',
+    'macd-zero-rsi-confirm',
+    'macd-signal-obv-confirm',
+    'vwap-trend-pullback',
+    'connors-sma50-pullback',
+    'atr-breakout-follow',
+  ],
+};
 
 // ── Disabled templates (zero positive rows 2026-02-24) ────────────────────────────
 // To re-enable: move the desired template object into the `templates` array above.
@@ -832,6 +1045,8 @@ function main() {
   let maxPositions = 2; // default: 2 concurrent positions per token
   let exitParity: 'indicator' | 'price' | 'both' = 'indicator';
   let timeframeFlag: number | undefined;
+  let templateSet: string | undefined;
+  let outFileFlag: string | undefined;
   const positional: string[] = [];
 
   for (let i = 0; i < rawArgs.length; i++) {
@@ -841,6 +1056,8 @@ function main() {
     else if (rawArgs[i] === '--max-positions' && rawArgs[i + 1]) { maxPositions = parseInt(rawArgs[++i], 10); }
     else if (rawArgs[i] === '--exit-parity' && rawArgs[i + 1]) { exitParity = rawArgs[++i] as 'indicator' | 'price' | 'both'; }
     else if (rawArgs[i] === '--timeframe' && rawArgs[i + 1]) { timeframeFlag = parseInt(rawArgs[++i], 10); }
+    else if (rawArgs[i] === '--template-set' && rawArgs[i + 1]) { templateSet = rawArgs[++i]; }
+    else if (rawArgs[i] === '--out-file' && rawArgs[i + 1]) { outFileFlag = rawArgs[++i]; }
     else { positional.push(rawArgs[i]); }
   }
 
@@ -856,13 +1073,30 @@ function main() {
     process.exit(1);
   }
 
+  if (templateSet && !TEMPLATE_SETS[templateSet]) {
+    console.error(`Unknown template set: ${templateSet}`);
+    console.error(`Available template sets: ${Object.keys(TEMPLATE_SETS).join(', ')}`);
+    process.exit(1);
+  }
+
+  if (templateFilter && templateSet) {
+    console.warn(`[WARN] Both template filter (${templateFilter}) and --template-set (${templateSet}) were provided. Using the explicit template filter.`);
+  }
+
+  const setMembers = templateSet ? new Set(TEMPLATE_SETS[templateSet]) : null;
   const selectedTemplates = templateFilter
     ? templates.filter(t => t.name === templateFilter)
-    : templates;
+    : setMembers
+      ? templates.filter(t => setMembers.has(t.name))
+      : templates;
 
   if (selectedTemplates.length === 0) {
-    console.error(`Unknown template: ${templateFilter}`);
-    console.error(`Available: ${templates.map(t => t.name).join(', ')}`);
+    if (templateFilter) {
+      console.error(`Unknown template: ${templateFilter}`);
+      console.error(`Available: ${templates.map(t => t.name).join(', ')}`);
+    } else {
+      console.error(`Template set ${templateSet} resolved to zero templates.`);
+    }
     process.exit(1);
   }
 
@@ -909,31 +1143,41 @@ function main() {
   for (const tmpl of selectedTemplates) {
     totalCombos += expandGrid(tmpl.paramGrid).length;
   }
-  const totalRuns = totalCombos * parityModes.length;
+  const regimeModesPerRun = 3;
+  const totalRuns = totalCombos * parityModes.length * regimeModesPerRun;
   console.log(`Sweep: ${selectedTemplates.length} template(s) x ${tokens.length} token(s) x ${timeframe}-min bars`);
+  if (templateSet && !templateFilter) {
+    console.log(`Template set: ${templateSet} (${selectedTemplates.map(t => t.name).join(', ')})`);
+  }
   console.log(`Cost model: ${costCfg.model} (round-trip ${costCfg.roundTripPct.toFixed(3)}%${costCfg.sampleSize ? `, n=${costCfg.sampleSize}` : ''})`);
   console.log(`Max positions per token: ${maxPositions}`);
   console.log(`Exit parity: ${exitParity}${parityModes.length > 1 ? ' (both modes run per combo)' : ''}`);
   if (fromDate || toDate) console.log(`Date range: ${fromDate ?? 'all'} → ${toDate ?? 'all'}`);
-  console.log(`Total parameter combos per token: ${totalCombos}${parityModes.length > 1 ? ` (${totalRuns} runs with both parity modes)` : ''}\n`);
+  console.log(
+    `Total parameter combos per token: ${totalCombos}` +
+    ` (${totalRuns} runs with dynamic regime routing${parityModes.length > 1 ? ' and both parity modes' : ''})\n`
+  );
 
   const allResults: SweepResult[] = [];
 
   for (const token of tokens) {
-    let candles = loadCandles(token.mint, fromDate, toDate);
-    if (candles.length === 0) {
+    const executionCandles = loadCandles(token.mint, fromDate, toDate);
+    if (executionCandles.length === 0) {
       console.warn(`No data for ${token.label}, skipping`);
       continue;
     }
-    if (timeframe > 1) {
-      candles = aggregateCandles(candles, timeframe);
-    }
-    const trend = computeTrendMetrics(candles, timeframe, solRet24hPct);
+    const signalCandles = timeframe > 1
+      ? aggregateCandles(executionCandles, timeframe)
+      : executionCandles;
+    const trend = computeTrendMetrics(signalCandles, timeframe, solRet24hPct);
+    const signalRegimes = buildSignalRegimeSeries(executionCandles, signalCandles, timeframe);
+    const presentRegimes = Array.from(new Set(signalRegimes.map(point => point.regime)));
     console.log(
-      `${token.label}: ${candles.length} candles (${timeframe}-min) ` +
+      `${token.label}: ${signalCandles.length} candles (${timeframe}-min signal / 1-min exec) ` +
       `| regime=${trend.trendRegime}` +
       ` score=${fmtNullable(trend.trendScore, 2) || 'n/a'}` +
-      ` ret24=${fmtNullable(trend.tokenRet24hPct, 2) || 'n/a'}%`
+      ` ret24=${fmtNullable(trend.tokenRet24hPct, 2) || 'n/a'}%` +
+      ` | dynamic=${presentRegimes.join('/') || 'none'}`
     );
 
     let run = 0;
@@ -941,29 +1185,41 @@ function main() {
       const grid = expandGrid(tmpl.paramGrid);
       for (const params of grid) {
         for (const parityMode of parityModes) {
-          run++;
-          const strategy = tmpl.build(params);
-          const result = runBacktest(candles, {
-            mint: token.mint,
-            label: token.label,
-            strategy,
-            roundTripCostPct: costCfg.roundTripPct,
-            maxPositions,
-            exitParityMode: parityMode,
-          });
-          const dateRange = result.dateRange.end - result.dateRange.start;
-          const metrics = computeMetrics(result.trades, dateRange);
+          for (const regime of presentRegimes) {
+            const entryRegime = computeEntryRegimeMetrics(signalRegimes, regime);
+            if (!entryRegime || entryRegime.signalCount === 0) continue;
 
-          allResults.push({
-            templateName: tmpl.name,
-            params,
-            token: token.label,
-            timeframe,
-            maxPositions,
-            exitParity: parityMode,
-            metrics,
-            trend,
-          });
+            run++;
+            const strategy = tmpl.build(params);
+            const result = runBacktest(signalCandles, {
+              mint: token.mint,
+              label: token.label,
+              strategy,
+              roundTripCostPct: costCfg.roundTripPct,
+              maxPositions,
+              exitParityMode: parityMode,
+              executionCandles,
+              signalTimeframeMinutes: timeframe,
+              executionTimeframeMinutes: 1,
+              signalRegimes: signalRegimes.map(point => point.regime),
+              entryRegimeFilter: regime,
+            });
+            const dateRange = result.dateRange.end - result.dateRange.start;
+            const metrics = computeMetrics(result.trades, dateRange);
+
+            allResults.push({
+              templateName: tmpl.name,
+              params,
+              token: token.label,
+              timeframe,
+              executionTimeframe: result.executionTimeframeMinutes,
+              maxPositions,
+              exitParity: parityMode,
+              metrics,
+              trend,
+              entryRegime,
+            });
+          }
         }
       }
     }
@@ -973,13 +1229,35 @@ function main() {
   // Filter to results with at least 3 trades
   const meaningful = allResults.filter(r => r.metrics.totalTrades >= 3);
 
+  fs.mkdirSync(SWEEP_OUT_DIR, { recursive: true });
+  const dateStr = new Date().toISOString().split('T')[0];
+  const outPath = outFileFlag
+    ? path.resolve(outFileFlag)
+    : path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min.csv`);
+  fs.mkdirSync(path.dirname(outPath), { recursive: true });
+
+  const csvHeader = [
+    'template', 'token', 'timeframe', 'executionTimeframe', 'maxPositions', 'exitParity', 'params',
+    'trades', 'winRate', 'pnlPct', 'profitFactor', 'sharpeRatio',
+    'maxDrawdownPct', 'avgWinLossRatio', 'avgWinPct', 'avgLossPct',
+    'avgHoldMinutes', 'tradesPerDay',
+    'tokenRet24hPct', 'tokenRet48hPct', 'tokenRet72hPct', 'tokenRet168hPct',
+    'tokenRetWindowPct', 'tokenVol24hPct', 'trendScore', 'trendRegime',
+    'relRet24hVsSolPct', 'trendCoverageDays',
+    'windowEndHourUtc', 'windowEndDayOfWeek', 'atrPercentile', 'volumeZScore',
+    'entryTrendRegime', 'entryTrendScore', 'entryRet24hPct', 'entryRet48hPct', 'entryRet72hPct',
+    'entryCoverageHours', 'entrySignalCount',
+  ].join(',');
+
   if (meaningful.length === 0) {
+    fs.writeFileSync(outPath, `${csvHeader}\n`, 'utf8');
     console.log('\nNo parameter combos produced 3+ trades. Need more data.');
+    console.log(`Empty results saved to: ${outPath}`);
     return;
   }
 
   const regimeCounts = meaningful.reduce<Record<string, number>>((acc, r) => {
-    acc[r.trend.trendRegime] = (acc[r.trend.trendRegime] ?? 0) + 1;
+    acc[r.entryRegime.regime] = (acc[r.entryRegime.regime] ?? 0) + 1;
     return acc;
   }, {});
   const regimeSummary = Object.entries(regimeCounts)
@@ -1010,6 +1288,7 @@ function main() {
     '#'.padStart(3) +
     'Template'.padEnd(10) +
     'Token'.padEnd(8) +
+    'Regime'.padEnd(11) +
     'Params'.padEnd(38) +
     'Trades'.padStart(7) +
     'WinR%'.padStart(7) +
@@ -1032,6 +1311,7 @@ function main() {
       String(i + 1).padStart(3) +
       r.templateName.padEnd(10) +
       r.token.padEnd(8) +
+      r.entryRegime.regime.padEnd(11) +
       paramStr.padEnd(38) +
       String(m.totalTrades).padStart(7) +
       `${m.winRate.toFixed(0)}%`.padStart(7) +
@@ -1052,29 +1332,16 @@ function main() {
     const m = r.metrics;
     const paramStr = Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(' ');
     console.log(
-      `  ${r.templateName.padEnd(10)} ${r.token.padEnd(8)} ${paramStr.padEnd(38)} ` +
+      `  ${r.templateName.padEnd(10)} ${r.token.padEnd(8)} ${r.entryRegime.regime.padEnd(10)} ${paramStr.padEnd(38)} ` +
       `${m.totalTrades}T ${m.winRate.toFixed(0)}%W ${m.totalPnlPct >= 0 ? '+' : ''}${m.totalPnlPct.toFixed(1)}% Sharpe=${m.sharpeRatio.toFixed(2)}`
     );
   }
 
   // Write all results to CSV
-  fs.mkdirSync(SWEEP_OUT_DIR, { recursive: true });
-  const dateStr = new Date().toISOString().split('T')[0];
-  const outPath = path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min.csv`);
-
-  const csvHeader = [
-    'template', 'token', 'timeframe', 'maxPositions', 'exitParity', 'params',
-    'trades', 'winRate', 'pnlPct', 'profitFactor', 'sharpeRatio',
-    'maxDrawdownPct', 'avgWinLossRatio', 'avgWinPct', 'avgLossPct',
-    'avgHoldMinutes', 'tradesPerDay',
-    'tokenRet24hPct', 'tokenRet48hPct', 'tokenRet72hPct', 'tokenRet168hPct',
-    'tokenRetWindowPct', 'tokenVol24hPct', 'trendScore', 'trendRegime',
-    'relRet24hVsSolPct', 'trendCoverageDays',
-    'windowEndHourUtc', 'windowEndDayOfWeek', 'atrPercentile', 'volumeZScore',
-  ].join(',');
   const csvRows = meaningful.map(r => {
     const m = r.metrics;
     const t = r.trend;
+    const e = r.entryRegime;
     const paramStr = Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(' ');
     const pf = m.profitFactor === Infinity ? '' : m.profitFactor.toFixed(4);
     const wl = m.avgWinLossRatio === Infinity ? '' : m.avgWinLossRatio.toFixed(4);
@@ -1082,6 +1349,7 @@ function main() {
       r.templateName,
       r.token,
       r.timeframe,
+      r.executionTimeframe,
       r.maxPositions,
       r.exitParity,
       `"${paramStr}"`,
@@ -1110,6 +1378,13 @@ function main() {
       t.windowEndDayOfWeek,
       fmtNullable(t.atrPercentile, 2),
       fmtNullable(t.volumeZScore, 4),
+      e.regime,
+      fmtNullable(e.trendScore, 4),
+      fmtNullable(e.ret24hPct, 4),
+      fmtNullable(e.ret48hPct, 4),
+      fmtNullable(e.ret72hPct, 4),
+      fmtNullable(e.coverageHours, 2),
+      e.signalCount,
     ].join(',');
   });
 

@@ -7,6 +7,7 @@ type ExitParityMode = 'indicator' | 'price' | 'both';
 type RankExitParityMode = 'indicator' | 'price' | 'both';
 type Bucket = 'core' | 'probe';
 type TrendRegime = 'uptrend' | 'sideways' | 'downtrend' | 'unknown';
+type CandidatePreset = 'profit-first' | 'legacy';
 
 interface CliArgs {
   from: string;
@@ -22,8 +23,10 @@ interface CliArgs {
   maxPositions?: number;
   top: number;
   topPerToken: number;
+  preset: CandidatePreset;
   minWinRate: number;
   minPnl: number;
+  minExpectancy: number;
   sweepDir: string;
   outDir: string;
   requireTimeframes: boolean;
@@ -149,8 +152,10 @@ function printHelp(): void {
     '  --max-positions N              Pass-through to sweep',
     '  --top N                        Pass-through to sweep-candidates (default: 300)',
     '  --top-per-token N              Pass-through to sweep-candidates (default: 75)',
-    '  --min-win-rate N               Pass-through to sweep-candidates (default: 65)',
+    '  --preset NAME                  Candidate preset: profit-first (default) | legacy',
+    '  --min-win-rate N               Pass-through to sweep-candidates (default: 0 profit-first / 65 legacy)',
     '  --min-pnl N                    Pass-through to sweep-candidates (default: 0)',
+    '  --min-expectancy N             Pass-through to sweep-candidates (default: 0 profit-first)',
     '  --sweep-dir PATH               Sweep output dir (default: data/sweep-results)',
     '  --out-dir PATH                 Robustness output dir (default: data/sweep-results/window-robustness)',
     '  --require-timeframes           Require selected TFs in candidate rows (default: disabled)',
@@ -218,6 +223,14 @@ function dowName(d: Date): string {
 }
 
 function parseArgs(argv: string[]): CliArgs {
+  let preset: CandidatePreset = 'profit-first';
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--preset') {
+      preset = parseEnum(argv[i], argv[i + 1], ['profit-first', 'legacy']);
+      i++;
+    }
+  }
+
   const args: CliArgs = {
     from: '',
     to: formatDateUTC(new Date()),
@@ -231,8 +244,10 @@ function parseArgs(argv: string[]): CliArgs {
     empiricalFallback: 'fixed',
     top: 300,
     topPerToken: 75,
-    minWinRate: 65,
+    preset,
+    minWinRate: preset === 'legacy' ? 65 : 0,
     minPnl: 0,
+    minExpectancy: preset === 'legacy' ? Number.NEGATIVE_INFINITY : 0,
     sweepDir: 'data/sweep-results',
     outDir: 'data/sweep-results/window-robustness',
     requireTimeframes: false,
@@ -269,8 +284,21 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === '--max-positions') { args.maxPositions = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
     if (arg === '--top') { args.top = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
     if (arg === '--top-per-token') { args.topPerToken = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
+    if (arg === '--preset') {
+      args.preset = parseEnum(arg, next, ['profit-first', 'legacy']);
+      if (args.preset === 'legacy') {
+        args.minWinRate = 65;
+        args.minExpectancy = Number.NEGATIVE_INFINITY;
+      } else {
+        args.minWinRate = 0;
+        args.minExpectancy = 0;
+      }
+      i++;
+      continue;
+    }
     if (arg === '--min-win-rate') { args.minWinRate = parseNumber(arg, next); i++; continue; }
     if (arg === '--min-pnl') { args.minPnl = parseNumber(arg, next); i++; continue; }
+    if (arg === '--min-expectancy') { args.minExpectancy = parseNumber(arg, next); i++; continue; }
     if (arg === '--sweep-dir') { args.sweepDir = requireValue(arg, next); i++; continue; }
     if (arg === '--out-dir') { args.outDir = requireValue(arg, next); i++; continue; }
     if (arg === '--require-timeframes') { args.requireTimeframes = true; continue; }
@@ -320,21 +348,6 @@ function runNpm(rootDir: string, cmdArgs: string[], dryRun: boolean): void {
 
   if (res.error) throw new Error(`Command spawn error: ${res.error.message} (${display})`);
   if (res.status !== 0) throw new Error(`Command failed (${res.status ?? 'unknown'}): ${display}`);
-}
-
-function findLatestSweepFileForTimeframe(sweepDirAbs: string, timeframe: number): string {
-  if (!fs.existsSync(sweepDirAbs)) {
-    throw new Error(`Sweep directory not found: ${sweepDirAbs}`);
-  }
-  const suffix = `-${timeframe}min.csv`;
-  const files = fs.readdirSync(sweepDirAbs, { withFileTypes: true })
-    .filter(d => d.isFile() && d.name.endsWith(suffix))
-    .map(d => path.join(sweepDirAbs, d.name))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  if (files.length === 0) {
-    throw new Error(`No sweep output found for timeframe ${timeframe}m in ${sweepDirAbs}`);
-  }
-  return files[0];
 }
 
 function parseCsvLine(line: string): string[] {
@@ -518,7 +531,6 @@ function normalizeOutputDir(outDirAbs: string): string {
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const rootDir = path.resolve(__dirname, '..');
-  const sweepDirAbs = path.resolve(rootDir, args.sweepDir);
   const outDirAbs = path.resolve(rootDir, args.outDir);
   const runDir = normalizeOutputDir(outDirAbs);
 
@@ -570,6 +582,7 @@ function main(): void {
         sweepFilesCopied.length = 0;
 
         for (const tf of args.timeframes) {
+          const copied = path.join(sweepsCopyDir, `${w.from}-w${w.windowDays}d-${w.to}-${tf}min.csv`);
           const sweepCmd: string[] = ['run', 'sweep', '--'];
           if (args.template) sweepCmd.push(args.template);
           if (args.token) sweepCmd.push(args.token);
@@ -578,14 +591,15 @@ function main(): void {
           sweepCmd.push('--exit-parity', args.exitParity);
           sweepCmd.push('--from', w.from, '--to', w.to);
           if (args.maxPositions !== undefined) sweepCmd.push('--max-positions', String(args.maxPositions));
+          sweepCmd.push('--out-file', copied);
           runNpm(rootDir, sweepCmd, args.dryRun);
 
           if (args.dryRun) continue;
-          const latest = findLatestSweepFileForTimeframe(sweepDirAbs, tf);
-          const copied = path.join(sweepsCopyDir, `${w.from}-w${w.windowDays}d-${w.to}-${tf}min.csv`);
-          fs.copyFileSync(latest, copied);
+          if (!fs.existsSync(copied)) {
+            throw new Error(`Sweep output missing for ${tf}m window ${w.id}: ${copied}`);
+          }
           sweepFilesCopied.push(copied);
-          console.log(`  copied ${tf}m sweep -> ${copied}`);
+          console.log(`  wrote ${tf}m sweep -> ${copied}`);
         }
       };
 
@@ -610,8 +624,10 @@ function main(): void {
         '--files', filesArg,
         '--top', String(args.top),
         '--top-per-token', String(args.topPerToken),
+        '--preset', args.preset,
         '--min-win-rate', String(args.minWinRate),
         '--min-pnl', String(args.minPnl),
+        '--min-expectancy', String(args.minExpectancy),
         '--rank-exit-parity', args.rankExitParity,
         '--timeframe-support-min', String(args.timeframeSupportMin),
         '--out-dir', candidatesDir,

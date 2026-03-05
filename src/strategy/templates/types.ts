@@ -2,10 +2,12 @@ import type { IndicatorValues } from '../../backtest/types';
 
 export type TemplateId =
   | 'rsi'
+  | 'rsi-atr-protect'
   | 'crsi'
   | 'bb-rsi'
   | 'rsi-crsi-confluence'
   | 'crsi-dip-recover'
+  | 'crsi-dip-recover-atr'
   | 'trend-pullback-rsi'
   | 'vwap-rsi-reclaim'
   | 'bb-rsi-crsi-reversal'
@@ -17,6 +19,7 @@ export type TemplateId =
   | 'bb-squeeze-breakout'
   | 'vwap-trend-pullback'
   | 'vwap-rsi-range-revert'
+  | 'vwap-rsi-range-revert-atr'
   | 'connors-sma50-pullback'
   | 'rsi2-micro-range'
   | 'atr-breakout-follow'

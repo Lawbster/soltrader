@@ -1,4 +1,4 @@
-export interface PricePoint {
+﻿export interface PricePoint {
   ts: number;
   mint: string;
   priceUsd: number;
@@ -25,19 +25,30 @@ export interface TokenDataset {
 
 export interface IndicatorValues {
   rsi?: number;          // RSI(14)
-  rsiShort?: number;     // RSI(2) — fast scalping RSI
+  rsiShort?: number;     // RSI(2) â€” fast scalping RSI
   connorsRsi?: number;   // CRSI(3,2,100)
   sma?: Record<number, number>;
   ema?: Record<number, number>;
   macd?: { macd: number; signal: number; histogram: number };
   bollingerBands?: { upper: number; middle: number; lower: number; width: number };
   atr?: number;
-  adx?: number;          // ADX(14) — trend strength
+  adx?: number;          // ADX(14) â€” trend strength
   vwapProxy?: number;
   obvProxy?: number;
 }
 
+export type BacktestTrendRegime = 'uptrend' | 'sideways' | 'downtrend';
+
 export type Signal = 'buy' | 'sell' | 'hold';
+
+export interface BacktestProtectionConfig {
+  profitLockArmPct?: number;
+  profitLockPct?: number;
+  trailArmPct?: number;
+  trailGapPct?: number;
+  staleMaxHoldMinutes?: number;
+  staleMinPnlPct?: number;
+}
 
 export interface StrategyContext {
   candle: Candle;
@@ -53,8 +64,11 @@ export interface BacktestStrategy {
   name: string;
   description: string;
   requiredHistory: number;
-  stopLossPct?: number;   // e.g. -0.45 → exit at -0.45% from entry
-  takeProfitPct?: number; // e.g. 0.59 → exit at +0.59% from entry
+  stopLossPct?: number;   // static pct stop below entry
+  takeProfitPct?: number; // static pct target above entry
+  stopLossAtrMult?: number;   // ATR multiple below entry price
+  takeProfitAtrMult?: number; // ATR multiple above entry price
+  protection?: BacktestProtectionConfig;
   evaluate(ctx: StrategyContext): Signal;
 }
 
@@ -64,6 +78,7 @@ export interface BacktestPosition {
   entryTime: number;
   peakPrice: number;
   peakPnlPct: number;
+  entryAtr?: number;
 }
 
 export interface BacktestTrade {
@@ -76,6 +91,7 @@ export interface BacktestTrade {
   holdBars: number;
   holdTimeMinutes: number;
   exitReason: string;
+  entryRegime?: BacktestTrendRegime;
 }
 
 export interface CostConfig {
@@ -93,6 +109,11 @@ export interface BacktestConfig {
   roundTripCostPct?: number;  // overrides commissionPct+slippagePct when set
   maxPositions?: number;      // max concurrent positions per token (default 1)
   exitParityMode?: 'indicator' | 'price'; // 'price' suppresses indicator sell signals so only SL/TP closes positions
+  executionCandles?: Candle[];
+  signalTimeframeMinutes?: number;
+  executionTimeframeMinutes?: number;
+  signalRegimes?: BacktestTrendRegime[];
+  entryRegimeFilter?: BacktestTrendRegime;
 }
 
 export interface BacktestResult {
@@ -102,6 +123,8 @@ export interface BacktestResult {
   trades: BacktestTrade[];
   totalCandles: number;
   dateRange: { start: number; end: number };
+  signalTimeframeMinutes: number;
+  executionTimeframeMinutes: number;
 }
 
 export interface BacktestMetrics {
@@ -120,3 +143,4 @@ export interface BacktestMetrics {
   avgHoldMinutes: number;
   tradesPerDay: number;
 }
+
