@@ -16,6 +16,7 @@ import { Position, PositionExit, SwapResult, StrategyPlan } from './types';
 import { checkKillSwitch } from './guards';
 import { recordExecutionAttempt, recordClosedPosition, recordSkip } from '../strategy/metrics';
 import { logExecution } from '../data';
+import { rawToBigInt, rawToHumanAmount } from './amounts';
 
 // Route buy/sell through paper executor when in paper mode
 async function executeBuy(mint: string, sizeUsdc: number, slippageBps: number): Promise<SwapResult> {
@@ -165,6 +166,10 @@ export function getPortfolioState(): PortfolioState {
     lastLossTime,
     stoppedOutTokens,
   };
+}
+
+function getOpenPositionsForMintInternal(mint: string): Position[] {
+  return Array.from(openPositions.values()).filter(p => p.mint === mint && p.status === 'open');
 }
 
 // Read USDC SPL token balance for the wallet
@@ -391,7 +396,7 @@ export async function openPosition(
     strategyPlan,
   };
 
-  openPositions.set(mint, position);
+  openPositions.set(position.id, position);
   log.info('Position opened', {
     id: position.id,
     mint,
@@ -415,11 +420,11 @@ export async function updatePositions() {
   positionUpdateRunning = true;
   try {
     if (openPositions.size === 0) return;
-    for (const [mint, position] of openPositions) {
+    for (const position of Array.from(openPositions.values())) {
       try {
         await updatePosition(position);
       } catch (err) {
-        log.error('Failed to update position', { mint, error: err });
+        log.error('Failed to update position', { mint: position.mint, id: position.id, error: err });
       }
     }
   } finally {
@@ -779,8 +784,8 @@ async function executeExit(
   if (sellPct >= 100) {
     const onChainRaw = await getOnChainTokenBalanceRaw(position.mint);
     if (onChainRaw && onChainRaw !== '0') {
-      const onChainBigInt = BigInt(onChainRaw);
-      const positionBigInt = BigInt(rawTokensToSell);
+      const onChainBigInt = rawToBigInt(onChainRaw);
+      const positionBigInt = rawToBigInt(rawTokensToSell);
       // Use on-chain if LESS (fee dust trimming). Never use if MORE (orphaned tokens).
       const cappedRaw = onChainBigInt < positionBigInt ? onChainRaw : rawTokensToSell;
       log.info('Full exit: on-chain balance check', {
@@ -800,7 +805,7 @@ async function executeExit(
   }
 
   // Guard: after floor() conversion, raw amount may be zero for dust positions
-  if (BigInt(rawTokensToSell) <= 0n) {
+  if (rawToBigInt(rawTokensToSell) <= 0n) {
     log.warn('Exit skipped: raw token amount is zero after floor conversion', {
       mint: position.mint,
       tokensToSell,
@@ -844,6 +849,8 @@ async function executeExit(
 
   position.exits.push(exit);
 
+  let verifiedFlat = false;
+
   if (result.success) {
     position.remainingTokens = Math.max(0, position.remainingTokens - result.tokenAmount);
     position.remainingUsdc = position.remainingTokens * position.currentPrice;
@@ -865,6 +872,35 @@ async function executeExit(
       usdcReceived: result.usdcAmount.toFixed(2),
       remainingPct: position.remainingPct.toFixed(0),
     });
+
+    if (sellPct >= 100) {
+      if (config.trading.paperTrading) {
+        verifiedFlat = position.remainingTokens <= 0;
+      } else {
+        const onChainAfterRaw = await getOnChainTokenBalanceRaw(position.mint);
+        if (onChainAfterRaw !== null) {
+          const onChainAfter = rawToBigInt(onChainAfterRaw);
+          position.remainingTokens = rawToHumanAmount(onChainAfter, decimals);
+          position.remainingUsdc = position.remainingTokens * position.currentPrice;
+          position.remainingPct = position.initialTokens > 0
+            ? (position.remainingTokens / position.initialTokens) * 100
+            : 0;
+          verifiedFlat = onChainAfter === 0n;
+
+          log.info('Full exit reconciliation', {
+            mint: position.mint,
+            onChainRemainingRaw: onChainAfterRaw,
+            remainingPct: position.remainingPct.toFixed(4),
+            verifiedFlat,
+          });
+        } else {
+          log.warn('Full exit reconciliation unavailable, keeping position open unless tracked size is zero', {
+            mint: position.mint,
+            id: position.id,
+          });
+        }
+      }
+    }
   } else {
     log.error('Exit execution failed', {
       mint: position.mint,
@@ -876,7 +912,7 @@ async function executeExit(
     return;
   }
 
-  if (position.remainingTokens <= 0 || (sellPct >= 100 && result.success)) {
+  if (position.remainingTokens <= 0 || verifiedFlat) {
     closePosition(position, reason);
   }
 }
@@ -890,15 +926,19 @@ function closePosition(position: Position, reason: string) {
 
   dailyPnlUsdc += pnlUsdc;
 
+  const finalExitType = position.exits[position.exits.length - 1]?.type;
+
   if (pnlUsdc < 0) {
     consecutiveLosses++;
     lastLossTime = Date.now();
-    stoppedOutTokens.set(position.mint, Date.now());
+    if (finalExitType === 'hard_stop' || finalExitType === 'emergency') {
+      stoppedOutTokens.set(position.mint, Date.now());
+    }
   } else {
     consecutiveLosses = 0;
   }
 
-  openPositions.delete(position.mint);
+  openPositions.delete(position.id);
   closedPositions.push(position);
   lpHistory.delete(position.mint);
 
@@ -921,12 +961,22 @@ export function getOpenPositions(): Map<string, Position> {
   return openPositions;
 }
 
+export function getOpenPositionsForMint(mint: string): Position[] {
+  return getOpenPositionsForMintInternal(mint);
+}
+
 export function getClosedPositions(): Position[] {
   return closedPositions;
 }
 
 export function hasOpenPosition(mint: string): boolean {
-  return openPositions.has(mint);
+  return getOpenPositionsForMintInternal(mint).length > 0;
+}
+
+export function hasOpenPositionForRoute(mint: string, routeId?: string): boolean {
+  if (!routeId) return false;
+  return getOpenPositionsForMintInternal(mint)
+    .some(position => (position.strategyPlan?.routeId ?? '') === routeId);
 }
 
 export function savePositionHistory() {
@@ -981,7 +1031,7 @@ export function loadPositionHistory() {
 
   if (isFromToday) {
     for (const p of todayData!.open) {
-      openPositions.set(p.mint, p);
+      openPositions.set(p.id, p);
     }
     if (todayData!.stats) {
       dailyPnlUsdc = todayData!.stats.dailyPnlUsdc ?? 0;
@@ -1000,7 +1050,7 @@ export function loadPositionHistory() {
   const yesterdayData = tryLoadFile(yesterday);
   if (yesterdayData && (yesterdayData.open?.length ?? 0) > 0) {
     for (const p of yesterdayData.open) {
-      openPositions.set(p.mint, p);
+      openPositions.set(p.id, p);
     }
     // Do NOT restore yesterday's dailyPnlUsdc/consecutiveLosses — start fresh for today
     dailyPnlUsdc = 0;

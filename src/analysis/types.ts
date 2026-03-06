@@ -26,21 +26,22 @@ export interface TradeEvent {
   side: 'buy' | 'sell';
   wallet: string;
   amountToken: number;
-  amountSol: number;
-  pricePerToken: number;
+  amountQuoteUsd: number;
+  quoteMint?: string;
+  pricePerToken: number; // USD per token
 }
 
 export interface TradeWindow {
   mint: string;
   windowMs: number;
   trades: TradeEvent[];
-  buyVolumeSol: number;
-  sellVolumeSol: number;
+  buyVolumeUsd: number;
+  sellVolumeUsd: number;
   buySellRatio: number;
   uniqueBuyers: number;
   uniqueSellers: number;
   maxSingleWalletBuyPct: number;
-  vwap: number;
+  vwap: number; // USD VWAP
   return5mPct: number;
 }
 

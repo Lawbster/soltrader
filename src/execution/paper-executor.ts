@@ -3,6 +3,7 @@ import { getConnection, createLogger } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
 import { jupiterGet } from './jupiter-client';
 import { SwapResult } from './types';
+import { rawToHumanAmount, scaleRawAmount } from './amounts';
 
 const log = createLogger('paper');
 
@@ -112,10 +113,10 @@ export async function paperBuyToken(
   // Apply simulated slippage on top of quote (real market would slip more)
   if (paperCfg.slippageSimulation) {
     const slipFactor = 1 - randomInRange(0.0001, 0.0005); // 0.01-0.05% additional slippage
-    tokenAmountRaw = BigInt(Math.floor(Number(tokenAmountRaw) * slipFactor));
+    tokenAmountRaw = scaleRawAmount(tokenAmountRaw, slipFactor);
   }
 
-  const tokenAmount = Number(tokenAmountRaw) / Math.pow(10, decimals);
+  const tokenAmount = rawToHumanAmount(tokenAmountRaw, decimals);
 
   // Simulated priority fee (in SOL, deducted from SOL balance not USDC)
   let fee = 0;
@@ -158,7 +159,7 @@ export async function paperSellToken(
   const startTime = Date.now();
 
   const decimals = await getTokenDecimals(mint);
-  const tokenAmount = parseInt(tokenAmountRaw) / Math.pow(10, decimals);
+  const tokenAmount = rawToHumanAmount(tokenAmountRaw, decimals);
 
   const failResult = (error: string): SwapResult => ({
     success: false,
@@ -193,10 +194,10 @@ export async function paperSellToken(
   // Apply simulated slippage
   if (paperCfg.slippageSimulation) {
     const slipFactor = 1 - randomInRange(0.0001, 0.0005); // 0.01-0.05% additional slippage
-    usdcOutRaw = BigInt(Math.floor(Number(usdcOutRaw) * slipFactor));
+    usdcOutRaw = scaleRawAmount(usdcOutRaw, slipFactor);
   }
 
-  const usdcAmount = Number(usdcOutRaw) / 1e6;
+  const usdcAmount = rawToHumanAmount(usdcOutRaw, 6);
 
   // Simulated priority fee (in SOL, not USDC)
   let fee = 0;

@@ -22,7 +22,7 @@ import {
   getPortfolioState,
   openPosition,
   updatePositions,
-  hasOpenPosition,
+  hasOpenPositionForRoute,
   savePositionHistory,
   checkSolReplenish,
 } from './execution';
@@ -150,8 +150,6 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const strategyCfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
 
-  if (hasOpenPosition(mint)) return;
-
   const tokenData = await fetchTokenData(mint, launch.detectedAt);
   if (!tokenData) return;
 
@@ -175,9 +173,8 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
   const indicatorsCfg = strategyCfg.entry.indicators;
 
-  // Compute 5m volume in USD
-  const solPrice = tokenData.priceUsd / (tokenData.priceSol || 1);
-  tokenData.volume5mUsd = (window.buyVolumeSol + window.sellVolumeSol) * solPrice;
+  // Trade window is already normalized to USD notional.
+  tokenData.volume5mUsd = window.buyVolumeUsd + window.sellVolumeUsd;
 
   const totalTrades = getAggregateMetrics().totalTrades;
   const routeCandidates: Array<{
@@ -189,11 +186,17 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
   const skippedByBoundary: string[] = [];
   const skippedByWarmup: string[] = [];
+  const skippedByOpenRoute: string[] = [];
   const indicatorCache = new Map<string, IndicatorSnapshot>();
   const defaultTimeframeMinutes = indicatorsCfg?.candleIntervalMinutes ?? 1;
   const nowMs = Date.now();
 
   for (const route of tokenStrategies) {
+    if (hasOpenPositionForRoute(mint, route.routeId)) {
+      skippedByOpenRoute.push(`${route.routeId ?? route.templateId}`);
+      continue;
+    }
+
     const evalGate = shouldEvaluateRouteNow(mint, route, defaultTimeframeMinutes, nowMs);
     if (!evalGate.evaluate) {
       skippedByBoundary.push(`${route.routeId ?? route.templateId}@${evalGate.timeframeMinutes}m`);
@@ -276,8 +279,11 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   }
 
   if (routeCandidates.length === 0) {
-    if (skippedByBoundary.length > 0 || skippedByWarmup.length > 0) {
+    if (skippedByBoundary.length > 0 || skippedByWarmup.length > 0 || skippedByOpenRoute.length > 0) {
       const reasons: string[] = [];
+      if (skippedByOpenRoute.length > 0) {
+        reasons.push(`open route (${skippedByOpenRoute.join(', ')})`);
+      }
       if (skippedByBoundary.length > 0) {
         reasons.push(`waiting candle close (${skippedByBoundary.join(', ')})`);
       }

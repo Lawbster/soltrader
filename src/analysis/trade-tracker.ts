@@ -1,8 +1,15 @@
 import { PublicKey, Logs } from '@solana/web3.js';
 import { getConnection, createLogger } from '../utils';
 import { TradeEvent, TradeWindow } from './types';
+import { getTokenPriceCached } from './token-data';
 
 const log = createLogger('trade-tracker');
+const SOL_MINT = 'So11111111111111111111111111111111111111112';
+const USD_STABLE_MINTS = new Set([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+  'Es9vMFrzaCERmJfrF4H2FYD8T9qW3m1Z4qVaki3P6Ky',
+  '2b1kV6DkPBrzeo4K4p9Gf4bmPqhGV8eK3vpYJwcYJYjE',
+]);
 
 // Rolling trade history per token
 const tradeHistory = new Map<string, TradeEvent[]>();
@@ -63,9 +70,9 @@ export function getTradeWindow(mint: string, windowMs: number): TradeWindow {
   const buys = windowTrades.filter(t => t.side === 'buy');
   const sells = windowTrades.filter(t => t.side === 'sell');
 
-  const buyVolumeSol = buys.reduce((sum, t) => sum + t.amountSol, 0);
-  const sellVolumeSol = sells.reduce((sum, t) => sum + t.amountSol, 0);
-  const buySellRatio = sellVolumeSol > 0 ? buyVolumeSol / sellVolumeSol : buyVolumeSol > 0 ? 999 : 0;
+  const buyVolumeUsd = buys.reduce((sum, t) => sum + t.amountQuoteUsd, 0);
+  const sellVolumeUsd = sells.reduce((sum, t) => sum + t.amountQuoteUsd, 0);
+  const buySellRatio = sellVolumeUsd > 0 ? buyVolumeUsd / sellVolumeUsd : buyVolumeUsd > 0 ? 999 : 0;
 
   // Only count wallets that are non-empty (enriched trades)
   const uniqueBuyers = new Set(buys.map(t => t.wallet).filter(w => w !== '')).size;
@@ -75,16 +82,16 @@ export function getTradeWindow(mint: string, windowMs: number): TradeWindow {
   const buyByWallet = new Map<string, number>();
   for (const buy of buys) {
     if (buy.wallet === '') continue;
-    buyByWallet.set(buy.wallet, (buyByWallet.get(buy.wallet) || 0) + buy.amountSol);
+    buyByWallet.set(buy.wallet, (buyByWallet.get(buy.wallet) || 0) + buy.amountQuoteUsd);
   }
   const maxWalletBuy = buyByWallet.size > 0 ? Math.max(...Array.from(buyByWallet.values())) : 0;
-  const maxSingleWalletBuyPct = buyVolumeSol > 0 ? (maxWalletBuy / buyVolumeSol) * 100 : 0;
+  const maxSingleWalletBuyPct = buyVolumeUsd > 0 ? (maxWalletBuy / buyVolumeUsd) * 100 : 0;
 
   // VWAP — only from trades with valid price
-  const pricedTrades = windowTrades.filter(t => t.pricePerToken > 0 && t.amountSol > 0);
-  const totalPricedVolume = pricedTrades.reduce((sum, t) => sum + t.amountSol, 0);
+  const pricedTrades = windowTrades.filter(t => t.pricePerToken > 0 && t.amountToken > 0);
+  const totalPricedVolume = pricedTrades.reduce((sum, t) => sum + t.amountToken, 0);
   const vwap = totalPricedVolume > 0
-    ? pricedTrades.reduce((sum, t) => sum + t.pricePerToken * t.amountSol, 0) / totalPricedVolume
+    ? pricedTrades.reduce((sum, t) => sum + t.pricePerToken * t.amountToken, 0) / totalPricedVolume
     : 0;
 
   // 5-minute return from priced trades
@@ -101,8 +108,8 @@ export function getTradeWindow(mint: string, windowMs: number): TradeWindow {
     mint,
     windowMs,
     trades: windowTrades,
-    buyVolumeSol,
-    sellVolumeSol,
+    buyVolumeUsd,
+    sellVolumeUsd,
     buySellRatio,
     uniqueBuyers,
     uniqueSellers,
@@ -199,7 +206,7 @@ async function enrichAndRecord(mint: string, signature: string) {
       log.info('Enriched trade recorded', {
         mint,
         side: trade.side,
-        sol: trade.amountSol.toFixed(4),
+        quoteUsd: trade.amountQuoteUsd.toFixed(2),
         wallet: trade.wallet.slice(0, 8) + '...',
         price: trade.pricePerToken.toExponential(3),
       });
@@ -274,35 +281,38 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
     // Find the quote: largest absolute delta in any non-target mint for this owner
     const ownerDeltas = deltaMap.get(bestOwner)!;
     let quoteAmount = 0;
+    let quoteMint = '';
     for (const [m, d] of ownerDeltas) {
       if (m === mint) continue;
       if (Math.abs(d) > Math.abs(quoteAmount)) {
         quoteAmount = d;
+        quoteMint = m;
       }
     }
 
-    let amountQuote = Math.abs(quoteAmount);
+    let amountQuoteUsd = quoteMint ? quoteAmountToUsd(quoteMint, Math.abs(quoteAmount)) : 0;
 
     // Fallback: native SOL balance change (for swaps that don't use wSOL token accounts)
-    if (amountQuote === 0) {
+    if (amountQuoteUsd === 0) {
       const signer = tx.transaction.message.accountKeys.find(k => k.signer)?.pubkey.toBase58() || '';
       if (signer) {
         const signerIdx = tx.transaction.message.accountKeys.findIndex(k => k.signer);
         const preSol = (tx.meta.preBalances[signerIdx] || 0) / 1e9;
         const postSol = (tx.meta.postBalances[signerIdx] || 0) / 1e9;
         const fee = tx.meta.fee / 1e9;
-        amountQuote = Math.abs((postSol - preSol) + fee);
+        quoteMint = SOL_MINT;
+        amountQuoteUsd = quoteAmountToUsd(SOL_MINT, Math.abs((postSol - preSol) + fee));
       }
     }
 
-    if (amountQuote === 0) {
-      log.warn('Quote delta is zero', { mint, signature, owner: bestOwner });
+    if (amountQuoteUsd === 0) {
+      log.warn('Quote delta has no USD valuation', { mint, signature, owner: bestOwner, quoteMint });
       return null;
     }
 
     const isBuy = bestDelta > 0;
     const amountToken = Math.abs(bestDelta);
-    const pricePerToken = amountToken > 0 ? amountQuote / amountToken : 0;
+    const pricePerToken = amountToken > 0 ? amountQuoteUsd / amountToken : 0;
 
     return {
       mint,
@@ -311,13 +321,22 @@ export async function enrichTradeFromTx(mint: string, signature: string): Promis
       side: isBuy ? 'buy' : 'sell',
       wallet: bestOwner,
       amountToken,
-      amountSol: amountQuote, // quote amount (SOL, USDC, etc.)
+      amountQuoteUsd,
+      quoteMint,
       pricePerToken,
     };
   } catch (err) {
     log.error('Failed to enrich trade', { mint, signature, error: err });
     return null;
   }
+}
+
+function quoteAmountToUsd(quoteMint: string, amount: number): number {
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  if (USD_STABLE_MINTS.has(quoteMint)) return amount;
+  const cachedUsd = getTokenPriceCached(quoteMint).priceUsd;
+  if (Number.isFinite(cachedUsd) && cachedUsd > 0) return amount * cachedUsd;
+  return 0;
 }
 
 export function getActiveSubscriptionCount(): number {

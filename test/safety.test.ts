@@ -1,156 +1,117 @@
-import { describe, it, expect } from 'vitest';
+import { rawToHumanAmount, scaleRawAmount } from '../src/execution/amounts';
 
-// ---- Test 1: Failed 100% exit must NOT close position ----
-// We test the logic directly — the rule is:
-// "only close if result.success AND (remainingTokens <= 0 OR sellPct >= 100)"
+process.env.HELIUS_API_KEY = process.env.HELIUS_API_KEY || 'test';
+process.env.HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || 'http://localhost:8899';
+process.env.HELIUS_WSS_URL = process.env.HELIUS_WSS_URL || 'ws://localhost:8900';
 
-describe('exit-close guard', () => {
-  interface MockPosition {
-    remainingTokens: number;
-    remainingPct: number;
-    status: 'open' | 'closed';
-  }
+async function loadTradeTracker() {
+  return import('../src/analysis/trade-tracker');
+}
 
-  function simulateExitLogic(
-    position: MockPosition,
-    sellPct: number,
-    resultSuccess: boolean,
-    resultTokenAmount: number
-  ): MockPosition {
-    // Mirror position-manager.ts executeExit logic
-    if (resultSuccess) {
-      position.remainingTokens -= resultTokenAmount;
-      position.remainingPct = position.remainingTokens > 0 ? (position.remainingTokens / 1000) * 100 : 0;
-    } else {
-      // Failed: return early, do NOT close
-      return position;
-    }
-
-    if (position.remainingTokens <= 0 || (sellPct >= 100 && resultSuccess)) {
-      position.status = 'closed';
-    }
-
-    return position;
-  }
-
-  it('should NOT close position when 100% sell fails', () => {
-    const pos: MockPosition = { remainingTokens: 1000, remainingPct: 100, status: 'open' };
-    simulateExitLogic(pos, 100, false, 0);
-    expect(pos.status).toBe('open');
-    expect(pos.remainingTokens).toBe(1000);
+describe('raw amount helpers', () => {
+  test('convert raw amounts without parseInt precision loss', () => {
+    expect(rawToHumanAmount('1000000000', 9)).toBe(1);
+    expect(rawToHumanAmount('123456789', 6)).toBeCloseTo(123.456789);
+    expect(rawToHumanAmount(1234567890123456789n, 9)).toBeCloseTo(1234567890.1234567, 6);
   });
 
-  it('should close position when 100% sell succeeds', () => {
-    const pos: MockPosition = { remainingTokens: 1000, remainingPct: 100, status: 'open' };
-    simulateExitLogic(pos, 100, true, 1000);
-    expect(pos.status).toBe('closed');
-    expect(pos.remainingTokens).toBe(0);
-  });
-
-  it('should NOT close position on partial sell (50%)', () => {
-    const pos: MockPosition = { remainingTokens: 1000, remainingPct: 100, status: 'open' };
-    simulateExitLogic(pos, 50, true, 500);
-    expect(pos.status).toBe('open');
-    expect(pos.remainingTokens).toBe(500);
+  test('scale raw amounts using bigint-safe math', () => {
+    expect(scaleRawAmount('1000000', 0.9999)).toBe(999900n);
+    expect(scaleRawAmount(5000000000n, 0.5)).toBe(2500000000n);
+    expect(scaleRawAmount('42', 0)).toBe(0n);
   });
 });
 
-// ---- Test 2: Unit conversion rawToHuman ----
+describe('trade window uses USD notionals and token-weighted VWAP', () => {
+  test('buy/sell volume and wallet concentration use USD amounts', async () => {
+    const { recordTrade, getTradeWindow } = await loadTradeTracker();
+    const mint = `mint-${Date.now()}-usd`;
+    const now = Date.now();
 
-describe('unit conversion', () => {
-  function rawToHuman(raw: string, decimals: number): number {
-    return parseInt(raw) / Math.pow(10, decimals);
-  }
+    recordTrade({
+      mint,
+      signature: `${mint}-1`,
+      timestamp: now - 10_000,
+      side: 'buy',
+      wallet: 'wallet-a',
+      amountToken: 10,
+      amountQuoteUsd: 100,
+      pricePerToken: 10,
+      quoteMint: 'USDC',
+    });
+    recordTrade({
+      mint,
+      signature: `${mint}-2`,
+      timestamp: now - 5_000,
+      side: 'buy',
+      wallet: 'wallet-b',
+      amountToken: 20,
+      amountQuoteUsd: 300,
+      pricePerToken: 15,
+      quoteMint: 'USDC',
+    });
+    recordTrade({
+      mint,
+      signature: `${mint}-3`,
+      timestamp: now - 2_000,
+      side: 'sell',
+      wallet: 'wallet-c',
+      amountToken: 5,
+      amountQuoteUsd: 75,
+      pricePerToken: 15,
+      quoteMint: 'USDC',
+    });
 
-  it('converts lamports to SOL (9 decimals)', () => {
-    expect(rawToHuman('1000000000', 9)).toBe(1.0);
-    expect(rawToHuman('500000000', 9)).toBe(0.5);
-    expect(rawToHuman('1', 9)).toBeCloseTo(1e-9);
+    const window = getTradeWindow(mint, 60_000);
+
+    expect(window.buyVolumeUsd).toBe(400);
+    expect(window.sellVolumeUsd).toBe(75);
+    expect(window.buySellRatio).toBeCloseTo(400 / 75);
+    expect(window.maxSingleWalletBuyPct).toBeCloseTo(75);
   });
 
-  it('converts 6-decimal token amounts', () => {
-    expect(rawToHuman('1000000', 6)).toBe(1.0);
-    expect(rawToHuman('123456789', 6)).toBeCloseTo(123.456789);
-  });
+  test('vwap is weighted by token quantity, not quote notional', async () => {
+    const { recordTrade, getTradeWindow } = await loadTradeTracker();
+    const mint = `mint-${Date.now()}-vwap`;
+    const now = Date.now();
 
-  it('handles raw-to-human round-trip for sell amounts', () => {
-    const humanAmount = 42.5;
-    const decimals = 9;
-    const raw = Math.floor(humanAmount * Math.pow(10, decimals)).toString();
-    const backToHuman = rawToHuman(raw, decimals);
-    expect(backToHuman).toBeCloseTo(humanAmount, 8);
+    recordTrade({
+      mint,
+      signature: `${mint}-1`,
+      timestamp: now - 20_000,
+      side: 'buy',
+      wallet: 'wallet-a',
+      amountToken: 100,
+      amountQuoteUsd: 100,
+      pricePerToken: 1,
+      quoteMint: 'USDC',
+    });
+    recordTrade({
+      mint,
+      signature: `${mint}-2`,
+      timestamp: now - 10_000,
+      side: 'buy',
+      wallet: 'wallet-b',
+      amountToken: 1,
+      amountQuoteUsd: 100,
+      pricePerToken: 100,
+      quoteMint: 'USDC',
+    });
+
+    const window = getTradeWindow(mint, 60_000);
+
+    expect(window.vwap).toBeCloseTo((100 * 1 + 1 * 100) / 101, 6);
+    expect(window.return5mPct).toBeCloseTo(9900);
   });
 });
 
-// ---- Test 3: Dedup two-generation bounded set ----
-
-describe('dedup cap rotation', () => {
-  it('rotates generations when current fills up', () => {
-    const MAX = 10; // Small cap for testing
-    let currentSigs = new Set<string>();
-    let previousSigs = new Set<string>();
-
-    function hasSig(sig: string): boolean {
-      return currentSigs.has(sig) || previousSigs.has(sig);
-    }
-
-    function markSig(sig: string) {
-      currentSigs.add(sig);
-      if (currentSigs.size >= MAX) {
-        previousSigs = currentSigs;
-        currentSigs = new Set<string>();
-      }
-    }
-
-    // Fill first generation
-    for (let i = 0; i < MAX; i++) {
-      markSig(`sig-${i}`);
-    }
-
-    // After rotation: sig-0 through sig-9 should be in previousSigs
-    // currentSigs should be empty
-    expect(currentSigs.size).toBe(0);
-    expect(previousSigs.size).toBe(MAX);
-
-    // Old sigs are still found
-    expect(hasSig('sig-0')).toBe(true);
-    expect(hasSig('sig-5')).toBe(true);
-
-    // New sigs go into current
-    markSig('sig-new');
-    expect(hasSig('sig-new')).toBe(true);
-
-    // Fill second generation to trigger another rotation
-    for (let i = 0; i < MAX - 1; i++) {
-      markSig(`sig-second-${i}`);
-    }
-
-    // Now previousSigs has the second batch, first batch is gone
-    expect(hasSig('sig-0')).toBe(false);
-    expect(hasSig('sig-new')).toBe(true); // in previous now
-    expect(hasSig('sig-second-0')).toBe(true);
-  });
-
-  it('total memory is bounded to ~2x max per generation', () => {
-    const MAX = 100;
-    let currentSigs = new Set<string>();
-    let previousSigs = new Set<string>();
-
-    function markSig(sig: string) {
-      currentSigs.add(sig);
-      if (currentSigs.size >= MAX) {
-        previousSigs = currentSigs;
-        currentSigs = new Set<string>();
-      }
-    }
-
-    // Add 5x the max
-    for (let i = 0; i < MAX * 5; i++) {
-      markSig(`sig-${i}`);
-    }
-
-    // Total stored should be <= 2 * MAX
-    const total = currentSigs.size + previousSigs.size;
-    expect(total).toBeLessThanOrEqual(2 * MAX);
+describe('trade-log dedup state stays bounded', () => {
+  test('dedup generations reset cleanly', async () => {
+    const { _test_dedupState, _test_resetDedup } = await loadTradeTracker();
+    _test_resetDedup();
+    const state = _test_dedupState();
+    expect(state.currentSigs.size).toBe(0);
+    expect(state.previousSigs.size).toBe(0);
+    expect(state.MAX_SIGS_PER_GENERATION).toBeGreaterThan(0);
   });
 });

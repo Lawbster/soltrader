@@ -15,7 +15,7 @@ function scoreMomentum(token: TokenData, window: TradeWindow): number {
   const returnScore = normalize(window.return5mPct, 6, 30);
 
   // Price above VWAP ratio: 1.0 (at VWAP) → 0, 1.1+ → 100
-  const vwapRatio = window.vwap > 0 ? token.priceSol / window.vwap : 1;
+  const vwapRatio = window.vwap > 0 ? token.priceUsd / window.vwap : 1;
   const vwapScore = normalize(vwapRatio, 1.0, 1.1);
 
   return (returnScore * 0.6 + vwapScore * 0.4);

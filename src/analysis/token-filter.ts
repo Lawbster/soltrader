@@ -67,8 +67,8 @@ export function filterEntry(
   }
 
   // VWAP: current price above VWAP (momentum filter — skip when indicators drive entry)
-  if (!entry.indicators?.enabled && window.vwap > 0 && token.priceSol < window.vwap) {
-    return { passed: false, reason: `Price ${token.priceSol.toExponential(2)} below VWAP ${window.vwap.toExponential(2)}` };
+  if (!entry.indicators?.enabled && window.vwap > 0 && token.priceUsd < window.vwap) {
+    return { passed: false, reason: `Price ${token.priceUsd.toExponential(2)} below VWAP ${window.vwap.toExponential(2)}` };
   }
 
   // Buy/sell ratio

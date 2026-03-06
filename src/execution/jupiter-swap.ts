@@ -5,6 +5,7 @@ import { FillSource, SwapQuote, SwapResult, TradeLog } from './types';
 import { validateQuote, validateSimulation } from './guards';
 import { sendWithJito } from './jito-bundle';
 import { jupiterGet, jupiterPost } from './jupiter-client';
+import { rawToHumanAmount } from './amounts';
 import fs from 'fs';
 import path from 'path';
 
@@ -44,7 +45,7 @@ async function getTokenDecimals(mint: string): Promise<number> {
 }
 
 function rawToHuman(raw: string, decimals: number): number {
-  return parseInt(raw) / Math.pow(10, decimals);
+  return rawToHumanAmount(raw, decimals);
 }
 
 interface ParsedTokenBalance {
@@ -322,7 +323,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
           const usdcDeltaRaw = mintDeltas.get(USDC_MINT);
           if (usdcDeltaRaw !== undefined && usdcDeltaRaw !== 0n) {
             const usdcAbsRaw = usdcDeltaRaw < 0n ? -usdcDeltaRaw : usdcDeltaRaw;
-            actualUsdcAmount = Number(usdcAbsRaw) / Math.pow(10, USDC_DECIMALS);
+            actualUsdcAmount = rawToHumanAmount(usdcAbsRaw, USDC_DECIMALS);
           }
 
           const tokenDeltaRaw = mintDeltas.get(tokenMint);
