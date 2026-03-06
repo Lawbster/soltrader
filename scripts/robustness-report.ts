@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 
 interface CliArgs {
   runDir?: string;
@@ -16,6 +17,8 @@ interface RankedRow {
   trendRegime: string;
   template: string;
   timeframe: number;
+  executionTimeframe: number;
+  exitParity: string;
   params: string;
   windowsSeen: number;
   meanPnlPct: number;
@@ -136,12 +139,64 @@ function readCsv(filePath: string): CsvRow[] {
   return rows;
 }
 
+interface RawCsvStats {
+  rowCount: number;
+  negativeCount: number;
+  zeroCount: number;
+  minPnl: number;
+  unknownRegimeRows: number;
+}
+
+async function scanRawCsvStats(filePath: string): Promise<RawCsvStats> {
+  const stats: RawCsvStats = {
+    rowCount: 0,
+    negativeCount: 0,
+    zeroCount: 0,
+    minPnl: Number.POSITIVE_INFINITY,
+    unknownRegimeRows: 0,
+  };
+
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  let header: string[] | null = null;
+  let idx: Record<string, number> = {};
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    if (!header) {
+      header = parseCsvLine(line);
+      idx = Object.fromEntries(header.map((h, i) => [h, i])) as Record<string, number>;
+      continue;
+    }
+
+    const parts = parseCsvLine(line);
+    if (parts.length !== header.length) continue;
+
+    stats.rowCount++;
+    const pnl = Number(parts[idx.pnlPct]);
+    if (Number.isFinite(pnl)) {
+      if (pnl < 0) stats.negativeCount++;
+      if (pnl === 0) stats.zeroCount++;
+      if (pnl < stats.minPnl) stats.minPnl = pnl;
+    }
+
+    const regime = (parts[idx.trendRegime] ?? 'unknown').trim();
+    if (regime === 'unknown') stats.unknownRegimeRows++;
+  }
+
+  if (!Number.isFinite(stats.minPnl)) stats.minPnl = 0;
+  return stats;
+}
+
 function asNum(row: CsvRow, key: string, fallback = 0): number {
   const n = Number(row[key]);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function pickLatestRun(rootDir: string): string {
+function pickLatestRun(rootDir: string, requiredFiles: string[] = []): string {
   if (!fs.existsSync(rootDir)) {
     throw new Error(`Robustness root directory not found: ${rootDir}`);
   }
@@ -152,6 +207,9 @@ function pickLatestRun(rootDir: string): string {
   if (dirs.length === 0) {
     throw new Error(`No run-* folders found in ${rootDir}`);
   }
+  if (requiredFiles.length === 0) return dirs[0];
+  const compatible = dirs.find(dir => requiredFiles.every(file => fs.existsSync(path.join(dir, file))));
+  if (compatible) return compatible;
   return dirs[0];
 }
 
@@ -194,7 +252,9 @@ function rankRows(rows: CsvRow[]): RankedRow[] {
     trendRegime: r.trendRegime,
     template: r.template,
     timeframe: asNum(r, 'timeframe'),
-    params: r.params,
+    executionTimeframe: asNum(r, 'executionTimeframe', 1),
+    exitParity: r.exitParity ?? 'unknown',
+    params: r.params ?? r.representativeParams ?? '',
     windowsSeen: asNum(r, 'windowsSeen'),
     meanPnlPct: asNum(r, 'meanPnlPct'),
     worstPnlPct: asNum(r, 'worstPnlPct'),
@@ -256,27 +316,33 @@ function csvEscape(v: string): string {
   return `"${v.replace(/"/g, '""')}"`;
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const runDir = args.runDir ? path.resolve(args.runDir) : pickLatestRun(args.rootDir);
+  const runDir = args.runDir
+    ? path.resolve(args.runDir)
+    : pickLatestRun(args.rootDir, ['window-index.csv', 'window-raw.csv', 'stability-family-ranked.csv']);
 
   const indexFile = path.join(runDir, 'window-index.csv');
-  const detailsFile = path.join(runDir, 'window-candidates.csv');
-  const coreFile = path.join(runDir, 'stability-core.csv');
-  const probeFile = path.join(runDir, 'stability-probe.csv');
+  const rawFile = path.join(runDir, 'window-raw.csv');
+  const exactFile = fs.existsSync(path.join(runDir, 'stability-exact-ranked.csv'))
+    ? path.join(runDir, 'stability-exact-ranked.csv')
+    : path.join(runDir, 'stability-ranked.csv');
+  const familyFile = path.join(runDir, 'stability-family-ranked.csv');
   const weekdayFile = path.join(runDir, 'weekday-patterns.csv');
+  const candidateFile = path.join(runDir, 'window-candidates.csv');
 
-  for (const file of [indexFile, detailsFile, coreFile, probeFile, weekdayFile]) {
+  for (const file of [indexFile, rawFile, exactFile, familyFile, weekdayFile]) {
     if (!fs.existsSync(file)) {
       throw new Error(`Missing file in run folder: ${file}`);
     }
   }
 
   const indexRows = readCsv(indexFile);
-  const detailRows = readCsv(detailsFile);
-  const coreRows = readCsv(coreFile);
-  const probeRows = readCsv(probeFile);
+  const exactRows = readCsv(exactFile);
+  const familyRows = readCsv(familyFile);
   const weekdayRows = readCsv(weekdayFile);
+  const candidateRows = fs.existsSync(candidateFile) ? readCsv(candidateFile) : [];
+  const rawStats = await scanRawCsvStats(rawFile);
 
   const statusCounts = mapCount(indexRows, 'status');
   const costCounts = mapCount(indexRows, 'costModeUsed');
@@ -284,25 +350,19 @@ function main(): void {
   const corePerWindow = indexRows.map(r => asNum(r, 'coreRows'));
   const probePerWindow = indexRows.map(r => asNum(r, 'probeRows'));
 
-  const pnlValues = detailRows.map(r => asNum(r, 'pnlPct'));
-  const negativeCount = pnlValues.filter(v => v < 0).length;
-  const zeroCount = pnlValues.filter(v => v === 0).length;
-  const minPnl = pnlValues.length > 0 ? Math.min(...pnlValues) : 0;
+  const unknownRegimePct = pct(rawStats.unknownRegimeRows, rawStats.rowCount);
 
-  const unknownRegimeRows = detailRows.filter(r => (r.trendRegime ?? 'unknown') === 'unknown').length;
-  const unknownRegimePct = pct(unknownRegimeRows, detailRows.length);
+  const rankedExact = rankRows(exactRows);
+  const rankedFamily = rankRows(familyRows);
 
-  const rankedCore = rankRows(coreRows);
-  const rankedProbe = rankRows(probeRows);
-
-  const topCore = rankedCore.slice(0, args.top);
-  const topProbe = rankedProbe.slice(0, args.top);
+  const topExact = rankedExact.slice(0, args.top);
+  const topFamily = rankedFamily.slice(0, args.top);
   const topWeekday = weekdayRows
     .slice()
     .sort((a, b) => asNum(b, 'meanPnlPct') - asNum(a, 'meanPnlPct'))
     .slice(0, 10);
 
-  const decisionCsv = toDecisionCsv(rankedCore, args.top);
+  const decisionCsv = toDecisionCsv(rankedExact, args.top);
   const decisionPath = path.join(runDir, 'decision-matrix.csv');
   fs.writeFileSync(decisionPath, decisionCsv, 'utf8');
 
@@ -321,39 +381,46 @@ function main(): void {
   lines.push(`- Probe rows/window: min ${Math.min(...probePerWindow)}, median ${median(probePerWindow).toFixed(1)}, mean ${mean(probePerWindow).toFixed(1)}, max ${Math.max(...probePerWindow)}`);
   lines.push('');
   lines.push('## Data Quality Flags');
-  lines.push(`- Candidate rows: ${detailRows.length}`);
-  lines.push(`- Min pnl in candidate rows: ${minPnl.toFixed(4)}% (negative rows: ${negativeCount}, zero rows: ${zeroCount})`);
-  if (negativeCount === 0) {
-    lines.push(`- Warning: all candidate rows are non-negative. Positive-rate metrics are inflated by filtering, not pure robustness.`);
+  lines.push(`- Raw sweep rows: ${rawStats.rowCount}`);
+  lines.push(`- Min pnl in raw rows: ${rawStats.minPnl.toFixed(4)}% (negative rows: ${rawStats.negativeCount}, zero rows: ${rawStats.zeroCount})`);
+  if (rawStats.negativeCount === 0 && rawStats.rowCount > 0) {
+    lines.push(`- Warning: all raw rows are non-negative. Verify raw sweeps are not being filtered upstream.`);
   }
-  lines.push(`- Unknown regime rows: ${unknownRegimeRows}/${detailRows.length} (${unknownRegimePct.toFixed(1)}%)`);
+  lines.push(`- Unknown regime rows: ${rawStats.unknownRegimeRows}/${rawStats.rowCount} (${unknownRegimePct.toFixed(1)}%)`);
   if (unknownRegimePct >= 30) {
     lines.push(`- Warning: high unknown-regime share; short windows likely cannot classify trend reliably.`);
   }
-  const coreFragile = rankedCore.filter(r => r.windowsSeen <= 3).length;
-  lines.push(`- Core rows with fragile window support (<=3 windows): ${coreFragile}/${rankedCore.length}`);
-  lines.push('');
-  lines.push('## Top Core Rows');
-  if (topCore.length === 0) {
-    lines.push('- No core stability rows met the minimum window threshold in this robustness run.');
+  lines.push(`- Exact stability rows: ${rankedExact.length}`);
+  lines.push(`- Family stability rows: ${rankedFamily.length}`);
+  if (candidateRows.length > 0) {
+    const candidateMinPnl = Math.min(...candidateRows.map(r => asNum(r, 'pnlPct')));
+    const candidateNegative = candidateRows.filter(r => asNum(r, 'pnlPct') < 0).length;
+    lines.push(`- Window candidate rows: ${candidateRows.length} (min pnl ${candidateMinPnl.toFixed(4)}%, negative rows ${candidateNegative})`);
   } else {
-    for (const r of topCore) {
-      lines.push(`- ${actionFromRow(r).toUpperCase()} (${confidenceFromWindows(r.windowsSeen)}): ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m | windows=${r.windowsSeen} mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}% trades=${r.meanTrades.toFixed(1)} score=${r.consistencyScore.toFixed(3)} | \`${r.params}\``);
+    lines.push(`- Window candidate rows: not generated (truth-only robustness run)`);
+  }
+  lines.push('');
+  lines.push('## Top Exact Rows');
+  if (topExact.length === 0) {
+    lines.push('- No exact stability rows met the minimum window threshold in this robustness run.');
+  } else {
+    for (const r of topExact) {
+      lines.push(`- ${actionFromRow(r).toUpperCase()} (${confidenceFromWindows(r.windowsSeen)}): ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m/${r.executionTimeframe}m ${r.exitParity} | windows=${r.windowsSeen} mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}% trades=${r.meanTrades.toFixed(1)} score=${r.consistencyScore.toFixed(3)} | \`${r.params}\``);
     }
   }
   lines.push('');
-  lines.push('## Top Probe Rows');
-  if (topProbe.length === 0) {
-    lines.push('- No probe stability rows met the minimum window threshold in this robustness run.');
+  lines.push('## Top Family Rows');
+  if (topFamily.length === 0) {
+    lines.push('- No family stability rows met the minimum window threshold in this robustness run.');
   } else {
-    for (const r of topProbe) {
-      lines.push(`- ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m | windows=${r.windowsSeen} mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}% trades=${r.meanTrades.toFixed(1)} score=${r.consistencyScore.toFixed(3)} | \`${r.params}\``);
+    for (const r of topFamily) {
+      lines.push(`- ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m/${r.executionTimeframe}m ${r.exitParity} | windows=${r.windowsSeen} mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}% trades=${r.meanTrades.toFixed(1)} score=${r.consistencyScore.toFixed(3)} | \`${r.params}\``);
     }
   }
   lines.push('');
-  lines.push('## Weekday Buckets (Top by Mean PnL)');
+  lines.push('## Weekday Buckets (Raw Rows)');
   for (const r of topWeekday) {
-    lines.push(`- ${r.bucket} ${r.windowDays}d ${r.pair}: mean=${asNum(r, 'meanPnlPct').toFixed(2)}% median=${asNum(r, 'medianPnlPct').toFixed(2)}% positiveRate=${asNum(r, 'positiveRatePct').toFixed(1)}% rows=${asNum(r, 'rows')}`);
+    lines.push(`- ${asNum(r, 'windowDays')}d ${r.pair}: mean=${asNum(r, 'meanPnlPct').toFixed(2)}% median=${asNum(r, 'medianPnlPct').toFixed(2)}% positiveRate=${asNum(r, 'positiveRatePct').toFixed(1)}% rows=${asNum(r, 'rows')}`);
   }
   lines.push('');
   lines.push('## Files');
@@ -367,4 +434,7 @@ function main(): void {
   console.log(`Decision matrix: ${decisionPath}`);
 }
 
-main();
+main().catch((err) => {
+  console.error(err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});

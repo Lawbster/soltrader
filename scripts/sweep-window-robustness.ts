@@ -12,6 +12,7 @@ type CandidatePreset = 'profit-first' | 'legacy';
 interface CliArgs {
   from: string;
   to: string;
+  rebuildRunDir?: string;
   windowDays: number[];
   stepDays: number;
   minWindows: number;
@@ -31,6 +32,7 @@ interface CliArgs {
   outDir: string;
   requireTimeframes: boolean;
   timeframeSupportMin: number;
+  includeWindowCandidates: boolean;
   template?: string;
   token?: string;
   dryRun: boolean;
@@ -87,12 +89,41 @@ interface WindowCandidateRow extends CandidateRow {
   bucket: Bucket;
 }
 
-interface StabilityRow {
-  bucket: Bucket;
+interface RawWindowRow {
+  windowId: string;
+  windowDays: number;
+  from: string;
+  to: string;
+  startDow: string;
+  endDow: string;
   token: string;
   trendRegime: TrendRegime;
   template: string;
   timeframe: number;
+  executionTimeframe: number;
+  exitParity: 'indicator' | 'price' | 'unknown';
+  params: string;
+  trades: number;
+  winRatePct: number;
+  pnlPct: number;
+  profitFactor: number | null;
+  avgHoldMinutes: number;
+  avgWinPct: number;
+  avgLossPct: number;
+  expectancyPct: number;
+  maxDrawdownPct: number;
+  sharpeRatio: number;
+  entrySignalCount: number | null;
+  entryCoverageHours: number | null;
+}
+
+interface ExactStabilityRow {
+  token: string;
+  trendRegime: TrendRegime;
+  template: string;
+  timeframe: number;
+  executionTimeframe: number;
+  exitParity: 'indicator' | 'price' | 'unknown';
   params: string;
   windowsSeen: number;
   positiveWindows: number;
@@ -107,29 +138,48 @@ interface StabilityRow {
   bestPnlPct: number;
   meanTrades: number;
   meanWinRatePct: number;
-  meanAdjustedWinRatePct: number;
   meanHoldMinutes: number;
-  meanMtfScore: number;
+  meanExpectancyPct: number;
   meanProfitFactor: number | null;
+  meanMaxDrawdownPct: number;
   consistencyScore: number;
 }
 
-interface WeekdayPatternRow {
-  bucket: Bucket;
-  windowDays: number;
-  pair: string;
-  windows: number;
-  rows: number;
+interface FamilyStabilityRow {
+  token: string;
+  trendRegime: TrendRegime;
+  template: string;
+  timeframe: number;
+  executionTimeframe: number;
+  exitParity: 'indicator' | 'price' | 'unknown';
+  windowsSeen: number;
+  positiveWindows: number;
+  nonNegativeWindows: number;
+  negativeWindows: number;
   positiveRatePct: number;
+  nonNegativeRatePct: number;
   meanPnlPct: number;
   medianPnlPct: number;
-  meanMtfScore: number;
+  stdPnlPct: number;
+  worstPnlPct: number;
+  bestPnlPct: number;
+  meanTrades: number;
+  meanWinRatePct: number;
+  meanHoldMinutes: number;
+  meanExpectancyPct: number;
+  meanProfitFactor: number | null;
+  meanMaxDrawdownPct: number;
+  consistencyScore: number;
+  representativeParams: string;
+  representativeWindows: number;
+  uniqueParamVariants: number;
 }
 
 function printHelp(): void {
   const lines = [
     'Usage:',
     '  npm run sweep-robustness -- --from YYYY-MM-DD [options]',
+    '  npm run sweep-robustness -- --rebuild-run-dir PATH [options]',
     '',
     'Examples:',
     '  npm run sweep-robustness -- --from 2026-02-18 --window-days 1,2 --step-days 1',
@@ -139,6 +189,7 @@ function printHelp(): void {
     'Options:',
     '  --from YYYY-MM-DD              Start date (required)',
     '  --to YYYY-MM-DD                End date (default: today UTC)',
+    '  --rebuild-run-dir PATH         Rebuild aggregate outputs from an existing run-* folder',
     '  --window-days CSV              Rolling window sizes in days (default: 1,2)',
     '  --step-days N                  Window step in days (default: 1)',
     '  --min-windows N                Min windows for stability ranking (default: 3)',
@@ -158,6 +209,7 @@ function printHelp(): void {
     '  --min-expectancy N             Pass-through to sweep-candidates (default: 0 profit-first)',
     '  --sweep-dir PATH               Sweep output dir (default: data/sweep-results)',
     '  --out-dir PATH                 Robustness output dir (default: data/sweep-results/window-robustness)',
+    '  --include-window-candidates    Also run sweep-candidates inside each window (default: off)',
     '  --require-timeframes           Require selected TFs in candidate rows (default: disabled)',
     '  --no-require-timeframes        Disable strict TF requirement',
     '  --timeframe-support-min N      Min TF support count in candidates (default: 1)',
@@ -234,6 +286,7 @@ function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
     from: '',
     to: formatDateUTC(new Date()),
+    rebuildRunDir: undefined,
     windowDays: [1, 2],
     stepDays: 1,
     minWindows: 3,
@@ -252,6 +305,7 @@ function parseArgs(argv: string[]): CliArgs {
     outDir: 'data/sweep-results/window-robustness',
     requireTimeframes: false,
     timeframeSupportMin: 1,
+    includeWindowCandidates: false,
     dryRun: false,
   };
 
@@ -273,6 +327,7 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (arg === '--from') { args.from = requireValue(arg, next); i++; continue; }
     if (arg === '--to') { args.to = requireValue(arg, next); i++; continue; }
+    if (arg === '--rebuild-run-dir') { args.rebuildRunDir = path.resolve(requireValue(arg, next)); i++; continue; }
     if (arg === '--window-days') { args.windowDays = parseCsvInts(requireValue(arg, next), arg); i++; continue; }
     if (arg === '--step-days') { args.stepDays = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
     if (arg === '--min-windows') { args.minWindows = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
@@ -301,6 +356,7 @@ function parseArgs(argv: string[]): CliArgs {
     if (arg === '--min-expectancy') { args.minExpectancy = parseNumber(arg, next); i++; continue; }
     if (arg === '--sweep-dir') { args.sweepDir = requireValue(arg, next); i++; continue; }
     if (arg === '--out-dir') { args.outDir = requireValue(arg, next); i++; continue; }
+    if (arg === '--include-window-candidates') { args.includeWindowCandidates = true; continue; }
     if (arg === '--require-timeframes') { args.requireTimeframes = true; continue; }
     if (arg === '--no-require-timeframes') { args.requireTimeframes = false; continue; }
     if (arg === '--timeframe-support-min') { args.timeframeSupportMin = Math.max(1, Math.round(parseNumber(arg, next))); i++; continue; }
@@ -315,10 +371,12 @@ function parseArgs(argv: string[]): CliArgs {
   if (positional.length > 0) args.template = positional[0];
   if (positional.length > 1) args.token = positional[1];
 
-  if (!args.from) throw new Error('--from is required');
-  const from = parseDateStrict(args.from);
-  const to = parseDateStrict(args.to);
-  if (from > to) throw new Error(`--from ${args.from} must be <= --to ${args.to}`);
+  if (!args.rebuildRunDir) {
+    if (!args.from) throw new Error('--from is required');
+    const from = parseDateStrict(args.from);
+    const to = parseDateStrict(args.to);
+    if (from > to) throw new Error(`--from ${args.from} must be <= --to ${args.to}`);
+  }
 
   return args;
 }
@@ -423,6 +481,133 @@ function readCandidateCsv(filePath: string): CandidateRow[] {
   return rows;
 }
 
+function readWindowIndex(filePath: string): WindowRunSummary[] {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length < 2) return [];
+
+  const header = parseCsvLine(lines[0]);
+  const idx = Object.fromEntries(header.map((h, i) => [h, i])) as Record<string, number>;
+  const required = ['windowId', 'windowDays', 'from', 'to', 'startDow', 'endDow', 'status', 'costModeUsed', 'coreRows', 'probeRows', 'sweepFiles'];
+  for (const col of required) {
+    if (idx[col] === undefined) throw new Error(`Missing required column "${col}" in ${filePath}`);
+  }
+
+  const rows: WindowRunSummary[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = parseCsvLine(lines[i]);
+    if (parts.length !== header.length) continue;
+    rows.push({
+      windowId: parts[idx.windowId],
+      windowDays: Number(parts[idx.windowDays]),
+      from: parts[idx.from],
+      to: parts[idx.to],
+      startDow: parts[idx.startDow],
+      endDow: parts[idx.endDow],
+      coreRows: Number(parts[idx.coreRows]) || 0,
+      probeRows: Number(parts[idx.probeRows]) || 0,
+      status: (parts[idx.status] as WindowRunSummary['status']) ?? 'failed',
+      costModeUsed: (parts[idx.costModeUsed] as CostMode) ?? 'fixed',
+      error: parts[idx.error] || undefined,
+      sweepFiles: parts[idx.sweepFiles] || '',
+      coreFile: parts[idx.coreFile] || undefined,
+      probeFile: parts[idx.probeFile] || undefined,
+    });
+  }
+  return rows;
+}
+
+function readRawSweepCsv(
+  filePath: string,
+  window: WindowSpec,
+): RawWindowRow[] {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const lines = raw.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (lines.length < 2) return [];
+
+  const header = parseCsvLine(lines[0]);
+  const idx = Object.fromEntries(header.map((h, i) => [h, i])) as Record<string, number>;
+  const required = [
+    'template', 'token', 'timeframe', 'executionTimeframe', 'exitParity', 'params',
+    'trades', 'winRate', 'pnlPct', 'profitFactor', 'sharpeRatio', 'maxDrawdownPct',
+    'avgWinPct', 'avgLossPct', 'avgHoldMinutes',
+  ];
+  for (const col of required) {
+    if (idx[col] === undefined) {
+      throw new Error(`Missing required column "${col}" in ${filePath}`);
+    }
+  }
+
+  const rows: RawWindowRow[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const parts = parseCsvLine(lines[i]);
+    if (parts.length !== header.length) continue;
+
+    const timeframe = Number(parts[idx.timeframe]);
+    const executionTimeframe = Number(parts[idx.executionTimeframe]);
+    const trades = Number(parts[idx.trades]);
+    const winRatePct = Number(parts[idx.winRate]);
+    const pnlPct = Number(parts[idx.pnlPct]);
+    const avgWinPct = Number(parts[idx.avgWinPct]);
+    const avgLossPct = Number(parts[idx.avgLossPct]);
+    const avgHoldMinutes = Number(parts[idx.avgHoldMinutes]);
+    const maxDrawdownPct = Number(parts[idx.maxDrawdownPct]);
+    const sharpeRatio = Number(parts[idx.sharpeRatio]);
+
+    if (
+      !Number.isFinite(timeframe) ||
+      !Number.isFinite(executionTimeframe) ||
+      !Number.isFinite(trades) ||
+      !Number.isFinite(winRatePct) ||
+      !Number.isFinite(pnlPct) ||
+      !Number.isFinite(avgWinPct) ||
+      !Number.isFinite(avgLossPct) ||
+      !Number.isFinite(avgHoldMinutes)
+    ) {
+      continue;
+    }
+
+    const expectancyPct = ((winRatePct / 100) * avgWinPct) + ((1 - winRatePct / 100) * avgLossPct);
+    const rawRegime = idx.entryTrendRegime !== undefined
+      ? parseTrendRegime(parts[idx.entryTrendRegime])
+      : parseTrendRegime(parts[idx.trendRegime]);
+    const exitParityRaw = idx.exitParity !== undefined ? parts[idx.exitParity] : 'unknown';
+    const exitParity = exitParityRaw === 'indicator' || exitParityRaw === 'price'
+      ? exitParityRaw
+      : 'unknown';
+
+    rows.push({
+      windowId: window.id,
+      windowDays: window.windowDays,
+      from: window.from,
+      to: window.to,
+      startDow: window.startDow,
+      endDow: window.endDow,
+      token: parts[idx.token],
+      trendRegime: rawRegime,
+      template: parts[idx.template],
+      timeframe,
+      executionTimeframe,
+      exitParity,
+      params: parts[idx.params],
+      trades,
+      winRatePct,
+      pnlPct,
+      profitFactor: parseOptionalNumber(parts[idx.profitFactor]),
+      avgHoldMinutes,
+      avgWinPct,
+      avgLossPct,
+      expectancyPct,
+      maxDrawdownPct: Number.isFinite(maxDrawdownPct) ? maxDrawdownPct : 0,
+      sharpeRatio: Number.isFinite(sharpeRatio) ? sharpeRatio : 0,
+      entrySignalCount: idx.entrySignalCount !== undefined ? parseOptionalNumber(parts[idx.entrySignalCount]) : null,
+      entryCoverageHours: idx.entryCoverageHours !== undefined ? parseOptionalNumber(parts[idx.entryCoverageHours]) : null,
+    });
+  }
+
+  return rows;
+}
+
 function findSingleBySuffix(dir: string, suffix: string): string {
   if (!fs.existsSync(dir)) throw new Error(`Directory not found: ${dir}`);
   const files = fs.readdirSync(dir, { withFileTypes: true })
@@ -471,13 +656,46 @@ function csvEscape(v: string | number | null | undefined): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function formatStabilityRows(rows: StabilityRow[]): Array<Record<string, string | number | null>> {
+function writeCsvFile(filePath: string, records: Array<Record<string, string | number | null | undefined>>): void {
+  if (records.length === 0) {
+    fs.writeFileSync(filePath, '', 'utf8');
+    return;
+  }
+
+  const headers = Object.keys(records[0]);
+  const fd = fs.openSync(filePath, 'w');
+  const chunk: string[] = [];
+  let chunkSize = 0;
+
+  const flush = () => {
+    if (chunk.length === 0) return;
+    fs.writeSync(fd, chunk.join(''));
+    chunk.length = 0;
+    chunkSize = 0;
+  };
+
+  try {
+    fs.writeSync(fd, headers.join(',') + '\n');
+    for (const rec of records) {
+      const row = headers.map(h => csvEscape(rec[h])).join(',') + '\n';
+      if (chunkSize + row.length > 1_000_000) flush();
+      chunk.push(row);
+      chunkSize += row.length;
+    }
+    flush();
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function formatExactStabilityRows(rows: ExactStabilityRow[]): Array<Record<string, string | number | null>> {
   return rows.map(r => ({
-    bucket: r.bucket,
     token: r.token,
     trendRegime: r.trendRegime,
     template: r.template,
     timeframe: r.timeframe,
+    executionTimeframe: r.executionTimeframe,
+    exitParity: r.exitParity,
     params: r.params,
     windowsSeen: r.windowsSeen,
     positiveWindows: r.positiveWindows,
@@ -492,12 +710,51 @@ function formatStabilityRows(rows: StabilityRow[]): Array<Record<string, string 
     bestPnlPct: r.bestPnlPct.toFixed(4),
     meanTrades: r.meanTrades.toFixed(2),
     meanWinRatePct: r.meanWinRatePct.toFixed(2),
-    meanAdjustedWinRatePct: r.meanAdjustedWinRatePct.toFixed(2),
     meanHoldMinutes: r.meanHoldMinutes.toFixed(2),
-    meanMtfScore: r.meanMtfScore.toFixed(6),
+    meanExpectancyPct: r.meanExpectancyPct.toFixed(4),
     meanProfitFactor: r.meanProfitFactor === null ? '' : r.meanProfitFactor.toFixed(4),
+    meanMaxDrawdownPct: r.meanMaxDrawdownPct.toFixed(4),
     consistencyScore: r.consistencyScore.toFixed(6),
   }));
+}
+
+function formatFamilyStabilityRows(rows: FamilyStabilityRow[]): Array<Record<string, string | number | null>> {
+  return rows.map(r => ({
+    token: r.token,
+    trendRegime: r.trendRegime,
+    template: r.template,
+    timeframe: r.timeframe,
+    executionTimeframe: r.executionTimeframe,
+    exitParity: r.exitParity,
+    windowsSeen: r.windowsSeen,
+    positiveWindows: r.positiveWindows,
+    nonNegativeWindows: r.nonNegativeWindows,
+    negativeWindows: r.negativeWindows,
+    positiveRatePct: r.positiveRatePct.toFixed(2),
+    nonNegativeRatePct: r.nonNegativeRatePct.toFixed(2),
+    meanPnlPct: r.meanPnlPct.toFixed(4),
+    medianPnlPct: r.medianPnlPct.toFixed(4),
+    stdPnlPct: r.stdPnlPct.toFixed(4),
+    worstPnlPct: r.worstPnlPct.toFixed(4),
+    bestPnlPct: r.bestPnlPct.toFixed(4),
+    meanTrades: r.meanTrades.toFixed(2),
+    meanWinRatePct: r.meanWinRatePct.toFixed(2),
+    meanHoldMinutes: r.meanHoldMinutes.toFixed(2),
+    meanExpectancyPct: r.meanExpectancyPct.toFixed(4),
+    meanProfitFactor: r.meanProfitFactor === null ? '' : r.meanProfitFactor.toFixed(4),
+    meanMaxDrawdownPct: r.meanMaxDrawdownPct.toFixed(4),
+    consistencyScore: r.consistencyScore.toFixed(6),
+    representativeParams: r.representativeParams,
+    representativeWindows: r.representativeWindows,
+    uniqueParamVariants: r.uniqueParamVariants,
+  }));
+}
+
+function computeConsistencyScore(meanPnlPct: number, medianPnlPct: number, worstPnlPct: number, positiveRatePct: number, stdPnlPct: number): number {
+  return (
+    (meanPnlPct * 0.5 + medianPnlPct * 0.3 + worstPnlPct * 0.2) *
+    (0.5 + (positiveRatePct / 200))
+  ) - (stdPnlPct * 0.25);
 }
 
 function buildWindows(from: string, to: string, windowDays: number[], stepDays: number): WindowSpec[] {
@@ -528,8 +785,316 @@ function normalizeOutputDir(outDirAbs: string): string {
   return path.join(outDirAbs, `run-${stamp}`);
 }
 
+function rebuildRunAggregates(args: CliArgs): void {
+  if (!args.rebuildRunDir) throw new Error('--rebuild-run-dir is required for rebuild mode');
+  const runDir = path.resolve(args.rebuildRunDir);
+  const windowIndexPath = path.join(runDir, 'window-index.csv');
+  if (!fs.existsSync(windowIndexPath)) {
+    throw new Error(`window-index.csv not found in ${runDir}`);
+  }
+
+  const windowSummaries = readWindowIndex(windowIndexPath);
+  const allRawRows: RawWindowRow[] = [];
+  const allCandidateRows: WindowCandidateRow[] = [];
+
+  for (const summary of windowSummaries) {
+    if (summary.status !== 'ok') continue;
+    const window: WindowSpec = {
+      id: summary.windowId,
+      windowDays: summary.windowDays,
+      from: summary.from,
+      to: summary.to,
+      startDow: summary.startDow,
+      endDow: summary.endDow,
+    };
+
+    const sweepFiles = summary.sweepFiles
+      .split(';')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .filter(file => fs.existsSync(file));
+    for (const sweepFile of sweepFiles) {
+      allRawRows.push(...readRawSweepCsv(sweepFile, window));
+    }
+
+    if (args.includeWindowCandidates) {
+      const addCandidateBucket = (filePath: string | undefined, bucket: Bucket) => {
+        if (!filePath || !fs.existsSync(filePath)) return;
+        for (const row of readCandidateCsv(filePath)) {
+          allCandidateRows.push({
+            ...row,
+            windowId: summary.windowId,
+            windowDays: summary.windowDays,
+            from: summary.from,
+            to: summary.to,
+            startDow: summary.startDow,
+            endDow: summary.endDow,
+            bucket,
+          });
+        }
+      };
+      addCandidateBucket(summary.coreFile, 'core');
+      addCandidateBucket(summary.probeFile, 'probe');
+    }
+  }
+
+  writeCsvFile(path.join(runDir, 'window-raw.csv'), allRawRows.map(r => ({
+    windowId: r.windowId,
+    windowDays: r.windowDays,
+    from: r.from,
+    to: r.to,
+    startDow: r.startDow,
+    endDow: r.endDow,
+    token: r.token,
+    trendRegime: r.trendRegime,
+    template: r.template,
+    timeframe: r.timeframe,
+    executionTimeframe: r.executionTimeframe,
+    exitParity: r.exitParity,
+    params: r.params,
+    trades: r.trades,
+    winRatePct: r.winRatePct,
+    pnlPct: r.pnlPct,
+    profitFactor: r.profitFactor ?? '',
+    avgHoldMinutes: r.avgHoldMinutes,
+    avgWinPct: r.avgWinPct,
+    avgLossPct: r.avgLossPct,
+    expectancyPct: r.expectancyPct,
+    maxDrawdownPct: r.maxDrawdownPct,
+    sharpeRatio: r.sharpeRatio,
+    entrySignalCount: r.entrySignalCount ?? '',
+    entryCoverageHours: r.entryCoverageHours ?? '',
+  })));
+
+  if (args.includeWindowCandidates) {
+    writeCsvFile(path.join(runDir, 'window-candidates.csv'), allCandidateRows.map(r => ({
+      windowId: r.windowId,
+      windowDays: r.windowDays,
+      from: r.from,
+      to: r.to,
+      startDow: r.startDow,
+      endDow: r.endDow,
+      bucket: r.bucket,
+      token: r.token,
+      trendRegime: r.trendRegime,
+      template: r.template,
+      timeframe: r.timeframe,
+      params: r.params,
+      trades: r.trades,
+      winRatePct: r.winRatePct,
+      adjustedWinRatePct: r.adjustedWinRatePct,
+      pnlPct: r.pnlPct,
+      profitFactor: r.profitFactor ?? '',
+      avgHoldMinutes: r.avgHoldMinutes,
+      mtfScore: r.mtfScore,
+    })));
+  }
+
+  const exactGroupMap = new Map<string, RawWindowRow[]>();
+  for (const row of allRawRows) {
+    const key = [row.token, row.trendRegime, row.template, row.timeframe, row.executionTimeframe, row.exitParity, row.params].join('|');
+    const arr = exactGroupMap.get(key) ?? [];
+    arr.push(row);
+    exactGroupMap.set(key, arr);
+  }
+
+  const exactStability: ExactStabilityRow[] = [];
+  for (const [key, rows] of exactGroupMap.entries()) {
+    if (rows.length < args.minWindows) continue;
+    const [token, trendRegime, template, timeframeStr, executionTfStr, exitParity, params] = key.split('|');
+    const pnl = rows.map(r => r.pnlPct);
+    const trades = rows.map(r => r.trades);
+    const win = rows.map(r => r.winRatePct);
+    const hold = rows.map(r => r.avgHoldMinutes);
+    const expectancy = rows.map(r => r.expectancyPct);
+    const pfVals = rows.map(r => r.profitFactor).filter((v): v is number => v !== null);
+    const drawdowns = rows.map(r => r.maxDrawdownPct);
+    const positive = pnl.filter(v => v > 0).length;
+    const nonNeg = pnl.filter(v => v >= 0).length;
+    const negative = pnl.length - nonNeg;
+    const meanPnl = mean(pnl);
+    const medPnl = median(pnl);
+    const sdPnl = stdDev(pnl);
+    const worstPnl = Math.min(...pnl);
+    const bestPnl = Math.max(...pnl);
+    const positiveRate = (positive / pnl.length) * 100;
+    const nonNegRate = (nonNeg / pnl.length) * 100;
+
+    exactStability.push({
+      token,
+      trendRegime: trendRegime as TrendRegime,
+      template,
+      timeframe: Number(timeframeStr),
+      executionTimeframe: Number(executionTfStr),
+      exitParity: exitParity as 'indicator' | 'price' | 'unknown',
+      params,
+      windowsSeen: rows.length,
+      positiveWindows: positive,
+      nonNegativeWindows: nonNeg,
+      negativeWindows: negative,
+      positiveRatePct: positiveRate,
+      nonNegativeRatePct: nonNegRate,
+      meanPnlPct: meanPnl,
+      medianPnlPct: medPnl,
+      stdPnlPct: sdPnl,
+      worstPnlPct: worstPnl,
+      bestPnlPct: bestPnl,
+      meanTrades: mean(trades),
+      meanWinRatePct: mean(win),
+      meanHoldMinutes: mean(hold),
+      meanExpectancyPct: mean(expectancy),
+      meanProfitFactor: pfVals.length > 0 ? mean(pfVals) : null,
+      meanMaxDrawdownPct: mean(drawdowns),
+      consistencyScore: computeConsistencyScore(meanPnl, medPnl, worstPnl, positiveRate, sdPnl),
+    });
+  }
+
+  exactStability.sort((a, b) => {
+    if (Math.abs(b.consistencyScore - a.consistencyScore) > 1e-9) return b.consistencyScore - a.consistencyScore;
+    if (Math.abs(b.meanPnlPct - a.meanPnlPct) > 1e-9) return b.meanPnlPct - a.meanPnlPct;
+    if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
+    return b.windowsSeen - a.windowsSeen;
+  });
+  const exactRows = formatExactStabilityRows(exactStability);
+  writeCsvFile(path.join(runDir, 'stability-exact-ranked.csv'), exactRows);
+  writeCsvFile(path.join(runDir, 'stability-ranked.csv'), exactRows);
+
+  const bestFamilyPerWindow = new Map<string, RawWindowRow>();
+  for (const row of allRawRows) {
+    const key = [row.windowId, row.token, row.trendRegime, row.template, row.timeframe, row.executionTimeframe, row.exitParity].join('|');
+    const current = bestFamilyPerWindow.get(key);
+    const currentPf = current?.profitFactor ?? Number.NEGATIVE_INFINITY;
+    const rowPf = row.profitFactor ?? Number.NEGATIVE_INFINITY;
+    if (
+      !current ||
+      row.pnlPct > current.pnlPct ||
+      (Math.abs(row.pnlPct - current.pnlPct) < 1e-9 && row.trades > current.trades) ||
+      (Math.abs(row.pnlPct - current.pnlPct) < 1e-9 && row.trades === current.trades && rowPf > currentPf)
+    ) {
+      bestFamilyPerWindow.set(key, row);
+    }
+  }
+
+  const familyGroupMap = new Map<string, RawWindowRow[]>();
+  for (const row of bestFamilyPerWindow.values()) {
+    const key = [row.token, row.trendRegime, row.template, row.timeframe, row.executionTimeframe, row.exitParity].join('|');
+    const arr = familyGroupMap.get(key) ?? [];
+    arr.push(row);
+    familyGroupMap.set(key, arr);
+  }
+
+  const familyStability: FamilyStabilityRow[] = [];
+  for (const [key, rows] of familyGroupMap.entries()) {
+    if (rows.length < args.minWindows) continue;
+    const [token, trendRegime, template, timeframeStr, executionTfStr, exitParity] = key.split('|');
+    const pnl = rows.map(r => r.pnlPct);
+    const trades = rows.map(r => r.trades);
+    const win = rows.map(r => r.winRatePct);
+    const hold = rows.map(r => r.avgHoldMinutes);
+    const expectancy = rows.map(r => r.expectancyPct);
+    const pfVals = rows.map(r => r.profitFactor).filter((v): v is number => v !== null);
+    const drawdowns = rows.map(r => r.maxDrawdownPct);
+    const paramsCounts = new Map<string, number>();
+    for (const row of rows) paramsCounts.set(row.params, (paramsCounts.get(row.params) ?? 0) + 1);
+    const representative = [...paramsCounts.entries()].sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))[0];
+    const positive = pnl.filter(v => v > 0).length;
+    const nonNeg = pnl.filter(v => v >= 0).length;
+    const negative = pnl.length - nonNeg;
+    const meanPnl = mean(pnl);
+    const medPnl = median(pnl);
+    const sdPnl = stdDev(pnl);
+    const worstPnl = Math.min(...pnl);
+    const bestPnl = Math.max(...pnl);
+    const positiveRate = (positive / pnl.length) * 100;
+    const nonNegRate = (nonNeg / pnl.length) * 100;
+
+    familyStability.push({
+      token,
+      trendRegime: trendRegime as TrendRegime,
+      template,
+      timeframe: Number(timeframeStr),
+      executionTimeframe: Number(executionTfStr),
+      exitParity: exitParity as 'indicator' | 'price' | 'unknown',
+      windowsSeen: rows.length,
+      positiveWindows: positive,
+      nonNegativeWindows: nonNeg,
+      negativeWindows: negative,
+      positiveRatePct: positiveRate,
+      nonNegativeRatePct: nonNegRate,
+      meanPnlPct: meanPnl,
+      medianPnlPct: medPnl,
+      stdPnlPct: sdPnl,
+      worstPnlPct: worstPnl,
+      bestPnlPct: bestPnl,
+      meanTrades: mean(trades),
+      meanWinRatePct: mean(win),
+      meanHoldMinutes: mean(hold),
+      meanExpectancyPct: mean(expectancy),
+      meanProfitFactor: pfVals.length > 0 ? mean(pfVals) : null,
+      meanMaxDrawdownPct: mean(drawdowns),
+      consistencyScore: computeConsistencyScore(meanPnl, medPnl, worstPnl, positiveRate, sdPnl),
+      representativeParams: representative?.[0] ?? '',
+      representativeWindows: representative?.[1] ?? 0,
+      uniqueParamVariants: paramsCounts.size,
+    });
+  }
+
+  familyStability.sort((a, b) => {
+    if (Math.abs(b.consistencyScore - a.consistencyScore) > 1e-9) return b.consistencyScore - a.consistencyScore;
+    if (Math.abs(b.meanPnlPct - a.meanPnlPct) > 1e-9) return b.meanPnlPct - a.meanPnlPct;
+    if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
+    return b.windowsSeen - a.windowsSeen;
+  });
+  writeCsvFile(path.join(runDir, 'stability-family-ranked.csv'), formatFamilyStabilityRows(familyStability));
+
+  const weekdayMap = new Map<string, RawWindowRow[]>();
+  for (const row of allRawRows) {
+    const key = `${row.windowDays}|${row.startDow}->${row.endDow}`;
+    const arr = weekdayMap.get(key) ?? [];
+    arr.push(row);
+    weekdayMap.set(key, arr);
+  }
+  const weekdayPatterns = [];
+  for (const [key, rows] of weekdayMap.entries()) {
+    const [daysStr, pair] = key.split('|');
+    const pnl = rows.map(r => r.pnlPct);
+    const expectancy = rows.map(r => r.expectancyPct);
+    const uniqueWindows = new Set(rows.map(r => r.windowId)).size;
+    const positive = pnl.filter(v => v > 0).length;
+    weekdayPatterns.push({
+      windowDays: Number(daysStr),
+      pair,
+      windows: uniqueWindows,
+      rows: rows.length,
+      positiveRatePct: (positive / Math.max(1, rows.length)) * 100,
+      meanPnlPct: mean(pnl),
+      medianPnlPct: median(pnl),
+      meanExpectancyPct: mean(expectancy),
+    });
+  }
+  weekdayPatterns.sort((a, b) => {
+    if (Math.abs(b.meanPnlPct - a.meanPnlPct) > 1e-9) return b.meanPnlPct - a.meanPnlPct;
+    if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
+    return b.windows - a.windows;
+  });
+  writeCsvFile(path.join(runDir, 'weekday-patterns.csv'), weekdayPatterns.map(r => ({
+    windowDays: r.windowDays,
+    pair: r.pair,
+    windows: r.windows,
+    rows: r.rows,
+    positiveRatePct: r.positiveRatePct.toFixed(2),
+    meanPnlPct: r.meanPnlPct.toFixed(4),
+    medianPnlPct: r.medianPnlPct.toFixed(4),
+    meanExpectancyPct: r.meanExpectancyPct.toFixed(4),
+  })));
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
+  if (args.rebuildRunDir) {
+    rebuildRunAggregates(args);
+    return;
+  }
   const rootDir = path.resolve(__dirname, '..');
   const outDirAbs = path.resolve(rootDir, args.outDir);
   const runDir = normalizeOutputDir(outDirAbs);
@@ -549,7 +1114,8 @@ function main(): void {
     fs.mkdirSync(runDir, { recursive: true });
   }
 
-  const allRows: WindowCandidateRow[] = [];
+  const allCandidateRows: WindowCandidateRow[] = [];
+  const allRawRows: RawWindowRow[] = [];
   const windowSummaries: WindowRunSummary[] = [];
 
   for (let i = 0; i < windows.length; i++) {
@@ -615,54 +1181,62 @@ function main(): void {
         }
       }
 
-      const filesArg = args.dryRun
-        ? args.timeframes.map(tf => path.join(sweepsCopyDir, `${w.from}-w${w.windowDays}d-${w.to}-${tf}min.csv`)).join(',')
-        : sweepFilesCopied.join(',');
-
-      const candCmd: string[] = [
-        'run', 'sweep-candidates', '--',
-        '--files', filesArg,
-        '--top', String(args.top),
-        '--top-per-token', String(args.topPerToken),
-        '--preset', args.preset,
-        '--min-win-rate', String(args.minWinRate),
-        '--min-pnl', String(args.minPnl),
-        '--min-expectancy', String(args.minExpectancy),
-        '--rank-exit-parity', args.rankExitParity,
-        '--timeframe-support-min', String(args.timeframeSupportMin),
-        '--out-dir', candidatesDir,
-      ];
-      if (args.requireTimeframes) {
-        candCmd.push('--require-timeframes', args.timeframes.join(','));
-      }
-      runNpm(rootDir, candCmd, args.dryRun);
-
       if (!args.dryRun) {
-        coreFile = findSingleBySuffix(candidatesDir, '.core-ranked.csv');
-        probeFile = findSingleBySuffix(candidatesDir, '.probe-ranked.csv');
-        const coreRows = readCandidateCsv(coreFile).map<WindowCandidateRow>(r => ({
-          ...r,
-          windowId: w.id,
-          windowDays: w.windowDays,
-          from: w.from,
-          to: w.to,
-          startDow: w.startDow,
-          endDow: w.endDow,
-          bucket: 'core',
-        }));
-        const probeRows = readCandidateCsv(probeFile).map<WindowCandidateRow>(r => ({
-          ...r,
-          windowId: w.id,
-          windowDays: w.windowDays,
-          from: w.from,
-          to: w.to,
-          startDow: w.startDow,
-          endDow: w.endDow,
-          bucket: 'probe',
-        }));
-        coreRowsCount = coreRows.length;
-        probeRowsCount = probeRows.length;
-        allRows.push(...coreRows, ...probeRows);
+        for (const sweepFile of sweepFilesCopied) {
+          allRawRows.push(...readRawSweepCsv(sweepFile, w));
+        }
+      }
+
+      if (args.includeWindowCandidates) {
+        const filesArg = args.dryRun
+          ? args.timeframes.map(tf => path.join(sweepsCopyDir, `${w.from}-w${w.windowDays}d-${w.to}-${tf}min.csv`)).join(',')
+          : sweepFilesCopied.join(',');
+
+        const candCmd: string[] = [
+          'run', 'sweep-candidates', '--',
+          '--files', filesArg,
+          '--top', String(args.top),
+          '--top-per-token', String(args.topPerToken),
+          '--preset', args.preset,
+          '--min-win-rate', String(args.minWinRate),
+          '--min-pnl', String(args.minPnl),
+          '--min-expectancy', String(args.minExpectancy),
+          '--rank-exit-parity', args.rankExitParity,
+          '--timeframe-support-min', String(args.timeframeSupportMin),
+          '--out-dir', candidatesDir,
+        ];
+        if (args.requireTimeframes) {
+          candCmd.push('--require-timeframes', args.timeframes.join(','));
+        }
+        runNpm(rootDir, candCmd, args.dryRun);
+
+        if (!args.dryRun) {
+          coreFile = findSingleBySuffix(candidatesDir, '.core-ranked.csv');
+          probeFile = findSingleBySuffix(candidatesDir, '.probe-ranked.csv');
+          const coreRows = readCandidateCsv(coreFile).map<WindowCandidateRow>(r => ({
+            ...r,
+            windowId: w.id,
+            windowDays: w.windowDays,
+            from: w.from,
+            to: w.to,
+            startDow: w.startDow,
+            endDow: w.endDow,
+            bucket: 'core',
+          }));
+          const probeRows = readCandidateCsv(probeFile).map<WindowCandidateRow>(r => ({
+            ...r,
+            windowId: w.id,
+            windowDays: w.windowDays,
+            from: w.from,
+            to: w.to,
+            startDow: w.startDow,
+            endDow: w.endDow,
+            bucket: 'probe',
+          }));
+          coreRowsCount = coreRows.length;
+          probeRowsCount = probeRows.length;
+          allCandidateRows.push(...coreRows, ...probeRows);
+        }
       }
     } catch (err) {
       status = 'failed';
@@ -714,55 +1288,85 @@ function main(): void {
   })));
   fs.writeFileSync(path.join(runDir, 'window-index.csv'), windowIndexCsv, 'utf8');
 
-  const detailCsv = toCsv(allRows.map(r => ({
+  writeCsvFile(path.join(runDir, 'window-raw.csv'), allRawRows.map(r => ({
     windowId: r.windowId,
     windowDays: r.windowDays,
     from: r.from,
     to: r.to,
     startDow: r.startDow,
     endDow: r.endDow,
-    bucket: r.bucket,
     token: r.token,
     trendRegime: r.trendRegime,
     template: r.template,
     timeframe: r.timeframe,
+    executionTimeframe: r.executionTimeframe,
+    exitParity: r.exitParity,
     params: r.params,
     trades: r.trades,
     winRatePct: r.winRatePct,
-    adjustedWinRatePct: r.adjustedWinRatePct,
     pnlPct: r.pnlPct,
     profitFactor: r.profitFactor ?? '',
     avgHoldMinutes: r.avgHoldMinutes,
-    mtfScore: r.mtfScore,
+    avgWinPct: r.avgWinPct,
+    avgLossPct: r.avgLossPct,
+    expectancyPct: r.expectancyPct,
+    maxDrawdownPct: r.maxDrawdownPct,
+    sharpeRatio: r.sharpeRatio,
+    entrySignalCount: r.entrySignalCount ?? '',
+    entryCoverageHours: r.entryCoverageHours ?? '',
   })));
-  fs.writeFileSync(path.join(runDir, 'window-candidates.csv'), detailCsv, 'utf8');
 
-  const groupMap = new Map<string, WindowCandidateRow[]>();
-  for (const row of allRows) {
+  if (args.includeWindowCandidates) {
+    writeCsvFile(path.join(runDir, 'window-candidates.csv'), allCandidateRows.map(r => ({
+      windowId: r.windowId,
+      windowDays: r.windowDays,
+      from: r.from,
+      to: r.to,
+      startDow: r.startDow,
+      endDow: r.endDow,
+      bucket: r.bucket,
+      token: r.token,
+      trendRegime: r.trendRegime,
+      template: r.template,
+      timeframe: r.timeframe,
+      params: r.params,
+      trades: r.trades,
+      winRatePct: r.winRatePct,
+      adjustedWinRatePct: r.adjustedWinRatePct,
+      pnlPct: r.pnlPct,
+      profitFactor: r.profitFactor ?? '',
+      avgHoldMinutes: r.avgHoldMinutes,
+      mtfScore: r.mtfScore,
+    })));
+  }
+
+  const exactGroupMap = new Map<string, RawWindowRow[]>();
+  for (const row of allRawRows) {
     const key = [
-      row.bucket,
       row.token,
       row.trendRegime,
       row.template,
       row.timeframe,
+      row.executionTimeframe,
+      row.exitParity,
       row.params,
     ].join('|');
-    const arr = groupMap.get(key) ?? [];
+    const arr = exactGroupMap.get(key) ?? [];
     arr.push(row);
-    groupMap.set(key, arr);
+    exactGroupMap.set(key, arr);
   }
 
-  const stability: StabilityRow[] = [];
-  for (const [key, rows] of groupMap.entries()) {
+  const exactStability: ExactStabilityRow[] = [];
+  for (const [key, rows] of exactGroupMap.entries()) {
     if (rows.length < args.minWindows) continue;
-    const [bucket, token, trendRegime, template, timeframeStr, params] = key.split('|');
+    const [token, trendRegime, template, timeframeStr, executionTfStr, exitParity, params] = key.split('|');
     const pnl = rows.map(r => r.pnlPct);
     const trades = rows.map(r => r.trades);
     const win = rows.map(r => r.winRatePct);
-    const adj = rows.map(r => r.adjustedWinRatePct);
     const hold = rows.map(r => r.avgHoldMinutes);
-    const mtf = rows.map(r => r.mtfScore);
+    const expectancy = rows.map(r => r.expectancyPct);
     const pfVals = rows.map(r => r.profitFactor).filter((v): v is number => v !== null);
+    const drawdowns = rows.map(r => r.maxDrawdownPct);
 
     const positive = pnl.filter(v => v > 0).length;
     const nonNeg = pnl.filter(v => v >= 0).length;
@@ -775,17 +1379,13 @@ function main(): void {
     const positiveRate = (positive / pnl.length) * 100;
     const nonNegRate = (nonNeg / pnl.length) * 100;
 
-    // Reward repeatability + downside control. Penalize volatility.
-    const consistencyScore =
-      (meanPnl * 0.5 + medPnl * 0.3 + worstPnl * 0.2) * (0.5 + (positiveRate / 200)) -
-      (sdPnl * 0.25);
-
-    stability.push({
-      bucket: bucket as Bucket,
+    exactStability.push({
       token,
       trendRegime: trendRegime as TrendRegime,
       template,
       timeframe: Number(timeframeStr),
+      executionTimeframe: Number(executionTfStr),
+      exitParity: exitParity as 'indicator' | 'price' | 'unknown',
       params,
       windowsSeen: rows.length,
       positiveWindows: positive,
@@ -800,45 +1400,150 @@ function main(): void {
       bestPnlPct: bestPnl,
       meanTrades: mean(trades),
       meanWinRatePct: mean(win),
-      meanAdjustedWinRatePct: mean(adj),
       meanHoldMinutes: mean(hold),
-      meanMtfScore: mean(mtf),
+      meanExpectancyPct: mean(expectancy),
       meanProfitFactor: pfVals.length > 0 ? mean(pfVals) : null,
-      consistencyScore,
+      meanMaxDrawdownPct: mean(drawdowns),
+      consistencyScore: computeConsistencyScore(meanPnl, medPnl, worstPnl, positiveRate, sdPnl),
     });
   }
 
-  stability.sort((a, b) => {
+  exactStability.sort((a, b) => {
     if (Math.abs(b.consistencyScore - a.consistencyScore) > 1e-9) return b.consistencyScore - a.consistencyScore;
     if (Math.abs(b.meanPnlPct - a.meanPnlPct) > 1e-9) return b.meanPnlPct - a.meanPnlPct;
     if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
     return b.windowsSeen - a.windowsSeen;
   });
 
-  const stabilityCsv = toCsv(formatStabilityRows(stability));
-  fs.writeFileSync(path.join(runDir, 'stability-ranked.csv'), stabilityCsv, 'utf8');
+  const exactRows = formatExactStabilityRows(exactStability);
+  writeCsvFile(path.join(runDir, 'stability-exact-ranked.csv'), exactRows);
+  writeCsvFile(path.join(runDir, 'stability-ranked.csv'), exactRows);
 
-  const coreStability = stability.filter(r => r.bucket === 'core');
-  const probeStability = stability.filter(r => r.bucket === 'probe');
-  fs.writeFileSync(path.join(runDir, 'stability-core.csv'), toCsv(formatStabilityRows(coreStability)), 'utf8');
-  fs.writeFileSync(path.join(runDir, 'stability-probe.csv'), toCsv(formatStabilityRows(probeStability)), 'utf8');
+  const bestFamilyPerWindow = new Map<string, RawWindowRow>();
+  for (const row of allRawRows) {
+    const key = [
+      row.windowId,
+      row.token,
+      row.trendRegime,
+      row.template,
+      row.timeframe,
+      row.executionTimeframe,
+      row.exitParity,
+    ].join('|');
+    const current = bestFamilyPerWindow.get(key);
+    const currentPf = current?.profitFactor ?? Number.NEGATIVE_INFINITY;
+    const rowPf = row.profitFactor ?? Number.NEGATIVE_INFINITY;
+    if (
+      !current ||
+      row.pnlPct > current.pnlPct ||
+      (Math.abs(row.pnlPct - current.pnlPct) < 1e-9 && row.trades > current.trades) ||
+      (Math.abs(row.pnlPct - current.pnlPct) < 1e-9 && row.trades === current.trades && rowPf > currentPf)
+    ) {
+      bestFamilyPerWindow.set(key, row);
+    }
+  }
 
-  const weekdayMap = new Map<string, WindowCandidateRow[]>();
-  for (const row of allRows) {
-    const key = `${row.bucket}|${row.windowDays}|${row.startDow}->${row.endDow}`;
+  const familyGroupMap = new Map<string, RawWindowRow[]>();
+  for (const row of bestFamilyPerWindow.values()) {
+    const key = [
+      row.token,
+      row.trendRegime,
+      row.template,
+      row.timeframe,
+      row.executionTimeframe,
+      row.exitParity,
+    ].join('|');
+    const arr = familyGroupMap.get(key) ?? [];
+    arr.push(row);
+    familyGroupMap.set(key, arr);
+  }
+
+  const familyStability: FamilyStabilityRow[] = [];
+  for (const [key, rows] of familyGroupMap.entries()) {
+    if (rows.length < args.minWindows) continue;
+    const [token, trendRegime, template, timeframeStr, executionTfStr, exitParity] = key.split('|');
+    const pnl = rows.map(r => r.pnlPct);
+    const trades = rows.map(r => r.trades);
+    const win = rows.map(r => r.winRatePct);
+    const hold = rows.map(r => r.avgHoldMinutes);
+    const expectancy = rows.map(r => r.expectancyPct);
+    const pfVals = rows.map(r => r.profitFactor).filter((v): v is number => v !== null);
+    const drawdowns = rows.map(r => r.maxDrawdownPct);
+    const paramsCounts = new Map<string, number>();
+    for (const row of rows) {
+      paramsCounts.set(row.params, (paramsCounts.get(row.params) ?? 0) + 1);
+    }
+    const representative = [...paramsCounts.entries()].sort((a, b) => {
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0]);
+    })[0];
+
+    const positive = pnl.filter(v => v > 0).length;
+    const nonNeg = pnl.filter(v => v >= 0).length;
+    const negative = pnl.length - nonNeg;
+    const meanPnl = mean(pnl);
+    const medPnl = median(pnl);
+    const sdPnl = stdDev(pnl);
+    const worstPnl = Math.min(...pnl);
+    const bestPnl = Math.max(...pnl);
+    const positiveRate = (positive / pnl.length) * 100;
+    const nonNegRate = (nonNeg / pnl.length) * 100;
+
+    familyStability.push({
+      token,
+      trendRegime: trendRegime as TrendRegime,
+      template,
+      timeframe: Number(timeframeStr),
+      executionTimeframe: Number(executionTfStr),
+      exitParity: exitParity as 'indicator' | 'price' | 'unknown',
+      windowsSeen: rows.length,
+      positiveWindows: positive,
+      nonNegativeWindows: nonNeg,
+      negativeWindows: negative,
+      positiveRatePct: positiveRate,
+      nonNegativeRatePct: nonNegRate,
+      meanPnlPct: meanPnl,
+      medianPnlPct: medPnl,
+      stdPnlPct: sdPnl,
+      worstPnlPct: worstPnl,
+      bestPnlPct: bestPnl,
+      meanTrades: mean(trades),
+      meanWinRatePct: mean(win),
+      meanHoldMinutes: mean(hold),
+      meanExpectancyPct: mean(expectancy),
+      meanProfitFactor: pfVals.length > 0 ? mean(pfVals) : null,
+      meanMaxDrawdownPct: mean(drawdowns),
+      consistencyScore: computeConsistencyScore(meanPnl, medPnl, worstPnl, positiveRate, sdPnl),
+      representativeParams: representative?.[0] ?? '',
+      representativeWindows: representative?.[1] ?? 0,
+      uniqueParamVariants: paramsCounts.size,
+    });
+  }
+
+  familyStability.sort((a, b) => {
+    if (Math.abs(b.consistencyScore - a.consistencyScore) > 1e-9) return b.consistencyScore - a.consistencyScore;
+    if (Math.abs(b.meanPnlPct - a.meanPnlPct) > 1e-9) return b.meanPnlPct - a.meanPnlPct;
+    if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
+    return b.windowsSeen - a.windowsSeen;
+  });
+
+  writeCsvFile(path.join(runDir, 'stability-family-ranked.csv'), formatFamilyStabilityRows(familyStability));
+
+  const weekdayMap = new Map<string, RawWindowRow[]>();
+  for (const row of allRawRows) {
+    const key = `${row.windowDays}|${row.startDow}->${row.endDow}`;
     const arr = weekdayMap.get(key) ?? [];
     arr.push(row);
     weekdayMap.set(key, arr);
   }
-  const weekdayPatterns: WeekdayPatternRow[] = [];
+  const weekdayPatterns = [];
   for (const [key, rows] of weekdayMap.entries()) {
-    const [bucket, daysStr, pair] = key.split('|');
+    const [daysStr, pair] = key.split('|');
     const pnl = rows.map(r => r.pnlPct);
-    const mtf = rows.map(r => r.mtfScore);
+    const expectancy = rows.map(r => r.expectancyPct);
     const uniqueWindows = new Set(rows.map(r => r.windowId)).size;
     const positive = pnl.filter(v => v > 0).length;
     weekdayPatterns.push({
-      bucket: bucket as Bucket,
       windowDays: Number(daysStr),
       pair,
       windows: uniqueWindows,
@@ -846,7 +1551,7 @@ function main(): void {
       positiveRatePct: (positive / Math.max(1, rows.length)) * 100,
       meanPnlPct: mean(pnl),
       medianPnlPct: median(pnl),
-      meanMtfScore: mean(mtf),
+      meanExpectancyPct: mean(expectancy),
     });
   }
   weekdayPatterns.sort((a, b) => {
@@ -854,8 +1559,7 @@ function main(): void {
     if (Math.abs(b.positiveRatePct - a.positiveRatePct) > 1e-9) return b.positiveRatePct - a.positiveRatePct;
     return b.windows - a.windows;
   });
-  fs.writeFileSync(path.join(runDir, 'weekday-patterns.csv'), toCsv(weekdayPatterns.map(r => ({
-    bucket: r.bucket,
+  writeCsvFile(path.join(runDir, 'weekday-patterns.csv'), weekdayPatterns.map(r => ({
     windowDays: r.windowDays,
     pair: r.pair,
     windows: r.windows,
@@ -863,25 +1567,25 @@ function main(): void {
     positiveRatePct: r.positiveRatePct.toFixed(2),
     meanPnlPct: r.meanPnlPct.toFixed(4),
     medianPnlPct: r.medianPnlPct.toFixed(4),
-    meanMtfScore: r.meanMtfScore.toFixed(6),
-  }))), 'utf8');
+    meanExpectancyPct: r.meanExpectancyPct.toFixed(4),
+  })));
 
   console.log(`\nOutputs written to: ${runDir}`);
 
-  const printTop = (label: string, rows: StabilityRow[]) => {
-    console.log(`\nTop ${Math.min(12, rows.length)} ${label} stability rows:`);
+  const printTop = (label: string, rows: Array<ExactStabilityRow | FamilyStabilityRow>) => {
+    console.log(`\nTop ${Math.min(12, rows.length)} ${label}:`);
     rows.slice(0, 12).forEach((r, idx) => {
       console.log(
-        `${String(idx + 1).padStart(2)}. ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m ` +
-        `| windows=${r.windowsSeen} pos=${r.positiveRatePct.toFixed(0)}% ` +
-        `| mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}% ` +
-        `| score=${r.consistencyScore.toFixed(3)}`
+        `${String(idx + 1).padStart(2)}. ${r.token} ${r.trendRegime} ${r.template} ${r.timeframe}m/${r.executionTimeframe}m ${r.exitParity}` +
+        ` | windows=${r.windowsSeen} pos=${r.positiveRatePct.toFixed(0)}%` +
+        ` | mean=${r.meanPnlPct.toFixed(2)}% worst=${r.worstPnlPct.toFixed(2)}%` +
+        ` | score=${r.consistencyScore.toFixed(3)}`
       );
     });
   };
 
-  printTop('core', coreStability);
-  printTop('probe', probeStability);
+  printTop('exact robustness rows', exactStability);
+  printTop('family robustness rows', familyStability);
 }
 
 main();
