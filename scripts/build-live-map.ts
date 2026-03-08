@@ -100,11 +100,13 @@ interface RegimePatchAudit {
 
 interface TokenPatch {
   _label: string;
-  _audit: Partial<Record<TrendRegime, RegimePatchAudit>>;
+  _audit: Partial<Record<Exclude<TrendRegime, 'unknown'>, RegimePatchAudit>>;
   uptrend?: RegimePatch;
   sideways?: RegimePatch;
   downtrend?: RegimePatch;
 }
+
+type LiveTrendRegime = Exclude<TrendRegime, 'unknown'>;
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -414,13 +416,28 @@ function main(): void {
   const tokenPatches: Record<string, TokenPatch> = {};
 
   for (const [key, { row, mint, reason }] of promotedMap) {
-    const [, regime] = key.split('||');
+    const [, rawRegime] = key.split('||');
+    if (
+      rawRegime !== 'uptrend' &&
+      rawRegime !== 'sideways' &&
+      rawRegime !== 'downtrend' &&
+      rawRegime !== 'unknown'
+    ) {
+      console.warn(`  WARN: Invalid regime key for ${row.token}, skipping patch output: "${key}"`);
+      continue;
+    }
     const { sl, tp, templateParams } = parseParams(row.params);
 
     if (sl === null || tp === null) {
-      console.warn(`  WARN: Could not parse sl/tp from params for ${row.token}/${regime}: "${row.params}" — skipping from patch`);
+      console.warn(`  WARN: Could not parse sl/tp from params for ${row.token}/${rawRegime}: "${row.params}" — skipping from patch`);
       continue;
     }
+    if (rawRegime === 'unknown') {
+      console.warn(`  WARN: Unknown regime for ${row.token}, skipping patch output: "${row.params}"`);
+      continue;
+    }
+
+    const regime: LiveTrendRegime = rawRegime;
 
     if (!tokenPatches[mint]) {
       tokenPatches[mint] = { _label: row.token, _audit: {} };
@@ -432,8 +449,8 @@ function main(): void {
       ? `parityDelta=${row.parityDelta.toFixed(1)}pp — indicator exits better in backtest${exitMode === 'price' ? '; pass --preferred-exit-mode indicator to enable' : ''}`
       : '';
 
-    patch._audit[regime as TrendRegime] = { promotionReason: reason, parityNote };
-    patch[regime as TrendRegime] = {
+    patch._audit[regime] = { promotionReason: reason, parityNote };
+    patch[regime] = {
       enabled: false,
       templateId: row.template,
       params: templateParams,

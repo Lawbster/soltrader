@@ -20,7 +20,7 @@ import { PublicKey } from '@solana/web3.js';
 
 // Config self-loads .env at import time via src/utils/config.ts
 import { getConnection, getKeypair, config } from '../src/utils';
-import { sellToken, paperSellToken, USDC_MINT } from '../src/execution/jupiter-swap';
+import { sellToken, paperSellToken } from '../src/execution';
 
 const DATA_DIR = path.resolve(__dirname, '../data');
 const SLIPPAGE_BPS = 300;
@@ -154,11 +154,11 @@ async function main() {
         console.log(`  PAPER sell simulated. success=${result.success}`);
       } else {
         result = await sellToken(mint, rawBalance, SLIPPAGE_BPS, false);
-        console.log(`  Sell ${result.success ? 'SUCCEEDED' : 'FAILED'}. USDC received: ${result.usdcReceived?.toFixed(2) ?? '?'}`);
+        console.log(`  Sell ${result.success ? 'SUCCEEDED' : 'FAILED'}. USDC received: ${result.usdcAmount?.toFixed(2) ?? '?'}`);
       }
 
       if (result.success) {
-        const usdcOut = result.usdcReceived ?? 0;
+        const usdcOut = result.usdcAmount ?? 0;
         totalUsdcRecovered += usdcOut;
         pos.status = 'closed';
         pos.closeReason = `force-closed (script, recovered ${usdcOut.toFixed(2)} USDC)`;

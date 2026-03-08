@@ -137,16 +137,29 @@ Generated from `config/live-strategy-map.v1.json` by `npm run refresh-live-route
 
 | Token | Regime | Route | Template | TF | Exit | Stops | Max Size |
 |---|---|---|---|---:|---|---|---|
-| PIPPIN | uptrend | `pippin-5m-connors-up-core` | `connors-sma50-pullback` | 5m | price | `SL -5 / TP 4` | 25% equity |
-| PIPPIN | sideways | `pippin-1m-crsi-session-side-core` | `crsi-session-gate` | 1m | indicator | `SL -3 / TP 6` | 25% equity |
-| PIPPIN | downtrend | `pippin-15m-rsi-session-down-core` | `rsi-session-gate` | 15m | indicator | `SL -5 / TP 3` | 25% equity |
-| POPCAT | downtrend | `popcat-15m-rsi-atr-down-probe` | `rsi-atr-protect` | 15m | indicator | `SL 1.25 ATR / TP 3 ATR` | 8% equity |
+| BONK | downtrend | `bonk-1m-crsi-down-research` | `crsi` | 1m | indicator | `SL -3 / TP 3` | 1.5% equity |
+| BONK | downtrend | `bonk-5m-rsi2-down-research` | `rsi2-micro-range` | 5m | indicator | `SL -1 / TP 3` | 1.5% equity |
+| HNT | sideways | `hnt-5m-adx-range-side-research` | `adx-range-rsi-bb` | 5m | indicator | `SL -2 / TP 3` | 15% equity |
+| HNT | downtrend | `hnt-15m-macd-zero-down-research` | `macd-zero-rsi-confirm` | 15m | indicator | `SL -3 / TP 4` | 15% equity |
+| HNT | downtrend | `hnt-1m-vwap-rsi-down-research` | `vwap-rsi-range-revert` | 1m | indicator | `SL -2 / TP 4` | 15% equity |
+| PIPPIN | uptrend | `pippin-15m-bb-squeeze-up-research` | `bb-squeeze-breakout` | 15m | indicator | `SL -3 / TP 3` | 25% equity |
+| PIPPIN | uptrend | `pippin-1m-adx-range-up-research` | `adx-range-rsi-bb` | 1m | indicator | `SL -5 / TP 6` | 25% equity |
+| PIPPIN | uptrend | `pippin-5m-rsi2-up-research` | `rsi2-micro-range` | 5m | indicator | `SL -1.5 / TP 3` | 25% equity |
+| PIPPIN | sideways | `pippin-15m-atr-breakout-side-research` | `atr-breakout-follow` | 15m | indicator | `SL -2 / TP 8` | 25% equity |
+| PIPPIN | sideways | `pippin-1m-rsi-crsi-side-research` | `rsi-crsi-confluence` | 1m | indicator | `SL -5 / TP 4` | 25% equity |
+| PIPPIN | sideways | `pippin-5m-crsi-session-side-research` | `crsi-session-gate` | 5m | indicator | `SL -3 / TP 6` | 25% equity |
+| PIPPIN | downtrend | `pippin-15m-rsi2-down-research` | `rsi2-micro-range` | 15m | indicator | `SL -1 / TP 3` | 25% equity |
+| PIPPIN | downtrend | `pippin-1m-rsi-down-research` | `rsi` | 1m | indicator | `SL -5 / TP 4` | 25% equity |
+| POPCAT | sideways | `popcat-15m-rsi-session-side-research` | `rsi-session-gate` | 15m | indicator | `SL -3 / TP 4` | 8% equity |
+| POPCAT | downtrend | `popcat-1m-crsi-session-down-research` | `crsi-session-gate` | 1m | indicator | `SL -3 / TP 4` | 8% equity |
+| PUMP | sideways | `pump-15m-rsi-crsi-mid-side-research` | `rsi-crsi-midpoint-exit` | 15m | indicator | `SL -5` | 15% equity |
+| PUMP | sideways | `pump-5m-rsi-side-research` | `rsi` | 5m | indicator | `SL -5 / TP 1` | 15% equity |
+| PUMP | downtrend | `pump-1m-rsi-down-research` | `rsi` | 1m | indicator | `SL -3 / TP 1` | 15% equity |
+| SOL | downtrend | `sol-1m-vwap-rsi-down-research` | `vwap-rsi-range-revert` | 1m | indicator | `SL -3 / TP 4` | 2% equity |
+| SOL | downtrend | `sol-5m-crsi-session-down-research` | `crsi-session-gate` | 5m | indicator | `SL -3 / TP 6` | 2% equity |
 
 Disabled at the moment:
-- BONK
 - cbBTC
-- HNT
-- SOL
 - TRUMP
 - all non-listed regimes
 <!-- LIVE_ROUTES:END -->

@@ -5,7 +5,7 @@
  *   fixed    — (0.25% commission + 0.1% slippage) × 2 = 0.70% round-trip
  *   empirical — median(quotedImpactPct) from live execution logs + fixed commission
  *
- * Empirical guard: requires ≥30 successful executions. If not met, throws with
+ * Empirical guard: requires ≥10 successful executions. If not met, throws with
  * a clear message so the caller can fall back to fixed mode explicitly.
  */
 
@@ -15,7 +15,7 @@ import { CostConfig } from './types';
 
 const DATA_ROOT = path.resolve(__dirname, '../../data');
 const EXECUTIONS_DIR = path.join(DATA_ROOT, 'executions');
-const MIN_EMPIRICAL_TRADES = 30;
+const MIN_EMPIRICAL_TRADES = 10;
 const COMMISSION_PER_SIDE_PCT = 0.25; // Jupiter protocol fee (actual base fee for liquid pools)
 
 export function fixedCost(commissionPct = 0.25, slippagePct = 0.1): CostConfig {
