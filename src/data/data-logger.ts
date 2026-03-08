@@ -53,6 +53,12 @@ export interface SignalLogEntry {
   candleCount: number;
   entryDecision: boolean;
   rejectReason: string;
+  acceptReason?: string;
+  routeId?: string;
+  templateId?: string;
+  timeframeMinutes?: number;
+  regime?: string;
+  score?: number;
   quotedImpactPct?: number;
   liquidityUsd: number;
   effectiveMaxUsdc: number;

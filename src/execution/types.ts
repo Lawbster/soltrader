@@ -43,6 +43,8 @@ export interface StrategyPlan {
   routeId?: string;                        // unique per-token route identifier
   timeframeMinutes?: number;               // route timeframe (1/5/15)
   priority?: number;                       // route priority used for arbitration
+  entryRegime?: string;                    // regime active when the position was opened
+  entryReason?: string;                    // concise why-this-opened summary for ops/dashboard
   protection?: RouteProtectionConfig;      // optional dynamic protection rules
   indicator?: {
     kind: 'rsi' | 'crsi';

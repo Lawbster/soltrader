@@ -271,11 +271,20 @@ export function getDashboardHtml(): string {
   /* Open positions */
   .pos-card {
     background: #161b22; border: 1px solid #21262d; border-radius: 8px;
-    padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; gap: 16px;
+    padding: 12px 16px; display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
   }
   .pos-mint { font-family: monospace; font-size: 0.8rem; color: #58a6ff; }
   .pos-pnl { font-size: 1.1rem; font-weight: 700; }
   .pos-detail { font-size: 0.75rem; color: #6e7681; }
+  .pos-meta { display: flex; flex-direction: column; gap: 4px; }
+  .pos-reason {
+    font-size: 0.72rem;
+    color: #c9d1d9;
+    line-height: 1.35;
+    max-width: 760px;
+  }
+  .accept-count { color: #3fb950; }
+  .reject-count { color: #f85149; }
   .no-data { text-align: center; padding: 40px; color: #484f58; font-size: 0.9rem; }
 
   section { margin-bottom: 24px; }
@@ -316,7 +325,7 @@ export function getDashboardHtml(): string {
 <!-- Signal QA -->
 <section>
   <div class="section-title with-subtitle">
-    <span>Signal QA</span>
+    <span>Entry QA</span>
     <span class="subtle-note" id="signalStatsMeta">Latest signal file</span>
   </div>
   <div class="grid grid-4" id="signalStatsCards"></div>
@@ -381,7 +390,7 @@ export function getDashboardHtml(): string {
 
 <!-- System Status -->
 <section>
-  <div class="section-title">System</div>
+  <div class="section-title">System & Architecture</div>
   <div class="grid grid-4" id="sysStatus"></div>
 </section>
 
@@ -709,6 +718,10 @@ function renderPriceChart(points, tokenLabel) {
   const rect = canvas.parentElement.getBoundingClientRect();
   const w = rect.width - 32;
   const h = 200;
+  const padLeft = 64;
+  const padRight = 56;
+  const padTop = 18;
+  const padBottom = 26;
   canvas.width = w * dpr;
   canvas.height = h * dpr;
   canvas.style.width = w + 'px';
@@ -728,42 +741,44 @@ function renderPriceChart(points, tokenLabel) {
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
   const range = maxP - minP || 1;
-  const pad = 60;
+  const plotW = w - padLeft - padRight;
+  const plotH = h - padTop - padBottom;
+  const plotBottom = h - padBottom;
 
   // Y axis labels
   ctx.fillStyle = '#6e7681';
   ctx.font = '10px system-ui';
   ctx.textAlign = 'right';
-  ctx.fillText('$' + fmt(maxP, 4), pad - 4, 14);
-  ctx.fillText('$' + fmt(minP, 4), pad - 4, h - 4);
+  ctx.fillText('$' + fmt(maxP, 4), padLeft - 6, padTop);
+  ctx.fillText('$' + fmt(minP, 4), padLeft - 6, plotBottom + 4);
   const midP = (maxP + minP) / 2;
-  const midY = pad / 2 + (h - pad) * (1 - (midP - minP) / range);
-  ctx.fillText('$' + fmt(midP, 4), pad - 4, midY + 4);
+  const midY = padTop + plotH * (1 - (midP - minP) / range);
+  ctx.fillText('$' + fmt(midP, 4), padLeft - 6, midY + 4);
 
   // X axis time labels
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   const first = points[0].time;
   const last = points[points.length - 1].time;
-  ctx.fillText(new Date(first).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}), pad, h - 4);
-  ctx.fillText(new Date(last).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}), w - 10, h - 4);
+  ctx.fillText(new Date(first).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}), padLeft, h - 6);
+  ctx.textAlign = 'right';
+  ctx.fillText(new Date(last).toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'}), w - 8, h - 6);
 
   // Grid line at midpoint
   ctx.strokeStyle = '#21262d';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   ctx.beginPath();
-  ctx.moveTo(pad, midY);
-  ctx.lineTo(w, midY);
+  ctx.moveTo(padLeft, midY);
+  ctx.lineTo(w - padRight + 8, midY);
   ctx.stroke();
   ctx.setLineDash([]);
 
   // Price line
   ctx.beginPath();
-  const plotH = h - pad;
-  const stepX = (w - pad) / (points.length - 1);
+  const stepX = plotW / (points.length - 1);
   for (let i = 0; i < points.length; i++) {
-    const x = pad + i * stepX;
-    const y = pad / 2 + plotH * (1 - (points[i].price - minP) / range);
+    const x = padLeft + i * stepX;
+    const y = padTop + plotH * (1 - (points[i].price - minP) / range);
     if (i === 0) ctx.moveTo(x, y);
     else ctx.lineTo(x, y);
   }
@@ -775,19 +790,19 @@ function renderPriceChart(points, tokenLabel) {
   ctx.stroke();
 
   // Fill under curve
-  const lastX = pad + (points.length - 1) * stepX;
-  ctx.lineTo(lastX, h - pad / 2);
-  ctx.lineTo(pad, h - pad / 2);
+  const lastX = padLeft + (points.length - 1) * stepX;
+  ctx.lineTo(lastX, plotBottom);
+  ctx.lineTo(padLeft, plotBottom);
   ctx.closePath();
   ctx.fillStyle = up ? 'rgba(63,185,80,0.06)' : 'rgba(248,81,73,0.06)';
   ctx.fill();
 
   // Current price label
-  const lastY = pad / 2 + plotH * (1 - (lastPrice - minP) / range);
+  const lastY = padTop + plotH * (1 - (lastPrice - minP) / range);
   ctx.fillStyle = up ? '#3fb950' : '#f85149';
   ctx.font = 'bold 11px system-ui';
   ctx.textAlign = 'left';
-  ctx.fillText('$' + fmt(lastPrice, 4), lastX + 4, lastY - 4);
+  ctx.fillText('$' + fmt(lastPrice, 4), Math.min(lastX + 6, w - padRight + 4), lastY - 4);
 }
 
 function renderPortfolio(s) {
@@ -839,10 +854,16 @@ function renderPortfolio(s) {
     posEl.innerHTML = s.openPositions.map(p => {
       const sig = signalCache.find(sc => sc.mint === p.mint);
       const name = sig ? labelFor(sig) : shortMint(p.mint);
+      const routeSummary = [p.routeId || p.templateId || '--', p.timeframeMinutes ? (p.timeframeMinutes + 'm') : '--', p.entryRegime || '--']
+        .filter(Boolean)
+        .join(' | ');
+      const reasonText = p.entryReason || routeSummary;
       return '<div class="pos-card">' +
-      '<div><div class="pos-mint">' + name + '</div>' +
+      '<div class="pos-meta"><div class="pos-mint">' + name + '</div>' +
       '<div class="pos-detail">Entry: $' + fmt(p.entryPrice, p.entryPrice < 0.01 ? 6 : p.entryPrice < 1 ? 4 : 2) + ' | Hold: ' + p.holdTimeMins + 'm | Remaining: ' + fmt(p.remainingPct,0) + '%' +
-      (p.tp1Hit ? ' | TP1' : '') + '</div></div>' +
+      (p.tp1Hit ? ' | TP1' : '') + '</div>' +
+      '<div class="pos-detail">Route: ' + escapeHtml(routeSummary) + (p.exitMode ? (' | Exit: ' + escapeHtml(p.exitMode)) : '') + '</div>' +
+      '<div class="pos-reason">Opened because: ' + escapeHtml(reasonText) + '</div></div>' +
       '<div class="pos-pnl ' + pnlColor(p.pnlPct) + '">' + (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct) + '</div>' +
       '</div>';
     }).join('');
@@ -942,41 +963,44 @@ function renderSignalStats(stats, signals) {
   const accepted = Number(stats.acceptedSignals || 0);
   const rejected = Number(stats.rejectedSignals || 0);
   const acceptRate = Number(stats.acceptanceRatePct || 0);
+  const acceptedRows = Array.isArray(stats.acceptedRows) ? stats.acceptedRows : [];
+  const acceptedReasons = Array.isArray(stats.acceptedReasonStats) ? stats.acceptedReasonStats : [];
+  const rejectGroups = Array.isArray(stats.rejectGroupStats) ? stats.rejectGroupStats : [];
+  const rejectReasons = Array.isArray(stats.rejectReasonStats) ? stats.rejectReasonStats : [];
+  const lastAccepted = acceptedRows[0] || null;
+  const lastAcceptedLabel = lastAccepted
+    ? (tokenNameFromMint(lastAccepted.mint) + ' | ' + (lastAccepted.routeId || '--'))
+    : 'No accepted entries';
 
   cardsEl.innerHTML = [
     '<div class="card"><h3>Total Signals</h3><div class="value blue">' + total + '</div><div class="sub">' + (stats.uniqueMints || 0) + ' mints</div></div>',
-    '<div class="card"><h3>Accepted</h3><div class="value green">' + accepted + '</div></div>',
-    '<div class="card"><h3>Rejected</h3><div class="value red">' + rejected + '</div><div class="sub">' + (stats.uniqueRejectReasons || 0) + ' unique reasons</div></div>',
+    '<div class="card"><h3>Accepted</h3><div class="value accept-count">' + accepted + '</div><div class="sub">' + lastAcceptedLabel + '</div></div>',
+    '<div class="card"><h3>Rejected</h3><div class="value reject-count">' + rejected + '</div><div class="sub">' + (stats.uniqueRejectReasons || 0) + ' unique reasons</div></div>',
     '<div class="card"><h3>Acceptance Rate</h3><div class="value ' + (acceptRate >= 10 ? 'green' : 'yellow') + '">' + fmtPct(acceptRate) + '</div></div>',
   ].join('');
 
-  const reasonGroups = Array.isArray(stats.rejectGroupStats) ? stats.rejectGroupStats : [];
-  const rawReasons = Array.isArray(stats.rejectReasonStats) ? stats.rejectReasonStats : [];
-  const routes = Array.isArray(stats.routeRejectStats) ? stats.routeRejectStats : [];
-  const mintStats = Array.isArray(stats.byMintStats) ? stats.byMintStats : [];
-
   const tables = [
+    renderMiniStatsTable('Accepted Entries', [
+      { label: 'Time', key: 'ts', render: r => fmtDate(r.ts || 0) },
+      { label: 'Mint', key: 'mint', render: r => escapeHtml(tokenNameFromMint(r.mint || '')) },
+      { label: 'Route', key: 'routeId', render: r => escapeHtml((r.routeId || '--') + (r.timeframeMinutes ? (' @ ' + r.timeframeMinutes + 'm') : '')) },
+      { label: 'Why', key: 'acceptReason', render: r => '<span title="' + escapeHtml(r.acceptReason || '') + '" style="display:inline-block;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(r.acceptReason || '--') + '</span>' },
+    ], acceptedRows),
+    renderMiniStatsTable('Accepted Reasons', [
+      { label: 'Reason', key: 'reason', render: r => '<span title="' + escapeHtml(r.reason || '') + '" style="display:inline-block;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(r.reason || '--') + '</span>' },
+      { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
+      { label: '% Accepts', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
+    ], acceptedReasons),
     renderMiniStatsTable('Reject Groups', [
       { label: 'Group', key: 'group', render: r => '<span title="' + escapeHtml(r.group || '') + '">' + escapeHtml(r.group || '--') + '</span>' },
       { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
       { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
-    ], reasonGroups),
+    ], rejectGroups),
     renderMiniStatsTable('Top Reject Reasons', [
-      { label: 'Reason', key: 'reason', render: r => '<span title="' + escapeHtml(r.reason || '') + '" style="display:inline-block;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(r.reason || '--') + '</span>' },
+      { label: 'Reason', key: 'reason', render: r => '<span title="' + escapeHtml(r.reason || '') + '" style="display:inline-block;max-width:360px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeHtml(r.reason || '--') + '</span>' },
       { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
       { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
-    ], rawReasons),
-    renderMiniStatsTable('Route Rejects', [
-      { label: 'Route', key: 'route', render: r => '<span title="' + escapeHtml(r.route || '') + '">' + escapeHtml(r.route || '--') + '</span>' },
-      { label: 'Count', key: 'count', render: r => Number(r.count || 0).toLocaleString() },
-      { label: '% Rejects', key: 'pct', render: r => fmt(r.pct || 0, 1) + '%' },
-    ], routes),
-    renderMiniStatsTable('Signals By Mint', [
-      { label: 'Mint', key: 'mint', render: r => escapeHtml(tokenNameFromMint(r.mint || '')) },
-      { label: 'Total', key: 'total', render: r => Number(r.total || 0).toLocaleString() },
-      { label: 'Accepted', key: 'accepted', render: r => '<span class="green">' + Number(r.accepted || 0).toLocaleString() + '</span>' },
-      { label: 'Acc %', key: 'acceptanceRatePct', render: r => fmt(r.acceptanceRatePct || 0, 1) + '%' },
-    ], mintStats),
+    ], rejectReasons),
   ];
 
   tablesEl.innerHTML = tables.join('');
@@ -985,14 +1009,32 @@ function renderSignalStats(stats, signals) {
 function renderSystem(status, metrics, signals) {
   const el = document.getElementById('sysStatus');
   const totalPricePoints = signals ? signals.reduce((s, sig) => s + sig.pricePoints, 0) : 0;
+  const activeRoutes = Array.isArray(signals)
+    ? signals.filter(sig => sig.masterEnabled && sig.regimeActive && sig.templateId).length
+    : 0;
+  const activeTokens = Array.isArray(signals)
+    ? signals.filter(sig => sig.masterEnabled).length
+    : 0;
+  const liveTimeframes = Array.isArray(signals)
+    ? Array.from(new Set(
+        signals
+          .filter(sig => sig.masterEnabled && sig.regimeActive && isFiniteNumber(sig.timeframeMinutes))
+          .map(sig => sig.timeframeMinutes + 'm')
+      )).sort((a, b) => Number(a.replace('m', '')) - Number(b.replace('m', '')))
+    : [];
   const cards = [
     { label: 'Price Feed Points', value: totalPricePoints, cls: totalPricePoints > 0 ? 'green' : 'yellow' },
     { label: 'Trade Subscriptions', value: status.tradeSubscriptions, cls: '' },
     { label: 'Uptime', value: fmt(metrics.uptimeHours, 1) + 'h', cls: 'blue' },
     { label: 'Watchlist Tokens', value: signals ? signals.length : 0, cls: '' },
+    { label: 'Active Routes', value: activeRoutes, cls: activeRoutes > 0 ? 'green' : 'yellow' },
+    { label: 'Enabled Tokens', value: activeTokens, cls: activeTokens > 0 ? 'blue' : 'muted' },
+    { label: 'Live Timeframes', value: liveTimeframes.length > 0 ? liveTimeframes.join(', ') : '--', cls: 'blue' },
+    { label: 'Position Model', value: 'Multi-route', cls: 'blue', sub: 'Same-route duplicates blocked' },
   ];
   el.innerHTML = cards.map(c =>
-    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div></div>'
+    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div>' +
+    (c.sub ? '<div class="sub">' + c.sub + '</div>' : '') + '</div>'
   ).join('');
 }
 

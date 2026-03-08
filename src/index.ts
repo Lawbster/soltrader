@@ -298,6 +298,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
         candleCount: 0,
         entryDecision: false,
         rejectReason: `route-window: ${reasons.join(' | ')}`,
+        regime,
         liquidityUsd: tokenData.liquidityUsd,
         effectiveMaxUsdc: 0,
       });
@@ -333,6 +334,11 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       rejectReason: rejectSignal
         ? `route:${rejectRoute?.routeId ?? rejectRoute?.templateId}@${topRejected?.timeframeMinutes}m ${rejectSignal.reason || rejectSignal.filterResult?.reason || ''}`
         : 'no-route-passed',
+      routeId: rejectRoute?.routeId ?? rejectRoute?.templateId,
+      templateId: rejectRoute?.templateId,
+      timeframeMinutes: topRejected?.timeframeMinutes,
+      regime,
+      score: rejectSignal?.scoreResult ? Math.round(rejectSignal.scoreResult.total) : undefined,
       liquidityUsd: tokenData.liquidityUsd,
       effectiveMaxUsdc: 0,
     });
@@ -343,6 +349,11 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const winnerRoute = winner.route;
   const winnerSignal = winner.signal;
   const winnerIndicators = winner.indicators;
+  const winnerScore = winnerSignal.scoreResult ? Math.round(winnerSignal.scoreResult.total) : 0;
+  const acceptReason =
+    `route:${winnerRoute.routeId ?? winnerRoute.templateId}@${winner.timeframeMinutes}m ` +
+    `regime=${regime} template=${winnerRoute.templateId} score=${winnerScore} ` +
+    `size=${winnerSignal.positionSizeUsdc.toFixed(2)}`;
 
   if (passed.length > 1) {
     log.info('Route arbitration', {
@@ -367,6 +378,12 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     candleCount: winnerIndicators?.candleCount ?? 0,
     entryDecision: true,
     rejectReason: '',
+    acceptReason,
+    routeId: winnerRoute.routeId ?? winnerRoute.templateId,
+    templateId: winnerRoute.templateId,
+    timeframeMinutes: winner.timeframeMinutes,
+    regime,
+    score: winnerScore,
     liquidityUsd: tokenData.liquidityUsd,
     effectiveMaxUsdc: winnerSignal.positionSizeUsdc,
   });
@@ -379,7 +396,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     templateId: winnerRoute.templateId,
     timeframeMinutes: winner.timeframeMinutes,
     priority: winnerRoute.priority ?? 0,
-    score: winnerSignal.scoreResult ? Math.round(winnerSignal.scoreResult.total) : 0,
+    score: winnerScore,
     sizeUsdc: winnerSignal.positionSizeUsdc.toFixed(2),
     mcap: Math.round(tokenData.mcapUsd),
     liq: Math.round(tokenData.liquidityUsd),
@@ -402,6 +419,8 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     routeId: winnerRoute.routeId,
     timeframeMinutes: winner.timeframeMinutes,
     priority: winnerRoute.priority,
+    entryRegime: regime,
+    entryReason: acceptReason,
     protection: winnerRoute.protection,
     indicator: winnerRoute.indicator,
   };

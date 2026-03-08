@@ -98,6 +98,12 @@ async function handleStatus(res: http.ServerResponse) {
     holdTimeMins: Math.round((Date.now() - p.entryTime) / 60_000),
     tp1Hit: p.tp1Hit,
     tp2Hit: p.tp2Hit,
+    routeId: p.strategyPlan?.routeId ?? null,
+    templateId: p.strategyPlan?.templateId ?? null,
+    timeframeMinutes: p.strategyPlan?.timeframeMinutes ?? null,
+    exitMode: p.strategyPlan?.exitMode ?? null,
+    entryRegime: p.strategyPlan?.entryRegime ?? null,
+    entryReason: p.strategyPlan?.entryReason ?? null,
   }));
 
   const walletBalances = await getWalletBalances();
@@ -281,6 +287,13 @@ type SignalLogRow = {
   source?: string;
   entryDecision?: boolean;
   rejectReason?: string;
+  acceptReason?: string;
+  routeId?: string;
+  templateId?: string;
+  timeframeMinutes?: number;
+  regime?: string;
+  score?: number;
+  effectiveMaxUsdc?: number;
 };
 
 function findLatestSignalFileName(): string | null {
@@ -332,9 +345,19 @@ function parseSignalStats(filePath: string) {
 
   const reasonCounts = new Map<string, number>();
   const reasonGroupCounts = new Map<string, number>();
-  const routeRejectCounts = new Map<string, number>();
+  const acceptReasonCounts = new Map<string, number>();
   const sourceCounts = new Map<string, number>();
   const byMint = new Map<string, { total: number; accepted: number; rejected: number }>();
+  const acceptedRows: Array<{
+    ts: number;
+    mint: string;
+    routeId: string;
+    templateId: string;
+    timeframeMinutes: number | null;
+    regime: string;
+    acceptReason: string;
+    effectiveMaxUsdc: number;
+  }> = [];
 
   let totalSignals = 0;
   let acceptedSignals = 0;
@@ -359,6 +382,22 @@ function parseSignalStats(filePath: string) {
     if (row.entryDecision === true) {
       acceptedSignals += 1;
       mintStat.accepted += 1;
+      const acceptReason = (row.acceptReason || '').trim()
+        || [row.routeId, row.timeframeMinutes ? `${row.timeframeMinutes}m` : '', row.regime]
+          .filter(Boolean)
+          .join(' ')
+        || 'accepted';
+      acceptReasonCounts.set(acceptReason, (acceptReasonCounts.get(acceptReason) || 0) + 1);
+      acceptedRows.push({
+        ts: Number(row.ts || 0),
+        mint,
+        routeId: row.routeId || '--',
+        templateId: row.templateId || '--',
+        timeframeMinutes: Number.isFinite(row.timeframeMinutes) ? Number(row.timeframeMinutes) : null,
+        regime: row.regime || '--',
+        acceptReason,
+        effectiveMaxUsdc: Number.isFinite(row.effectiveMaxUsdc) ? Number(row.effectiveMaxUsdc) : 0,
+      });
     } else {
       rejectedSignals += 1;
       mintStat.rejected += 1;
@@ -368,12 +407,6 @@ function parseSignalStats(filePath: string) {
 
       const group = normalizeRejectReason(reasonRaw);
       reasonGroupCounts.set(group, (reasonGroupCounts.get(group) || 0) + 1);
-
-      const routeMatch = reasonRaw.match(/route:([^\s]+)/);
-      if (routeMatch) {
-        const routeKey = routeMatch[1];
-        routeRejectCounts.set(routeKey, (routeRejectCounts.get(routeKey) || 0) + 1);
-      }
     }
 
     byMint.set(mint, mintStat);
@@ -397,9 +430,10 @@ function parseSignalStats(filePath: string) {
     uniqueMints: byMint.size,
     uniqueRejectReasons: reasonCounts.size,
     sourceStats: mapToSortedRows(sourceCounts, totalSignals, 'source'),
+    acceptedReasonStats: mapToSortedRows(acceptReasonCounts, acceptedSignals, 'reason'),
+    acceptedRows: acceptedRows.sort((a, b) => b.ts - a.ts),
     rejectReasonStats: mapToSortedRows(reasonCounts, rejectedSignals, 'reason'),
     rejectGroupStats: mapToSortedRows(reasonGroupCounts, rejectedSignals, 'group'),
-    routeRejectStats: mapToSortedRows(routeRejectCounts, rejectedSignals, 'route'),
     byMintStats: byMintRows,
   };
 }
@@ -422,9 +456,10 @@ function handleSignalStats(res: http.ServerResponse, url: string) {
         uniqueMints: 0,
         uniqueRejectReasons: 0,
         sourceStats: [],
+        acceptedReasonStats: [],
+        acceptedRows: [],
         rejectReasonStats: [],
         rejectGroupStats: [],
-        routeRejectStats: [],
         byMintStats: [],
       }));
       return;
