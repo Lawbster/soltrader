@@ -25,6 +25,8 @@ import {
   hasOpenPositionForRoute,
   savePositionHistory,
   checkSolReplenish,
+  getWalletBalances,
+  SOL_MINT,
 } from './execution';
 import { startDashboard, stopDashboard, updateDashboardState } from './dashboard';
 
@@ -646,7 +648,7 @@ async function main() {
     }
   }, CLEANUP_INTERVAL_MS);
 
-  const saveTimer = setInterval(() => {
+  const saveTimer = setInterval(async () => {
     try {
       updateDashboardState(pendingTokens.size);
       saveSnapshots();
@@ -662,6 +664,16 @@ async function main() {
       const portfolio = getPortfolioState();
       const stats = getStats();
       const metrics = getAggregateMetrics();
+      let displayedEquityUsdc = portfolio.equityUsdc;
+      try {
+        const walletBalances = await getWalletBalances();
+        const solPriceUsd = getTokenPriceCached(SOL_MINT).priceUsd;
+        displayedEquityUsdc = walletBalances.usdc + (walletBalances.sol * solPriceUsd) + portfolio.openExposureUsdc;
+      } catch (err) {
+        log.warn('Status equity refresh failed; using tracked equity', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       // Include price history counts for watchlist tokens
       const priceHistoryCounts: Record<string, number> = {};
       for (const entry of watchlist) {
@@ -673,7 +685,8 @@ async function main() {
         tradeSubscriptions: getActiveSubscriptionCount(),
         priceHistory: priceHistoryCounts,
         openPositions: portfolio.openPositions,
-        equityUsdc: portfolio.equityUsdc.toFixed(2),
+        equityUsdc: displayedEquityUsdc.toFixed(2),
+        trackedEquityUsdc: portfolio.equityUsdc.toFixed(2),
         dailyPnl: portfolio.dailyPnlPct.toFixed(2) + '%',
         totalTrades: metrics.totalTrades,
         winRate: metrics.totalTrades > 0 ? metrics.winRate.toFixed(1) + '%' : 'N/A',
