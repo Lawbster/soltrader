@@ -1,199 +1,204 @@
-# Strategy Reference (Live + Research)
+# Sol-Trader System Reference
 
-This file is the strategy source-of-truth for agent handoff and reviews.
-It describes what is running live now, how signals are routed, and how to promote updates.
-
-## Scope
-
-- Live execution architecture and active routes
-- Exit behavior (including dynamic protection)
-- Research and promotion workflow (`sweep`, `candidates`, robustness)
-- Operational guardrails for changes
+This file is the current source of truth for how the live bot, data model, and research loop work.
+Canonical config and code always win over this document when they differ.
 
 ## Canonical Files
 
-- Live map: `config/live-strategy-map.v1.json`
-- Route loader/parser: `src/strategy/live-strategy-map.ts`
-- Entry routing/arbitration: `src/index.ts`
-- Entry gates/scoring: `src/strategy/rules.ts`
-- Exit engine: `src/execution/position-manager.ts`
+- Live routes: `config/live-strategy-map.v1.json`
+- Global config: `config/strategy.v1.json`
+- Main runtime: `src/index.ts`
+- Entry rules: `src/strategy/rules.ts`
+- Live route normalization: `src/strategy/live-strategy-map.ts`
+- Regime logic: `src/strategy/regime-core.ts`, `src/strategy/regime-detector.ts`
+- Execution engine: `src/execution/position-manager.ts`
+- Template catalog: `src/strategy/templates/catalog.ts`
 - Backtest sweep engine: `src/backtest/sweep.ts`
 - Candidate ranking: `scripts/sweep-candidates.ts`
-- Robustness windows: `scripts/sweep-window-robustness.ts`
+- Robustness engine: `scripts/sweep-window-robustness.ts`
 
-## Live Architecture
+## Runtime Model
 
-1. Regime selection
-- Regime detector classifies each token into `uptrend`, `sideways`, or `downtrend`.
-- Live map provides route config per regime.
+### Universe
 
-2. Route selection
-- Each enabled route has:
-  - `templateId`
-  - `params`
-  - `timeframeMinutes`
-  - `priority`
-  - `sl`, `tp`, `exitMode`
-  - optional `protection`
-- Per cycle, candidate routes are evaluated.
-- Arbitration chooses winner by:
-  1) `priority` (higher wins)
-  2) signal score (higher wins)
-  3) shorter timeframe
-  4) larger size
+The bot can monitor both launch candidates and a fixed watchlist, but the current production setup is watchlist-led.
+Watchlist tokens are loaded from `config/watchlist.json` and continuously tracked.
 
-3. Position sizing
-- Token cap supports:
-  - `maxPositionUsdc` (absolute cap)
-  - `maxPositionEquityPct` (equity-based cap)
-- Portfolio gates also apply:
-  - max concurrent positions
-  - max open exposure
-  - kill switch rules
+### Data Inputs
 
-4. Exit stack (strategy-routed positions)
-- Priority order in runtime:
-  1) Emergency LP drop exit
-  2) Route `protection` exit (if configured)
-  3) Template indicator exit (if `exitMode=indicator`)
-  4) SL/TP fallback
+The runtime uses three live data layers:
 
-## Dynamic Protection Model
+1. `price-feed`
+- Rolling price polls cached in memory.
+- Persisted to `data/prices/{mint}/{YYYY-MM-DD}.jsonl`.
+- Exported to 1 minute candles in `data/candles/{mint}/{YYYY-MM-DD}.csv`.
 
-Configured per route under `protection`.
+2. `trade-tracker`
+- Optional log-based trade enrichment from chain events.
+- Used for short-window flow metrics and as the preferred OHLC source when available.
+- Quote notionals are normalized to USD before they are used in filters or scoring.
 
-Fields:
-- `profitLockArmPct`: arm lock when peak PnL reaches this value
-- `profitLockPct`: if armed and current PnL drops to this value or lower, exit
-- `trailArmPct`: arm trailing when peak PnL reaches this value
-- `trailGapPct`: trailing stop at `peakPnlPct - trailGapPct`
-- `staleMaxHoldMinutes`: if hold time exceeds this threshold, evaluate stale stop
-- `staleMinPnlPct`: stale stop threshold (exit if `currentPnlPct <= staleMinPnlPct`)
+3. `regime candles`
+- Regime detection reads persisted candle CSVs from disk.
+- No RPC dependency once candles exist locally.
 
-Notes:
-- Protection is optional and route-local.
-- If not set, behavior is unchanged.
-- Protection is evaluated before template exit and SL/TP.
+### Regime Routing
 
-## Active Live Routes (Current Map)
+Every token is assigned a live regime:
+- `uptrend`
+- `sideways`
+- `downtrend`
 
-Only these regime routes are enabled:
+The detector:
+- reads candle CSVs from disk
+- computes trailing 24h / 48h / 72h returns
+- combines them with weighted scoring
+- applies 2-cycle hysteresis before confirming a flip
+- refreshes every 10 minutes
 
-| Token | Regime | Route ID | Template | TF | SL / TP | Exit Mode | Size Cap |
+Date handling is UTC-based so candle-file lookup and regime refresh use the same calendar as stored data.
+
+### Route Selection
+
+Each token can define one or more routes per regime.
+Each route carries:
+- `templateId`
+- `params`
+- `timeframeMinutes`
+- `priority`
+- `exitMode`
+- either `%` stops or `ATR` stops
+- optional `protection`
+- token-specific size caps
+
+At runtime:
+1. only routes for the token's confirmed regime are considered
+2. each route is evaluated only once per closed candle boundary for its timeframe
+3. passing routes are arbitrated by:
+- higher `priority`
+- higher score
+- shorter timeframe
+- larger size
+
+### Position Model
+
+The bot now supports multiple open positions per mint.
+The restriction is:
+- at most one open position per `routeId` on a mint at a time
+
+This means:
+- a `1m` and `15m` route on the same token can coexist
+- the exact same route cannot stack duplicate entries every candle
+
+### Exit Stack
+
+For route-driven positions, the live exit order is:
+
+1. emergency LP exit
+2. route protection exit
+3. template indicator exit when `exitMode=indicator`
+4. hard stop / take profit
+
+Protection supports:
+- profit lock
+- trailing protection
+- stale-time exits
+
+ATR exits are supported live and use ATR captured at entry.
+They do not drift after the trade is opened.
+
+## Live / Backtest Parity
+
+The project now aligns live and backtest materially better than the original build.
+
+### What is aligned
+
+- shared template catalog for signal logic
+- dynamic regime-aware routing
+- protection exits, including profit lock
+- ATR stop / take-profit exits
+- closed-candle signal evaluation
+- backtest entries on next 1 minute execution bar after the signal candle closes
+- higher-timeframe strategies using 1 minute execution bars underneath
+
+### What is still approximate
+
+- live uses real polling cadence and real execution failures
+- backtest uses bar-based execution, not mempool-level fills
+- quote failures, RPC outages, and other live infra issues are not fully modeled
+
+Backtest is now useful for strategy selection.
+It is still not a perfect simulator of live microstructure.
+
+## Current Live Routes
+
+<!-- LIVE_ROUTES:START -->
+Generated from `config/live-strategy-map.v1.json` by `npm run refresh-live-routes-doc`.
+
+| Token | Regime | Route | Template | TF | Exit | Stops | Max Size |
 |---|---|---|---|---:|---|---|---|
-| PIPPIN | sideways | `pippin-5m-crsi-dip-recover-core` | `crsi-dip-recover` | 5m | -5 / +3 | indicator | 25% equity |
-| PUMP | uptrend | `pump-5m-rsi-session-uptrend-core` | `rsi-session-gate` | 5m | -5 / +1 | indicator | 15% equity |
-| PUMP | sideways | `pump-1m-rsi-sideways-core` | `rsi` | 1m | -5 / +3 | indicator | 15% equity |
-| HNT | sideways | `hnt-15m-rsi-crsi-confluence-core` | `rsi-crsi-confluence` | 15m | -2 / +4 | indicator | 20% equity |
-| cbBTC | sideways | `cbbtc-15m-rsi-crsi-confluence-core` | `rsi-crsi-confluence` | 15m | -5 / +6 | indicator | 1.5% equity |
-| BONK | sideways | `bonk-15m-rsi-core` | `rsi` | 15m | -3 / +4 | indicator | 1.5% equity |
-| TRUMP | sideways | `trump-1m-vwap-rsi-range-revert-core` | `vwap-rsi-range-revert` | 1m | -5 / +4 | indicator | 1% equity |
-| POPCAT | sideways | `popcat-5m-rsi-probe-primary` | `rsi` | 5m | -3 / +10 | indicator | 20% equity |
+| PIPPIN | uptrend | `pippin-5m-connors-up-core` | `connors-sma50-pullback` | 5m | price | `SL -5 / TP 4` | 25% equity |
+| PIPPIN | sideways | `pippin-1m-vwap-rsi-side-core` | `vwap-rsi-range-revert` | 1m | price | `SL -2 / TP 2` | 25% equity |
+| PIPPIN | downtrend | `pippin-15m-rsi2-down-core` | `rsi2-micro-range` | 15m | price | `SL -2 / TP 3` | 25% equity |
+| POPCAT | downtrend | `popcat-15m-rsi-atr-down-probe` | `rsi-atr-protect` | 15m | indicator | `SL 1.25 ATR / TP 3 ATR` | 8% equity |
+| PUMP | downtrend | `pump-5m-rsi-session-down-core` | `rsi-session-gate` | 5m | indicator | `SL -3 / TP 1` | 15% equity |
 
-Route protection currently enabled on:
-- PIPPIN sideways
-- PUMP uptrend
-- PUMP sideways
-- TRUMP sideways (stale stop only)
+Disabled at the moment:
+- BONK
+- cbBTC
+- HNT
+- SOL
+- TRUMP
+- all non-listed regimes
+<!-- LIVE_ROUTES:END -->
 
-Disabled:
-- SOL all regimes
-- All non-listed regimes for other tokens
+## Data Layout
+
+The runtime data root is `data/`.
+
+Important paths:
+- price history snapshot: `data/price-history-snapshot.json`
+- candles: `data/candles/{mint}/{YYYY-MM-DD}.csv`
+- prices: `data/prices/{mint}/{YYYY-MM-DD}.jsonl`
+- signals: `data/signals/{YYYY-MM-DD}.jsonl`
+- executions: `data/executions/{YYYY-MM-DD}.jsonl`
+- swap trade logs: `data/data/trades/{YYYY-MM-DD}.jsonl`
+- metrics: `data/metrics.json`
+- position history: `data/positions-{YYYY-MM-DD}.json`
+- sweep output: `data/sweep-results/`
+
+The historical `data/data/...` trade-log path is still used for compatibility.
+The rest of the runtime uses the flat `data/` root.
 
 ## Research Workflow
 
-## 1) Run sweep (all major timeframes)
+1. run raw sweeps for 1m / 5m / 15m
+2. rank candidates from explicit files
+3. run robustness on rolling windows
+4. use raw sweep + robustness together to promote routes
+5. patch `config/live-strategy-map.v1.json`
+6. deploy, observe, and rerun after new data accumulates
 
-User runs sweep jobs (agents should not launch long full sweeps by default):
+Use profit-first evaluation.
+Win rate is secondary to:
+- net pnl
+- expectancy
+- drawdown behavior
+- robustness across windows
+- live expressibility
 
-```bash
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 1
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 5
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 15
-```
+## Validation Standard
 
-For routine iteration, use template subsets instead of the full catalog:
+Before promoting code or route changes:
 
-```bash
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 1 --template-set core
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 5 --template-set core
-npm run sweep -- --cost empirical --exit-parity both --from 2026-02-18 --timeframe 15 --template-set trend
-```
+1. `npx tsc --noEmit`
+2. `npm test`
+3. review current live map and route diff
+4. if changing strategy logic, rerun fresh sweep / candidates / robustness
 
-Available template sets:
-- `core`: currently productive mean-reversion / session templates
-- `extended`: broader research set without the full catalog cost
-- `trend`: trend / breakout continuation templates
+## Current Known Constraints
 
-For validation or smoke runs, write to a scratch file to avoid overwriting the daily canonical sweep artifact:
-
-```bash
-npm run sweep -- --template-set trend --timeframe 15 --from 2026-03-04 --to 2026-03-04 --out-file data/sweep-results/smoke/2026-03-04-trend-15min.csv
-```
-
-## 2) Build candidates from explicit files
-
-Always pass explicit `--files` to avoid stale path/source confusion:
-
-```bash
-npm run sweep-candidates -- --files "data/sweep-results/YYYY-MM-DD-1min.csv,data/sweep-results/YYYY-MM-DD-5min.csv,data/sweep-results/YYYY-MM-DD-15min.csv" --top 2000 --top-per-token 300 --rank-exit-parity indicator --timeframe-support-min 1 --out-dir data/sweep-results/candidates/union
-```
-
-Optional strict MTF consistency:
-
-```bash
-npm run sweep-mtf -- --cost empirical --exit-parity both --from 2026-02-18 --timeframes 1,5,15 --top 2000 --top-per-token 300 --rank-exit-parity indicator --require-timeframes --out-dir data/sweep-results/candidates/strict
-```
-
-## 3) Robustness windows
-
-```bash
-npm run sweep-robustness -- --from 2026-02-18 --window-days 1,2 --step-days 1 --timeframes 1,5,15 --cost empirical --exit-parity both --rank-exit-parity indicator --top 2000 --top-per-token 300 --timeframe-support-min 1
-```
-
-If empirical sample is too small in some windows, fallback mode should be used (`fixed`) for those windows.
-
-## Template Health
-
-Use the template health report to decide which strategies deserve compute budget:
-
-```bash
-npm run template-health
-```
-
-Optional explicit files:
-
-```bash
-npm run template-health -- --files "data/sweep-results/YYYY-MM-DD-1min.csv,data/sweep-results/YYYY-MM-DD-5min.csv,data/sweep-results/YYYY-MM-DD-15min.csv"
-```
-
-Outputs:
-- `data/sweep-results/template-health/YYYY-MM-DD.template-health.csv`
-- `data/sweep-results/template-health/YYYY-MM-DD.template-health.md`
-
-## Promotion Criteria (Profit-First)
-
-When ranking routes for live:
-- Prefer net profitability and drawdown control over raw win rate.
-- Minimum suggested gate:
-  - `pnlPct > 0`
-  - `profitFactor >= 1.2`
-  - `trades >= 12` (or stricter for core)
-  - acceptable `maxDrawdownPct` for token risk tier
-- Validate live expressibility and exit parity before promotion.
-
-## Change Rules for Agents
-
-1. Do not edit live routes without citing candidate artifacts and date.
-2. Do not promote using stale candidate files with mismatched sweep sources.
-3. Keep route changes regime-specific.
-4. For high-vol routes, include explicit `protection` config.
-5. After changes:
-- run typecheck/build
-- restart bot
-- monitor exit reason distribution (`SL`, `TP`, `template-indicator-exit`, `Profit lock`, `Trailing protect`, `Stale stop`)
-
-## Known Current Risk
-
-- A high win rate can still lose money if large-size routes carry asymmetric loss (`SL`) versus small gains.
-- Route-level protection is now available and should be part of promotion policy for volatile tokens.
+- backtest is still bar-based, not tick-based
+- trade enrichment depends on parsed transaction availability
+- some quote mints may not have immediate cached USD price during enrichment, in which case the trade is skipped from trade-window metrics
+- the swap trade-log path is legacy and can be cleaned later if you want a full migration

@@ -17,6 +17,7 @@ import { checkKillSwitch } from './guards';
 import { recordExecutionAttempt, recordClosedPosition, recordSkip } from '../strategy/metrics';
 import { logExecution } from '../data';
 import { rawToBigInt, rawToHumanAmount } from './amounts';
+import { calculateTrackedPnlUsdc, summarizeTrackedExits } from './position-accounting';
 
 // Route buy/sell through paper executor when in paper mode
 async function executeBuy(mint: string, sizeUsdc: number, slippageBps: number): Promise<SwapResult> {
@@ -777,6 +778,7 @@ async function executeExit(
   const decimals = await getDecimals(position.mint);
   let rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
   const slippageBps = config.trading.defaultSlippageBps;
+  let orphanedRawBeforeSell = 0n;
 
   // For full exits, reconcile with on-chain balance to handle fee/rounding dust.
   // IMPORTANT: cap at the position's tracked amount — never sell MORE than we own
@@ -786,6 +788,9 @@ async function executeExit(
     if (onChainRaw && onChainRaw !== '0') {
       const onChainBigInt = rawToBigInt(onChainRaw);
       const positionBigInt = rawToBigInt(rawTokensToSell);
+      orphanedRawBeforeSell = onChainBigInt > positionBigInt
+        ? (onChainBigInt - positionBigInt)
+        : 0n;
       // Use on-chain if LESS (fee dust trimming). Never use if MORE (orphaned tokens).
       const cappedRaw = onChainBigInt < positionBigInt ? onChainRaw : rawTokensToSell;
       log.info('Full exit: on-chain balance check', {
@@ -793,9 +798,7 @@ async function executeExit(
         positionRaw: rawTokensToSell,
         onChainRaw,
         cappedRaw,
-        orphanedRaw: onChainBigInt > positionBigInt
-          ? (onChainBigInt - positionBigInt).toString()
-          : '0',
+        orphanedRaw: orphanedRawBeforeSell.toString(),
         feeAdjustedRaw: onChainBigInt < positionBigInt
           ? (positionBigInt - onChainBigInt).toString()
           : '0',
@@ -880,19 +883,34 @@ async function executeExit(
         const onChainAfterRaw = await getOnChainTokenBalanceRaw(position.mint);
         if (onChainAfterRaw !== null) {
           const onChainAfter = rawToBigInt(onChainAfterRaw);
-          position.remainingTokens = rawToHumanAmount(onChainAfter, decimals);
+          const trackedRemainingRaw = onChainAfter > orphanedRawBeforeSell
+            ? (onChainAfter - orphanedRawBeforeSell)
+            : 0n;
+          const orphanedRemainingRaw = onChainAfter > trackedRemainingRaw
+            ? (onChainAfter - trackedRemainingRaw)
+            : 0n;
+          position.remainingTokens = rawToHumanAmount(trackedRemainingRaw, decimals);
           position.remainingUsdc = position.remainingTokens * position.currentPrice;
           position.remainingPct = position.initialTokens > 0
             ? (position.remainingTokens / position.initialTokens) * 100
             : 0;
-          verifiedFlat = onChainAfter === 0n;
+          verifiedFlat = trackedRemainingRaw === 0n;
 
           log.info('Full exit reconciliation', {
             mint: position.mint,
             onChainRemainingRaw: onChainAfterRaw,
+            trackedRemainingRaw: trackedRemainingRaw.toString(),
+            orphanedRemainingRaw: orphanedRemainingRaw.toString(),
             remainingPct: position.remainingPct.toFixed(4),
             verifiedFlat,
           });
+          if (orphanedRemainingRaw > 0n) {
+            log.warn('Orphaned token balance remains after tracked position exit', {
+              mint: position.mint,
+              id: position.id,
+              orphanedRemainingRaw: orphanedRemainingRaw.toString(),
+            });
+          }
         } else {
           log.warn('Full exit reconciliation unavailable, keeping position open unless tracked size is zero', {
             mint: position.mint,
@@ -921,8 +939,8 @@ function closePosition(position: Position, reason: string) {
   position.status = 'closed';
   position.closeReason = reason;
 
-  const totalUsdcOut = position.exits.reduce((sum, e) => sum + e.usdcReceived, 0);
-  const pnlUsdc = totalUsdcOut - position.initialSizeUsdc;
+  const exitSummary = summarizeTrackedExits(position);
+  const pnlUsdc = calculateTrackedPnlUsdc(position);
 
   dailyPnlUsdc += pnlUsdc;
 
@@ -954,6 +972,7 @@ function closePosition(position: Position, reason: string) {
     holdTime: `${Math.round((Date.now() - position.entryTime) / 60_000)}m`,
     dailyPnl: dailyPnlUsdc.toFixed(2),
     consecutiveLosses,
+    orphanedUsdcIgnored: exitSummary.orphanedUsdcOut.toFixed(4),
   });
 }
 
@@ -991,7 +1010,7 @@ export function savePositionHistory() {
     stats: {
       totalTrades: closedPositions.length,
       wins: closedPositions.filter(p => {
-        const pnl = p.exits.reduce((s, e) => s + e.usdcReceived, 0) - p.initialSizeUsdc;
+        const pnl = calculateTrackedPnlUsdc(p);
         return pnl > 0;
       }).length,
       dailyPnlUsdc,

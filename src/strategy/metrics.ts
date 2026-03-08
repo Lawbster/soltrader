@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { createLogger } from '../utils';
 import { Position } from '../execution/types';
+import { calculateTrackedPnlUsdc, summarizeTrackedExits } from '../execution/position-accounting';
 
 const log = createLogger('metrics');
 const DATA_DIR = path.resolve(__dirname, '../../data');
@@ -117,8 +118,9 @@ export function recordSkip(reason: string) {
 }
 
 export function recordClosedPosition(position: Position, isPaper: boolean) {
-  const totalUsdcOut = position.exits.reduce((sum, e) => sum + e.usdcReceived, 0);
-  const pnlUsdc = totalUsdcOut - position.initialSizeUsdc;
+  const exitSummary = summarizeTrackedExits(position);
+  const totalUsdcOut = exitSummary.trackedUsdcOut;
+  const pnlUsdc = calculateTrackedPnlUsdc(position);
   const pnlPct = position.initialSizeUsdc > 0
     ? (pnlUsdc / position.initialSizeUsdc) * 100
     : 0;
@@ -153,6 +155,7 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     exitType,
     holdMins: Math.round(holdTimeMinutes),
     totalTrades: tradeMetrics.length,
+    orphanedUsdcIgnored: exitSummary.orphanedUsdcOut.toFixed(4),
   });
 }
 

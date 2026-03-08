@@ -28,6 +28,10 @@
     "templatehealth": "tsx scripts/template-health.ts",
     "build-live-map": "tsx scripts/build-live-map.ts",
     "buildlivemap": "tsx scripts/build-live-map.ts",
+    "refresh-live-routes-doc": "tsx scripts/refresh-live-routes-doc.ts",
+    "refreshliveroutesdoc": "tsx scripts/refresh-live-routes-doc.ts",
+    "repair-metrics": "tsx scripts/repair-metrics-from-positions.ts",
+    "repairmetrics": "tsx scripts/repair-metrics-from-positions.ts",
     "slippage-report": "tsx scripts/slippage-report.ts",
     "slippagereport": "tsx scripts/slippage-report.ts"
   },

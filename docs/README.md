@@ -1,13 +1,17 @@
-# Docs Index
+# Docs
 
-Short, current docs for the POPCAT CRSI scalper.
+Current docs are intentionally small.
 
-## Core
-- `STRATEGY.md` - current strategy and parameters.
-- `OPS.md` - VPS setup and daily ops checks.
-- `LIVE_GATES.md` - go-live checklist.
-- `STRATEGY_PROMOTION_CHECKLIST.md` - strategy update promotion gates.
-- `REVIEW.md` - latest technical review.
+- `../strategy.md`
+  Main system reference. Live architecture, regime routing, parity model, current routes, and data layout.
 
-## Debug
-- `DEBUG.md` - current trade-capture investigation and recent changes.
+- `OPS.md`
+  Operational commands for local and VPS usage.
+
+- `RESEARCH.md`
+  Sweep, candidate, robustness, and promotion workflow.
+
+- `../CLAUDE.md`
+  Agent-oriented repo notes and command quick reference.
+
+Anything not listed above was removed because it had gone stale or duplicated newer behavior.

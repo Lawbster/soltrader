@@ -1,4 +1,5 @@
 import { rawToHumanAmount, scaleRawAmount } from '../src/execution/amounts';
+import { calculateTrackedPnlUsdc, summarizeTrackedExits } from '../src/execution/position-accounting';
 
 process.env.HELIUS_API_KEY = process.env.HELIUS_API_KEY || 'test';
 process.env.HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || 'http://localhost:8899';
@@ -113,5 +114,43 @@ describe('trade-log dedup state stays bounded', () => {
     expect(state.currentSigs.size).toBe(0);
     expect(state.previousSigs.size).toBe(0);
     expect(state.MAX_SIGS_PER_GENERATION).toBeGreaterThan(0);
+  });
+});
+
+describe('position accounting ignores orphaned exits', () => {
+  test('caps realized proceeds to tracked position size', () => {
+    const position = {
+      initialSizeUsdc: 50,
+      initialTokens: 100,
+      exits: [
+        { tokensSold: 100, usdcReceived: 47, type: 'hard_stop', sellPct: 100, price: 0.47, timestamp: 1 },
+        { tokensSold: 20, usdcReceived: 9, type: 'hard_stop', sellPct: 100, price: 0.45, timestamp: 2 },
+      ],
+    } as any;
+
+    const summary = summarizeTrackedExits(position);
+    expect(summary.trackedTokensSold).toBe(100);
+    expect(summary.trackedUsdcOut).toBe(47);
+    expect(summary.orphanedTokensSold).toBe(20);
+    expect(summary.orphanedUsdcOut).toBe(9);
+    expect(calculateTrackedPnlUsdc(position)).toBe(-3);
+  });
+
+  test('attributes partial exit proceeds proportionally when oversold', () => {
+    const position = {
+      initialSizeUsdc: 50,
+      initialTokens: 100,
+      exits: [
+        { tokensSold: 60, usdcReceived: 30, type: 'tp1', sellPct: 60, price: 0.5, timestamp: 1 },
+        { tokensSold: 60, usdcReceived: 36, type: 'tp1', sellPct: 100, price: 0.6, timestamp: 2 },
+      ],
+    } as any;
+
+    const summary = summarizeTrackedExits(position);
+    expect(summary.trackedTokensSold).toBe(100);
+    expect(summary.trackedUsdcOut).toBeCloseTo(54);
+    expect(summary.orphanedTokensSold).toBe(20);
+    expect(summary.orphanedUsdcOut).toBeCloseTo(12);
+    expect(calculateTrackedPnlUsdc(position)).toBeCloseTo(4);
   });
 });

@@ -1,100 +1,92 @@
-# Ops — VPS Setup & Daily Checks
+# Operations
 
-## 1) VPS Setup (Hetzner)
-High‑level steps for paper trading on Ubuntu 22.04/24.04.
+## Local Commands
 
-1. Create server and add SSH key.
-2. SSH in as root:
-   - `ssh root@<SERVER_IP>`
-3. Basic hardening:
-   - `apt update && apt upgrade -y`
-   - `apt install -y ufw fail2ban git curl ca-certificates`
-   - `ufw default deny incoming`
-   - `ufw default allow outgoing`
-   - `ufw allow 22/tcp`
-   - `ufw enable`
-   - `systemctl enable --now fail2ban`
-4. Create deploy user:
-   - `adduser deploy`
-   - `usermod -aG sudo deploy`
-   - copy SSH keys to `/home/deploy/.ssh/authorized_keys`
-
-## 2) Install Node + App
-```
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs build-essential
-node -v
-npm -v
+```bash
+npm start
+npm run paper
+npx tsc --noEmit
+npm test
 ```
 
-```
-sudo mkdir -p /opt/sol-trader
-sudo chown -R deploy:deploy /opt/sol-trader
-git clone <YOUR_REPO_URL> /opt/sol-trader
-cd /opt/sol-trader
-npm install
-npm run build
+## Research Commands
+
+```bash
+npm run sweep -- --cost empirical --from 2026-02-18 --exit-parity both
+npm run sweep -- --timeframe 5 --cost empirical --from 2026-02-18 --exit-parity both
+npm run sweep -- --timeframe 15 --cost empirical --from 2026-02-18 --exit-parity both
+
+npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-1min.csv --top 2000 --top-per-token 300
+npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-5min.csv --top 2000 --top-per-token 300
+npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-15min.csv --top 2000 --top-per-token 300
+
+npm run sweep-robustness -- --from 2026-02-18 --window-days 1,2 --step-days 1 --timeframes 1,5,15 --cost empirical --exit-parity both --rank-exit-parity indicator --top 2000 --top-per-token 300
+npm run robustness-report
 ```
 
-## 3) Configure `.env`
-```
-cp .env.example .env
-nano .env
-```
-Required:
-- `PAPER_TRADING=true`
-- `UNIVERSE_MODE=watchlist`
-- `HELIUS_*` values
-- `DASHBOARD_PORT=3847`
+## VPS Basics
 
-## 4) Run with systemd
-```
-sudo tee /etc/systemd/system/sol-trader.service > /dev/null <<'EOF'
-[Unit]
-Description=Sol-Trader Bot
-After=network-online.target
-Wants=network-online.target
+Check service:
 
-[Service]
-Type=simple
-User=deploy
-WorkingDirectory=/opt/sol-trader
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=5
-Environment=NODE_ENV=production
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-```
-sudo systemctl daemon-reload
-sudo systemctl enable --now sol-trader
+```bash
 sudo systemctl status sol-trader --no-pager
+systemctl show sol-trader -p ActiveEnterTimestamp -p ActiveState
 ```
 
-## 5) Dashboard Access (SSH Tunnel)
-```
-ssh -L 3847:127.0.0.1:3847 deploy@<SERVER_IP>
-```
-Open `http://localhost:3847`
+Restart after deploy:
 
-## 6) Daily Checks
-```
-systemctl is-active sol-trader
-curl http://127.0.0.1:3847/api/status
-curl http://127.0.0.1:3847/api/metrics
-journalctl -u sol-trader -n 50 --no-pager
-```
-
-## 7) Update Workflow
-```
-cd /opt/sol-trader
-git pull
-npm install
-npm run build
+```bash
 sudo systemctl restart sol-trader
-journalctl -u sol-trader -n 50 --no-pager
 ```
+
+Recent logs:
+
+```bash
+sudo journalctl -u sol-trader -n 200 --no-pager
+sudo journalctl -u sol-trader --since "1 hour ago"
+```
+
+## Dashboard / Runtime Checks
+
+Metrics file:
+
+```bash
+cat data/metrics.json
+```
+
+Latest signal file:
+
+```bash
+ls data/signals
+```
+
+Latest trade log file:
+
+```bash
+ls data/data/trades
+```
+
+Open position history file:
+
+```bash
+ls data/positions-*.json
+```
+
+## Data Sync
+
+Manual pull from VPS into local repo root:
+
+```bash
+scp -r deploy@46.225.80.0:/opt/sol-trader/data/ .
+```
+
+PowerShell helper scripts:
+- `scripts/pull-vps-data.ps1`
+- `scripts/register-daily-data-pull-task.ps1`
+
+## Safety Notes
+
+- Stop the bot before running forced close scripts.
+- Treat `config/live-strategy-map.v1.json` as production state.
+- Use `SHADOW_TEMPLATE=1` when validating route logic without opening new trades.
+- After config changes, always verify the route snapshot on the dashboard or in logs.
