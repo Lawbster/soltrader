@@ -2,12 +2,19 @@ import fs from 'fs';
 import path from 'path';
 import type { Position, PositionExit } from '../src/execution/types';
 import { allocateTrackedExitSlices } from '../src/execution/position-accounting';
+import { calculateTrackedPnlUsdc } from '../src/execution/position-accounting';
 
 type PositionFile = {
   savedAt?: string;
   open?: Position[];
   closed?: Position[];
-  stats?: unknown;
+  stats?: {
+    totalTrades?: number;
+    wins?: number;
+    dailyPnlUsdc?: number;
+    consecutiveLosses?: number;
+    lastLossTime?: number;
+  };
 };
 
 type OrphanedSlice = {
@@ -109,6 +116,39 @@ function buildRecoveredPosition(position: Position, match: OrphanedSlice): Posit
   };
 }
 
+function getPositionExitTime(position: Position): number {
+  const lastExit = position.exits[position.exits.length - 1];
+  return lastExit?.timestamp ?? position.entryTime;
+}
+
+function recomputeFileStats(file: PositionFile) {
+  const closed = (file.closed ?? []).slice().sort((a, b) => getPositionExitTime(a) - getPositionExitTime(b));
+  const totalTrades = closed.length;
+  const wins = closed.filter(position => calculateTrackedPnlUsdc(position) > 0).length;
+  const dailyPnlUsdc = closed.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
+
+  let consecutiveLosses = 0;
+  let lastLossTime = 0;
+  for (const position of closed) {
+    const pnl = calculateTrackedPnlUsdc(position);
+    const exitTime = getPositionExitTime(position);
+    if (pnl < 0) {
+      consecutiveLosses += 1;
+      lastLossTime = exitTime;
+    } else {
+      consecutiveLosses = 0;
+    }
+  }
+
+  file.stats = {
+    totalTrades,
+    wins,
+    dailyPnlUsdc,
+    consecutiveLosses,
+    lastLossTime,
+  };
+}
+
 function main() {
   const files = loadPositionFiles();
   const { latestOpen, latestClosed } = toLatestPositionMaps(files);
@@ -164,6 +204,7 @@ function main() {
 
   if (!DRY_RUN) {
     for (const file of files) {
+      recomputeFileStats(file.json);
       fs.writeFileSync(file.fullPath, JSON.stringify(file.json, null, 2));
     }
   }

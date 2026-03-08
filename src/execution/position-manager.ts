@@ -99,6 +99,7 @@ const lpHistory = new Map<string, { timestamp: number; liquidityUsd: number }[]>
 
 // Token decimals cache for raw amount conversions
 const decimalsCache = new Map<string, number>();
+const mintOperationLocks = new Map<string, Promise<void>>();
 
 // Capital reservation: USDC committed to in-flight buys
 let reservedUsdc = 0;
@@ -109,6 +110,38 @@ const inFlightEntriesByMint = new Set<string>();
 // Transient impact-check failure tracking
 let consecutiveImpactTransientFails = 0;
 const IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD = 3;
+
+async function withMintOperationLock<T>(
+  mint: string,
+  operation: 'entry' | 'exit',
+  fn: () => Promise<T>,
+): Promise<T> {
+  const previous = mintOperationLocks.get(mint) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chain = previous.catch(() => undefined).then(() => current);
+  mintOperationLocks.set(mint, chain);
+
+  const waitStartedAt = Date.now();
+  await previous.catch(() => undefined);
+  const waitedMs = Date.now() - waitStartedAt;
+  if (waitedMs > 0) {
+    log.debug('Mint operation lock waited', { mint, operation, waitedMs });
+  }
+
+  try {
+    return await fn();
+  } finally {
+    release();
+    queueMicrotask(() => {
+      if (mintOperationLocks.get(mint) === chain) {
+        mintOperationLocks.delete(mint);
+      }
+    });
+  }
+}
 
 function stripNoopExits(position: Position): number {
   const before = position.exits?.length ?? 0;
@@ -343,82 +376,85 @@ export async function openPosition(
     }
   }
 
-  // In-flight lock: prevent race-condition duplicate entries for same mint
-  if (inFlightEntriesByMint.has(mint)) {
-    log.warn('Entry already in flight for mint, skipping', { mint });
-    recordSkip('entry_in_flight');
-    return null;
-  }
+  return withMintOperationLock(mint, 'entry', async () => {
+    // In-flight lock: prevent duplicate buy execution for the same mint while inside
+    // the mint operation lock. Sequential same-mint entries are still allowed.
+    if (inFlightEntriesByMint.has(mint)) {
+      log.warn('Entry already in flight for mint, skipping', { mint });
+      recordSkip('entry_in_flight');
+      return null;
+    }
 
-  log.info('Opening position', { mint, sizeUsdc: sizeUsdc.toFixed(2) });
+    log.info('Opening position', { mint, sizeUsdc: sizeUsdc.toFixed(2) });
 
-  inFlightEntriesByMint.add(mint);
-  reservedUsdc += sizeUsdc;
-  const buyStart = Date.now();
-  let result!: SwapResult;
-  try {
-    result = await executeBuy(mint, sizeUsdc, slippageBps);
-  } finally {
-    inFlightEntriesByMint.delete(mint);
-    reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
-  }
+    inFlightEntriesByMint.add(mint);
+    reservedUsdc += sizeUsdc;
+    const buyStart = Date.now();
+    let result!: SwapResult;
+    try {
+      result = await executeBuy(mint, sizeUsdc, slippageBps);
+    } finally {
+      inFlightEntriesByMint.delete(mint);
+      reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
+    }
 
-  recordExecutionAttempt(result.success);
-  logExecution({
-    mint,
-    side: 'buy',
-    sizeUsdc: result.usdcAmount || sizeUsdc,
-    slippageBps,
-    quotedImpactPct: result.priceImpactPct || 0,
-    result: result.success ? 'success' : 'fail',
-    error: result.error || '',
-    latencyMs: Date.now() - buyStart,
+    recordExecutionAttempt(result.success);
+    logExecution({
+      mint,
+      side: 'buy',
+      sizeUsdc: result.usdcAmount || sizeUsdc,
+      slippageBps,
+      quotedImpactPct: result.priceImpactPct || 0,
+      result: result.success ? 'success' : 'fail',
+      error: result.error || '',
+      latencyMs: Date.now() - buyStart,
+    });
+    if (!result.success) {
+      log.error('Buy failed', { mint, error: result.error });
+      return null;
+    }
+
+    // Invalidate balance cache so next check reflects the spend
+    walletBalancesCache = null;
+
+    // entryPrice = USDC spent / tokens received (USDC per token)
+    const entryPrice = result.tokenAmount > 0 ? result.usdcAmount / result.tokenAmount : 0;
+
+    const position: Position = {
+      id: `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      mint,
+      entrySignature: result.signature || '',
+      entryPrice,
+      entryTime: Date.now(),
+      initialSizeUsdc: result.usdcAmount,
+      initialTokens: result.tokenAmount,
+      remainingUsdc: result.usdcAmount,
+      remainingTokens: result.tokenAmount,
+      remainingPct: 100,
+      currentPrice: entryPrice,
+      currentPnlPct: 0,
+      peakPnlPct: 0,
+      tp1Hit: false,
+      tp2Hit: false,
+      stopMovedToBreakeven: false,
+      exits: [],
+      status: 'open',
+      strategyPlan,
+    };
+
+    openPositions.set(position.id, position);
+    log.info('Position opened', {
+      id: position.id,
+      mint,
+      usdcSpent: result.usdcAmount.toFixed(2),
+      tokensReceived: result.tokenAmount,
+      entryPrice: entryPrice.toExponential(4),
+      fee: result.fee.toFixed(6),
+      latencyMs: result.latencyMs,
+    });
+
+    return position;
   });
-  if (!result.success) {
-    log.error('Buy failed', { mint, error: result.error });
-    return null;
-  }
-
-  // Invalidate balance cache so next check reflects the spend
-  walletBalancesCache = null;
-
-  // entryPrice = USDC spent / tokens received (USDC per token)
-  const entryPrice = result.tokenAmount > 0 ? result.usdcAmount / result.tokenAmount : 0;
-
-  const position: Position = {
-    id: `pos-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    mint,
-    entrySignature: result.signature || '',
-    entryPrice,
-    entryTime: Date.now(),
-    initialSizeUsdc: result.usdcAmount,
-    initialTokens: result.tokenAmount,
-    remainingUsdc: result.usdcAmount,
-    remainingTokens: result.tokenAmount,
-    remainingPct: 100,
-    currentPrice: entryPrice,
-    currentPnlPct: 0,
-    peakPnlPct: 0,
-    tp1Hit: false,
-    tp2Hit: false,
-    stopMovedToBreakeven: false,
-    exits: [],
-    status: 'open',
-    strategyPlan,
-  };
-
-  openPositions.set(position.id, position);
-  log.info('Position opened', {
-    id: position.id,
-    mint,
-    usdcSpent: result.usdcAmount.toFixed(2),
-    tokensReceived: result.tokenAmount,
-    entryPrice: entryPrice.toExponential(4),
-    fee: result.fee.toFixed(6),
-    latencyMs: result.latencyMs,
-  });
-
-  return position;
 }
 
 let positionUpdateRunning = false;
@@ -778,93 +814,116 @@ async function executeExit(
   sellPct: number,
   reason: string
 ) {
-  const cfg = loadStrategyConfig();
+  return withMintOperationLock(position.mint, 'exit', async () => {
+    const cfg = loadStrategyConfig();
 
-  const fractionToSell = sellPct / 100;
-  const tokensToSell = position.remainingTokens * fractionToSell;
-  if (tokensToSell <= 0) return;
+    const fractionToSell = sellPct / 100;
+    const tokensToSell = position.remainingTokens * fractionToSell;
+    if (tokensToSell <= 0) return;
 
-  // Convert human-readable token amount to raw for Jupiter
-  const decimals = await getDecimals(position.mint);
-  let rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
-  const slippageBps = config.trading.defaultSlippageBps;
-  let orphanedRawBeforeSell = 0n;
+    const decimals = await getDecimals(position.mint);
+    const dustToleranceTokens = 1 / Math.pow(10, decimals);
+    let rawTokensToSell = Math.floor(tokensToSell * Math.pow(10, decimals)).toString();
+    const slippageBps = config.trading.defaultSlippageBps;
+    let orphanedRawBeforeSell = 0n;
+    const siblingOpenCount = getOpenPositionsForMintInternal(position.mint)
+      .filter(p => p.id !== position.id)
+      .length;
+    const hasSiblingOpenPositions = siblingOpenCount > 0;
 
-  // For full exits, reconcile with on-chain balance to handle fee/rounding dust.
-  // IMPORTANT: cap at the position's tracked amount — never sell MORE than we own
-  // according to the position, which would sell orphaned tokens from prior sessions.
-  if (sellPct >= 100) {
-    const onChainRaw = await getOnChainTokenBalanceRaw(position.mint);
-    if (onChainRaw && onChainRaw !== '0') {
-      const onChainBigInt = rawToBigInt(onChainRaw);
-      const positionBigInt = rawToBigInt(rawTokensToSell);
-      orphanedRawBeforeSell = onChainBigInt > positionBigInt
-        ? (onChainBigInt - positionBigInt)
-        : 0n;
-      // Use on-chain if LESS (fee dust trimming). Never use if MORE (orphaned tokens).
-      const cappedRaw = onChainBigInt < positionBigInt ? onChainRaw : rawTokensToSell;
-      log.info('Full exit: on-chain balance check', {
-        mint: position.mint,
-        positionRaw: rawTokensToSell,
-        onChainRaw,
-        cappedRaw,
-        orphanedRaw: orphanedRawBeforeSell.toString(),
-        feeAdjustedRaw: onChainBigInt < positionBigInt
-          ? (positionBigInt - onChainBigInt).toString()
-          : '0',
-      });
-      rawTokensToSell = cappedRaw;
+    if (sellPct >= 100) {
+      if (hasSiblingOpenPositions) {
+        log.info('Full exit: skipping on-chain reconciliation due to sibling positions', {
+          mint: position.mint,
+          id: position.id,
+          siblingOpenCount,
+          trackedRaw: rawTokensToSell,
+        });
+      } else {
+        const onChainRaw = await getOnChainTokenBalanceRaw(position.mint);
+        if (onChainRaw && onChainRaw !== '0') {
+          const onChainBigInt = rawToBigInt(onChainRaw);
+          const positionBigInt = rawToBigInt(rawTokensToSell);
+          orphanedRawBeforeSell = onChainBigInt > positionBigInt
+            ? (onChainBigInt - positionBigInt)
+            : 0n;
+          const cappedRaw = onChainBigInt < positionBigInt ? onChainRaw : rawTokensToSell;
+          log.info('Full exit: on-chain balance check', {
+            mint: position.mint,
+            positionRaw: rawTokensToSell,
+            onChainRaw,
+            cappedRaw,
+            orphanedRaw: orphanedRawBeforeSell.toString(),
+            feeAdjustedRaw: onChainBigInt < positionBigInt
+              ? (positionBigInt - onChainBigInt).toString()
+              : '0',
+          });
+          rawTokensToSell = cappedRaw;
+        }
+      }
     }
-  }
 
-  // Guard: after floor() conversion, raw amount may be zero for dust positions
-  if (rawToBigInt(rawTokensToSell) <= 0n) {
-    log.warn('Exit skipped: raw token amount is zero after floor conversion', {
+    if (rawToBigInt(rawTokensToSell) <= 0n) {
+      log.warn('Exit skipped: raw token amount is zero after floor conversion', {
+        mint: position.mint,
+        tokensToSell,
+        rawTokensToSell,
+      });
+      recordSkip('raw_amount_zero');
+      return;
+    }
+
+    log.info('Executing exit', {
       mint: position.mint,
-      tokensToSell,
-      rawTokensToSell,
+      type: exitType,
+      sellPct,
+      tokensHuman: tokensToSell,
+      tokensRaw: rawTokensToSell,
+      siblingOpenCount,
     });
-    recordSkip('raw_amount_zero');
-    return;
-  }
 
-  log.info('Executing exit', {
-    mint: position.mint,
-    type: exitType,
-    sellPct,
-    tokensHuman: tokensToSell,
-    tokensRaw: rawTokensToSell,
-  });
+    const sellStart = Date.now();
+    const result = await executeSell(position.mint, rawTokensToSell, slippageBps);
+    recordExecutionAttempt(result.success);
+    logExecution({
+      mint: position.mint,
+      side: 'sell',
+      sizeUsdc: result.usdcAmount || 0,
+      slippageBps,
+      quotedImpactPct: result.priceImpactPct || 0,
+      result: result.success ? 'success' : 'fail',
+      error: result.error || '',
+      latencyMs: Date.now() - sellStart,
+    });
 
-  const sellStart = Date.now();
-  const result = await executeSell(position.mint, rawTokensToSell, slippageBps);
-  recordExecutionAttempt(result.success);
-  logExecution({
-    mint: position.mint,
-    side: 'sell',
-    sizeUsdc: result.usdcAmount || 0,
-    slippageBps,
-    quotedImpactPct: result.priceImpactPct || 0,
-    result: result.success ? 'success' : 'fail',
-    error: result.error || '',
-    latencyMs: Date.now() - sellStart,
-  });
+    const exit: PositionExit = {
+      type: exitType,
+      sellPct,
+      tokensSold: result.success ? result.tokenAmount : 0,
+      usdcReceived: result.success ? result.usdcAmount : 0,
+      price: position.currentPrice,
+      signature: result.signature,
+      timestamp: Date.now(),
+    };
 
-  const exit: PositionExit = {
-    type: exitType,
-    sellPct,
-    tokensSold: result.success ? result.tokenAmount : 0,
-    usdcReceived: result.success ? result.usdcAmount : 0,
-    price: position.currentPrice,
-    signature: result.signature,
-    timestamp: Date.now(),
-  };
+    let verifiedFlat = false;
 
-  let verifiedFlat = false;
+    if (!result.success) {
+      log.error('Exit execution failed', {
+        mint: position.mint,
+        type: exitType,
+        sellPct,
+        error: result.error,
+      });
+      return;
+    }
 
-  if (result.success) {
     position.exits.push(exit);
-    position.remainingTokens = Math.max(0, position.remainingTokens - result.tokenAmount);
+    const soldRaw = rawToBigInt(result.tokenAmountRaw);
+    const actualSoldTokens = soldRaw > 0n
+      ? rawToHumanAmount(soldRaw, decimals)
+      : result.tokenAmount;
+    position.remainingTokens = Math.max(0, position.remainingTokens - actualSoldTokens);
     position.remainingUsdc = position.remainingTokens * position.currentPrice;
     position.remainingPct = position.initialTokens > 0
       ? (position.remainingTokens / position.initialTokens) * 100
@@ -882,12 +941,27 @@ async function executeExit(
       mint: position.mint,
       type: exitType,
       usdcReceived: result.usdcAmount.toFixed(2),
-      remainingPct: position.remainingPct.toFixed(0),
+      remainingPct: position.remainingPct.toFixed(4),
+      actualSoldTokens,
     });
 
     if (sellPct >= 100) {
       if (config.trading.paperTrading) {
-        verifiedFlat = position.remainingTokens <= 0;
+        verifiedFlat = position.remainingTokens <= dustToleranceTokens;
+      } else if (hasSiblingOpenPositions) {
+        verifiedFlat = position.remainingTokens <= dustToleranceTokens;
+        if (verifiedFlat) {
+          position.remainingTokens = 0;
+          position.remainingUsdc = 0;
+          position.remainingPct = 0;
+        }
+        log.info('Full exit reconciliation skipped for sibling positions', {
+          mint: position.mint,
+          id: position.id,
+          siblingOpenCount,
+          remainingTokens: position.remainingTokens,
+          verifiedFlat,
+        });
       } else {
         const onChainAfterRaw = await getOnChainTokenBalanceRaw(position.mint);
         if (onChainAfterRaw !== null) {
@@ -928,20 +1002,11 @@ async function executeExit(
         }
       }
     }
-  } else {
-    log.error('Exit execution failed', {
-      mint: position.mint,
-      type: exitType,
-      sellPct,
-      error: result.error,
-    });
-    // Do NOT close position on failed exit — position stays open for retry
-    return;
-  }
 
-  if (position.remainingTokens <= 0 || verifiedFlat) {
-    closePosition(position, reason);
-  }
+    if (position.remainingTokens <= 0 || verifiedFlat) {
+      closePosition(position, reason);
+    }
+  });
 }
 
 function closePosition(position: Position, reason: string) {
