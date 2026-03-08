@@ -138,10 +138,9 @@ Generated from `config/live-strategy-map.v1.json` by `npm run refresh-live-route
 | Token | Regime | Route | Template | TF | Exit | Stops | Max Size |
 |---|---|---|---|---:|---|---|---|
 | PIPPIN | uptrend | `pippin-5m-connors-up-core` | `connors-sma50-pullback` | 5m | price | `SL -5 / TP 4` | 25% equity |
-| PIPPIN | sideways | `pippin-1m-vwap-rsi-side-core` | `vwap-rsi-range-revert` | 1m | price | `SL -2 / TP 2` | 25% equity |
-| PIPPIN | downtrend | `pippin-15m-rsi2-down-core` | `rsi2-micro-range` | 15m | price | `SL -2 / TP 3` | 25% equity |
+| PIPPIN | sideways | `pippin-1m-crsi-session-side-core` | `crsi-session-gate` | 1m | indicator | `SL -3 / TP 6` | 25% equity |
+| PIPPIN | downtrend | `pippin-15m-rsi-session-down-core` | `rsi-session-gate` | 15m | indicator | `SL -5 / TP 3` | 25% equity |
 | POPCAT | downtrend | `popcat-15m-rsi-atr-down-probe` | `rsi-atr-protect` | 15m | indicator | `SL 1.25 ATR / TP 3 ATR` | 8% equity |
-| PUMP | downtrend | `pump-5m-rsi-session-down-core` | `rsi-session-gate` | 5m | indicator | `SL -3 / TP 1` | 15% equity |
 
 Disabled at the moment:
 - BONK

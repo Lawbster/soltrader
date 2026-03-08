@@ -39,25 +39,26 @@
           "routes": [
             {
               "enabled": true,
-              "routeId": "pippin-1m-vwap-rsi-side-core",
-              "templateId": "vwap-rsi-range-revert",
+              "routeId": "pippin-1m-crsi-session-side-core",
+              "templateId": "crsi-session-gate",
               "timeframeMinutes": 1,
-              "priority": 390,
+              "priority": 400,
               "protection": {
                 "profitLockArmPct": 1,
-                "profitLockPct": 0.2,
+                "profitLockPct": 0.25,
                 "trailArmPct": 2,
                 "trailGapPct": 1,
                 "staleMaxHoldMinutes": 240,
                 "staleMinPnlPct": 0
               },
               "params": {
-                "adxMax": 20,
-                "rsiEntry": 30
+                "entry": 20,
+                "exit": 95,
+                "session": 0
               },
-              "sl": -2,
-              "tp": 2,
-              "exitMode": "price"
+              "sl": -3,
+              "tp": 6,
+              "exitMode": "indicator"
             }
           ]
         },
@@ -66,10 +67,10 @@
           "routes": [
             {
               "enabled": true,
-              "routeId": "pippin-15m-rsi2-down-core",
-              "templateId": "rsi2-micro-range",
+              "routeId": "pippin-15m-rsi-session-down-core",
+              "templateId": "rsi-session-gate",
               "timeframeMinutes": 15,
-              "priority": 300,
+              "priority": 310,
               "protection": {
                 "profitLockArmPct": 1,
                 "profitLockPct": 0.2,
@@ -79,13 +80,13 @@
                 "staleMinPnlPct": 0
               },
               "params": {
-                "rsi2Entry": 15,
-                "rsi2Exit": 90,
-                "adxMax": 20
+                "entry": 20,
+                "exit": 70,
+                "session": 16
               },
-              "sl": -2,
+              "sl": -5,
               "tp": 3,
-              "exitMode": "price"
+              "exitMode": "indicator"
             }
           ]
         }
@@ -125,10 +126,10 @@
           "exitMode": "indicator"
         },
         "downtrend": {
-          "enabled": true,
+          "enabled": false,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pump-5m-rsi-session-down-core",
               "templateId": "rsi-session-gate",
               "timeframeMinutes": 5,
