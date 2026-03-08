@@ -7,18 +7,24 @@ export interface TrackedExitSummary {
   orphanedUsdcOut: number;
 }
 
+export interface ExitAllocation {
+  exitIndex: number;
+  trackedTokens: number;
+  trackedUsdc: number;
+  orphanedTokens: number;
+  orphanedUsdc: number;
+}
+
 function finiteOrZero(value: number | undefined): number {
   return Number.isFinite(value) ? (value as number) : 0;
 }
 
-export function summarizeTrackedExits(position: Position): TrackedExitSummary {
+export function allocateTrackedExitSlices(position: Position): ExitAllocation[] {
   let trackedTokensRemaining = Math.max(0, finiteOrZero(position.initialTokens));
-  let trackedTokensSold = 0;
-  let trackedUsdcOut = 0;
-  let orphanedTokensSold = 0;
-  let orphanedUsdcOut = 0;
+  const allocations: ExitAllocation[] = [];
 
-  for (const exit of position.exits ?? []) {
+  for (let i = 0; i < (position.exits ?? []).length; i++) {
+    const exit = position.exits[i]!;
     const exitTokens = Math.max(0, finiteOrZero(exit.tokensSold));
     const exitUsdc = finiteOrZero(exit.usdcReceived);
     if (exitTokens <= 0 && exitUsdc <= 0) continue;
@@ -32,10 +38,29 @@ export function summarizeTrackedExits(position: Position): TrackedExitSummary {
     const orphanedUsdc = Math.max(0, exitUsdc - trackedUsdc);
 
     trackedTokensRemaining = Math.max(0, trackedTokensRemaining - trackedTokens);
-    trackedTokensSold += trackedTokens;
-    trackedUsdcOut += trackedUsdc;
-    orphanedTokensSold += orphanedTokens;
-    orphanedUsdcOut += orphanedUsdc;
+    allocations.push({
+      exitIndex: i,
+      trackedTokens,
+      trackedUsdc,
+      orphanedTokens,
+      orphanedUsdc,
+    });
+  }
+
+  return allocations;
+}
+
+export function summarizeTrackedExits(position: Position): TrackedExitSummary {
+  let trackedTokensSold = 0;
+  let trackedUsdcOut = 0;
+  let orphanedTokensSold = 0;
+  let orphanedUsdcOut = 0;
+
+  for (const allocation of allocateTrackedExitSlices(position)) {
+    trackedTokensSold += allocation.trackedTokens;
+    trackedUsdcOut += allocation.trackedUsdc;
+    orphanedTokensSold += allocation.orphanedTokens;
+    orphanedUsdcOut += allocation.orphanedUsdc;
   }
 
   return {

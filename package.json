@@ -30,6 +30,8 @@
     "buildlivemap": "tsx scripts/build-live-map.ts",
     "refresh-live-routes-doc": "tsx scripts/refresh-live-routes-doc.ts",
     "refreshliveroutesdoc": "tsx scripts/refresh-live-routes-doc.ts",
+    "repair-positions": "tsx scripts/repair-open-positions-from-orphaned-exits.ts",
+    "repairpositions": "tsx scripts/repair-open-positions-from-orphaned-exits.ts",
     "repair-metrics": "tsx scripts/repair-metrics-from-positions.ts",
     "repairmetrics": "tsx scripts/repair-metrics-from-positions.ts",
     "slippage-report": "tsx scripts/slippage-report.ts",

@@ -110,6 +110,16 @@ const inFlightEntriesByMint = new Set<string>();
 let consecutiveImpactTransientFails = 0;
 const IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD = 3;
 
+function stripNoopExits(position: Position): number {
+  const before = position.exits?.length ?? 0;
+  if (!Array.isArray(position.exits) || before === 0) return 0;
+  position.exits = position.exits.filter(exit =>
+    (Number.isFinite(exit.tokensSold) && exit.tokensSold > 0) ||
+    (Number.isFinite(exit.usdcReceived) && exit.usdcReceived > 0)
+  );
+  return before - position.exits.length;
+}
+
 // Read actual on-chain SPL token balance (raw lamport amount) for a given mint
 async function getOnChainTokenBalanceRaw(mint: string): Promise<string | null> {
   try {
@@ -850,11 +860,10 @@ async function executeExit(
     timestamp: Date.now(),
   };
 
-  position.exits.push(exit);
-
   let verifiedFlat = false;
 
   if (result.success) {
+    position.exits.push(exit);
     position.remainingTokens = Math.max(0, position.remainingTokens - result.tokenAmount);
     position.remainingUsdc = position.remainingTokens * position.currentPrice;
     position.remainingPct = position.initialTokens > 0
@@ -1049,7 +1058,9 @@ export function loadPositionHistory() {
   const isFromToday = todayData !== null;
 
   if (isFromToday) {
+    let strippedNoopExits = 0;
     for (const p of todayData!.open) {
+      strippedNoopExits += stripNoopExits(p);
       openPositions.set(p.id, p);
     }
     if (todayData!.stats) {
@@ -1059,6 +1070,7 @@ export function loadPositionHistory() {
     }
     log.info('Position history loaded (today)', {
       openRestored: openPositions.size,
+      strippedNoopExits,
       dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
       consecutiveLosses,
     });
@@ -1068,7 +1080,9 @@ export function loadPositionHistory() {
   // Fall back to yesterday's file — restore open positions only, reset daily stats
   const yesterdayData = tryLoadFile(yesterday);
   if (yesterdayData && (yesterdayData.open?.length ?? 0) > 0) {
+    let strippedNoopExits = 0;
     for (const p of yesterdayData.open) {
+      strippedNoopExits += stripNoopExits(p);
       openPositions.set(p.id, p);
     }
     // Do NOT restore yesterday's dailyPnlUsdc/consecutiveLosses — start fresh for today
@@ -1077,6 +1091,7 @@ export function loadPositionHistory() {
     lastLossTime = 0;
     log.warn('Position history loaded from yesterday (today file absent/empty)', {
       openRestored: openPositions.size,
+      strippedNoopExits,
       date: yesterday,
     });
   }

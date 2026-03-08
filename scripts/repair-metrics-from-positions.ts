@@ -32,6 +32,7 @@ const ROOT = path.resolve(__dirname, '..');
 const DATA_DIR = path.join(ROOT, 'data');
 const METRICS_PATH = path.join(DATA_DIR, 'metrics.json');
 const DRY_RUN = process.argv.includes('--dry-run');
+const ADD_MISSING = process.argv.includes('--add-missing');
 
 function loadLatestClosedPositions(): Map<string, Position> {
   const files = fs.readdirSync(DATA_DIR)
@@ -69,6 +70,30 @@ function rebuildTradeMetric(metric: TradeMetric, position: Position): TradeMetri
     pnlUsdc,
     pnlPct,
     exitType: position.closeReason || lastExit?.type || metric.exitType,
+  };
+}
+
+function buildTradeMetricFromPosition(position: Position, isPaper: boolean): TradeMetric {
+  const exitSummary = summarizeTrackedExits(position);
+  const pnlUsdc = calculateTrackedPnlUsdc(position);
+  const pnlPct = position.initialSizeUsdc > 0
+    ? (pnlUsdc / position.initialSizeUsdc) * 100
+    : 0;
+  const lastExit = position.exits[position.exits.length - 1];
+  const exitTime = lastExit?.timestamp ?? position.entryTime;
+
+  return {
+    id: position.id,
+    mint: position.mint,
+    entryTime: position.entryTime,
+    exitTime,
+    holdTimeMinutes: (exitTime - position.entryTime) / 60_000,
+    entryUsdc: position.initialSizeUsdc,
+    exitUsdc: exitSummary.trackedUsdcOut,
+    pnlUsdc,
+    pnlPct,
+    exitType: position.closeReason || lastExit?.type || 'unknown',
+    isPaper,
   };
 }
 
@@ -197,8 +222,12 @@ function main() {
   let matched = 0;
   let updated = 0;
   let orphanedRepairs = 0;
+  let addedTrades = 0;
 
-  const repairedTrades = trades.map((trade) => {
+  const metricsStartedAt = metrics.startedAt ?? 0;
+  const repairedTrades = trades
+    .filter(trade => trade.exitTime >= metricsStartedAt)
+    .map((trade) => {
     const position = positionsById.get(trade.id);
     if (!position) return trade;
     matched++;
@@ -215,6 +244,19 @@ function main() {
     return rebuilt;
   });
 
+  const knownTradeIds = new Set(repairedTrades.map(trade => trade.id));
+  if (ADD_MISSING) {
+    for (const position of positionsById.values()) {
+      if (knownTradeIds.has(position.id)) continue;
+      if ((position.status ?? 'open') !== 'closed') continue;
+      const lastExit = position.exits[position.exits.length - 1];
+      const exitTime = lastExit?.timestamp ?? position.entryTime;
+      if (exitTime < metricsStartedAt) continue;
+      repairedTrades.push(buildTradeMetricFromPosition(position, false));
+      addedTrades++;
+    }
+  }
+
   const out: MetricsFile = {
     ...metrics,
     savedAt: new Date().toISOString(),
@@ -229,9 +271,11 @@ function main() {
   console.log(JSON.stringify({
     metricsPath: METRICS_PATH,
     dryRun: DRY_RUN,
+    addMissing: ADD_MISSING,
     totalTrades: trades.length,
     matchedTrades: matched,
     updatedTrades: updated,
+    addedTrades,
     orphanedRepairs,
   }, null, 2));
 }

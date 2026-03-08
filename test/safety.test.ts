@@ -1,5 +1,5 @@
 import { rawToHumanAmount, scaleRawAmount } from '../src/execution/amounts';
-import { calculateTrackedPnlUsdc, summarizeTrackedExits } from '../src/execution/position-accounting';
+import { allocateTrackedExitSlices, calculateTrackedPnlUsdc, summarizeTrackedExits } from '../src/execution/position-accounting';
 
 process.env.HELIUS_API_KEY = process.env.HELIUS_API_KEY || 'test';
 process.env.HELIUS_RPC_URL = process.env.HELIUS_RPC_URL || 'http://localhost:8899';
@@ -152,5 +152,33 @@ describe('position accounting ignores orphaned exits', () => {
     expect(summary.orphanedTokensSold).toBe(20);
     expect(summary.orphanedUsdcOut).toBeCloseTo(12);
     expect(calculateTrackedPnlUsdc(position)).toBeCloseTo(4);
+  });
+
+  test('allocates orphaned exit slices explicitly', () => {
+    const position = {
+      initialSizeUsdc: 50,
+      initialTokens: 100,
+      exits: [
+        { tokensSold: 100, usdcReceived: 47, type: 'hard_stop', sellPct: 100, price: 0.47, timestamp: 1 },
+        { tokensSold: 20, usdcReceived: 9, type: 'hard_stop', sellPct: 100, price: 0.45, timestamp: 2 },
+      ],
+    } as any;
+
+    const allocations = allocateTrackedExitSlices(position);
+    expect(allocations).toHaveLength(2);
+    expect(allocations[0]).toMatchObject({
+      exitIndex: 0,
+      trackedTokens: 100,
+      trackedUsdc: 47,
+      orphanedTokens: 0,
+      orphanedUsdc: 0,
+    });
+    expect(allocations[1]).toMatchObject({
+      exitIndex: 1,
+      trackedTokens: 0,
+      trackedUsdc: 0,
+      orphanedTokens: 20,
+      orphanedUsdc: 9,
+    });
   });
 });
