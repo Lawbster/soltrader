@@ -1009,19 +1009,24 @@ function renderSignalStats(stats, signals) {
 function renderSystem(status, metrics, signals) {
   const el = document.getElementById('sysStatus');
   const totalPricePoints = signals ? signals.reduce((s, sig) => s + sig.pricePoints, 0) : 0;
-  const activeRoutes = Array.isArray(signals)
-    ? signals.filter(sig => sig.masterEnabled && sig.regimeActive && sig.templateId).length
-    : 0;
+    const activeRoutes = Array.isArray(signals)
+      ? signals
+          .filter(sig => sig.masterEnabled)
+          .reduce((sum, sig) => sum + (isFiniteNumber(sig.activeRouteCount) ? sig.activeRouteCount : 0), 0)
+      : 0;
   const activeTokens = Array.isArray(signals)
     ? signals.filter(sig => sig.masterEnabled).length
     : 0;
-  const liveTimeframes = Array.isArray(signals)
-    ? Array.from(new Set(
-        signals
-          .filter(sig => sig.masterEnabled && sig.regimeActive && isFiniteNumber(sig.timeframeMinutes))
-          .map(sig => sig.timeframeMinutes + 'm')
-      )).sort((a, b) => Number(a.replace('m', '')) - Number(b.replace('m', '')))
-    : [];
+    const liveTimeframes = Array.isArray(signals)
+      ? Array.from(new Set(
+          signals
+            .filter(sig => sig.masterEnabled)
+            .flatMap(sig => Array.isArray(sig.activeTimeframes)
+              ? sig.activeTimeframes.filter(tf => isFiniteNumber(tf) && tf > 0).map(tf => tf + 'm')
+              : (isFiniteNumber(sig.timeframeMinutes) ? [sig.timeframeMinutes + 'm'] : [])
+            )
+        )).sort((a, b) => Number(a.replace('m', '')) - Number(b.replace('m', '')))
+      : [];
   const cards = [
     { label: 'Price Feed Points', value: totalPricePoints, cls: totalPricePoints > 0 ? 'green' : 'yellow' },
     { label: 'Trade Subscriptions', value: status.tradeSubscriptions, cls: '' },

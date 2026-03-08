@@ -10,7 +10,7 @@ import {
 } from '../analysis';
 import { loadCandles } from '../backtest/data-loader';
 import { loadWatchlist } from '../monitor';
-import { getLiveTokenStrategy, isTokenMasterEnabled } from '../strategy/live-strategy-map';
+import { getLiveTokenStrategy, getLiveTokenStrategies, isTokenMasterEnabled } from '../strategy/live-strategy-map';
 import { getTokenRegimeCached } from '../strategy/regime-detector';
 import { getTemplateMetadata } from '../strategy/templates/catalog';
 import { getJupiterMetrics } from '../execution/jupiter-client';
@@ -143,6 +143,7 @@ function handleSignals(res: http.ServerResponse) {
       const regimeState = getTokenRegimeCached(mint);
       const regime = regimeState?.confirmed ?? 'sideways';
       const masterEnabled = isTokenMasterEnabled(mint);
+      const regimeRoutes = getLiveTokenStrategies(mint, regime);
       const tokenStrategy = getLiveTokenStrategy(mint, regime);
       const rsiPeriod = tokenStrategy ? (tokenStrategy.indicator?.rsiPeriod ?? indicatorsCfg.rsi.period) : indicatorsCfg.rsi.period;
       const connorsPercentRankPeriod = tokenStrategy
@@ -241,6 +242,15 @@ function handleSignals(res: http.ServerResponse) {
         routeId: tokenStrategy?.routeId ?? null,
         timeframeMinutes,
         routePriority: tokenStrategy?.priority ?? null,
+        activeRouteCount: regimeRoutes.length,
+        activeTimeframes: Array.from(
+          new Set(
+            regimeRoutes.flatMap(route => {
+              const value = route.timeframeMinutes;
+              return (typeof value === 'number' && Number.isFinite(value) && value > 0) ? [value] : [];
+            })
+          )
+        ).sort((a, b) => a - b),
         strategyParams: tokenStrategy?.params ?? null,
         exitMode: tokenStrategy?.exitMode ?? null,
         trendRegime: regimeState?.confirmed ?? null,
