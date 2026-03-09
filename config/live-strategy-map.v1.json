@@ -305,7 +305,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-5m-adx-range-side-research",
               "templateId": "adx-range-rsi-bb",
               "timeframeMinutes": 5,
@@ -333,7 +333,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-15m-macd-zero-down-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 15,
