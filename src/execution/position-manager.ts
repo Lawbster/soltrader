@@ -112,6 +112,39 @@ const inFlightEntriesByMint = new Set<string>();
 let consecutiveImpactTransientFails = 0;
 const IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD = 3;
 
+function getPositionExitTime(position: Position): number {
+  const lastExit = position.exits[position.exits.length - 1];
+  return lastExit?.timestamp ?? position.entryTime;
+}
+
+function recomputeSavedStats(positions: Position[]) {
+  const sorted = positions.slice().sort((a, b) => getPositionExitTime(a) - getPositionExitTime(b));
+  const totalTrades = sorted.length;
+  const wins = sorted.filter(position => calculateTrackedPnlUsdc(position) > 0).length;
+  const realizedDailyPnlUsdc = sorted.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
+
+  let recomputedConsecutiveLosses = 0;
+  let recomputedLastLossTime = 0;
+  for (const position of sorted) {
+    const pnl = calculateTrackedPnlUsdc(position);
+    const exitTime = getPositionExitTime(position);
+    if (pnl < 0) {
+      recomputedConsecutiveLosses += 1;
+      recomputedLastLossTime = exitTime;
+    } else {
+      recomputedConsecutiveLosses = 0;
+    }
+  }
+
+  return {
+    totalTrades,
+    wins,
+    dailyPnlUsdc: realizedDailyPnlUsdc,
+    consecutiveLosses: recomputedConsecutiveLosses,
+    lastLossTime: recomputedLastLossTime,
+  };
+}
+
 async function withMintOperationLock<T>(
   mint: string,
   operation: 'entry' | 'exit',
@@ -1118,15 +1151,8 @@ export function savePositionHistory() {
     open: Array.from(openPositions.values()),
     closed: closedPositions,
     stats: {
-      totalTrades: closedPositions.length,
-      wins: closedPositions.filter(p => {
-        const pnl = calculateTrackedPnlUsdc(p);
-        return pnl > 0;
-      }).length,
-      dailyPnlUsdc,
+      ...recomputeSavedStats(closedPositions),
       dailyStartEquityUsdc: dailyStartEquity,
-      consecutiveLosses,
-      lastLossTime,
     },
   };
 
@@ -1142,6 +1168,7 @@ export function loadPositionHistory() {
 
   type PositionFile = {
     open: Position[];
+    closed?: Position[];
     stats: { dailyPnlUsdc: number; dailyStartEquityUsdc?: number; consecutiveLosses: number; lastLossTime: number };
   };
 
@@ -1165,15 +1192,21 @@ export function loadPositionHistory() {
       strippedNoopExits += stripNoopExits(p);
       openPositions.set(p.id, p);
     }
-    if (todayData!.stats) {
-      dailyPnlUsdc = todayData!.stats.dailyPnlUsdc ?? 0;
-      dailyStartEquity = todayData!.stats.dailyStartEquityUsdc ?? dailyStartEquity;
-      consecutiveLosses = todayData!.stats.consecutiveLosses ?? 0;
-      lastLossTime = todayData!.stats.lastLossTime ?? 0;
+    closedPositions.length = 0;
+    for (const p of todayData!.closed ?? []) {
+      closedPositions.push(p);
     }
+    if (todayData!.stats) {
+      dailyStartEquity = todayData!.stats.dailyStartEquityUsdc ?? dailyStartEquity;
+    }
+    const recomputedStats = recomputeSavedStats(closedPositions);
+    dailyPnlUsdc = recomputedStats.dailyPnlUsdc;
+    consecutiveLosses = recomputedStats.consecutiveLosses;
+    lastLossTime = recomputedStats.lastLossTime;
     dailyStatsDateUtc = today;
     log.info('Position history loaded (today)', {
       openRestored: openPositions.size,
+      closedRestored: closedPositions.length,
       strippedNoopExits,
       dailyStartEquity: dailyStartEquity.toFixed(2),
       dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
