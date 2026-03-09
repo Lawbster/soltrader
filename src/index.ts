@@ -24,6 +24,7 @@ import {
   updatePositions,
   hasOpenPositionForRoute,
   savePositionHistory,
+  rollDailyStatsIfNeeded,
   checkSolReplenish,
   getWalletBalances,
   SOL_MINT,
@@ -141,6 +142,7 @@ function routeRequiresAtrExit(route: TokenStrategy): boolean {
 }
 
 async function analyzeCandidate(mint: string, launch: TokenLaunch) {
+  await rollDailyStatsIfNeeded();
   const isWatchlist = launch.source === 'watchlist';
 
   // Per-token strategy gate: watchlist tokens must have at least one active route.
@@ -511,8 +513,8 @@ async function main() {
     }
   }
 
-  await initPortfolio();
   loadPositionHistory();
+  await initPortfolio();
   initMetrics();
   await startDashboard();
 
@@ -650,6 +652,7 @@ async function main() {
 
   const saveTimer = setInterval(async () => {
     try {
+      await rollDailyStatsIfNeeded();
       updateDashboardState(pendingTokens.size);
       saveSnapshots();
       savePositionHistory();

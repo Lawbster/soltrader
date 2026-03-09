@@ -5,7 +5,7 @@ import { getConnection, getKeypair, createLogger, config } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
 import { evaluateExit, PortfolioState } from '../strategy/rules';
 import { fetchTokenData, fetchPoolLiquidity } from '../analysis/token-data';
-import { getIndicatorSnapshot, snapshotToIndicatorValues } from '../analysis';
+import { getIndicatorSnapshot, getTokenPriceCached, snapshotToIndicatorValues } from '../analysis';
 import type { IndicatorSnapshot } from '../analysis/types';
 import { evaluateSignal, getTemplateMetadata } from '../strategy/templates/catalog';
 import type { LiveTemplateContext } from '../strategy/templates/types';
@@ -92,6 +92,7 @@ let dailyStartEquity = 0;
 let dailyPnlUsdc = 0;
 let consecutiveLosses = 0;
 let lastLossTime = 0;
+let dailyStatsDateUtc = new Date().toISOString().split('T')[0];
 const stoppedOutTokens = new Map<string, number>();
 
 // LP tracking for emergency exits
@@ -212,6 +213,18 @@ export function getPortfolioState(): PortfolioState {
   };
 }
 
+function currentUtcDate(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+async function computeCurrentTotalEquityUsdc(): Promise<number> {
+  const walletBalances = await getWalletBalances();
+  const solPriceUsd = getTokenPriceCached(SOL_MINT).priceUsd;
+  const openNotionalUsdc = Array.from(openPositions.values())
+    .reduce((sum, p) => sum + (p.remainingTokens * p.currentPrice), 0);
+  return walletBalances.usdc + (walletBalances.sol * solPriceUsd) + openNotionalUsdc;
+}
+
 function getOpenPositionsForMintInternal(mint: string): Position[] {
   return Array.from(openPositions.values()).filter(p => p.mint === mint && p.status === 'open');
 }
@@ -259,15 +272,36 @@ export async function getWalletBalances(): Promise<{ usdc: number; sol: number }
 }
 
 export async function initPortfolio() {
-  const usdcBalance = await getUsdcBalance();
-  dailyStartEquity = usdcBalance;
+  if (!(dailyStartEquity > 0)) {
+    dailyStartEquity = await computeCurrentTotalEquityUsdc();
+  }
+  dailyStatsDateUtc = currentUtcDate();
   log.info('Portfolio initialized', { equityUsdc: dailyStartEquity.toFixed(2) });
 }
 
 export function resetDailyStats() {
   dailyPnlUsdc = 0;
   consecutiveLosses = 0;
+  lastLossTime = 0;
+  dailyStatsDateUtc = currentUtcDate();
   log.info('Daily stats reset');
+}
+
+export async function rollDailyStatsIfNeeded(): Promise<boolean> {
+  const today = currentUtcDate();
+  if (today === dailyStatsDateUtc) return false;
+
+  dailyStartEquity = await computeCurrentTotalEquityUsdc();
+  dailyPnlUsdc = 0;
+  consecutiveLosses = 0;
+  lastLossTime = 0;
+  dailyStatsDateUtc = today;
+
+  log.info('Daily stats rolled over', {
+    date: today,
+    dailyStartEquity: dailyStartEquity.toFixed(2),
+  });
+  return true;
 }
 
 // SOL auto-replenish: keep enough SOL for tx fees
@@ -308,6 +342,7 @@ export async function openPosition(
   slippageBps: number,
   strategyPlan?: StrategyPlan
 ): Promise<Position | null> {
+  await rollDailyStatsIfNeeded();
   const cfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
 
@@ -460,6 +495,7 @@ export async function openPosition(
 let positionUpdateRunning = false;
 
 export async function updatePositions() {
+  await rollDailyStatsIfNeeded();
   if (positionUpdateRunning) {
     log.debug('Position update already running, skipping cycle');
     return;
@@ -1088,6 +1124,7 @@ export function savePositionHistory() {
         return pnl > 0;
       }).length,
       dailyPnlUsdc,
+      dailyStartEquityUsdc: dailyStartEquity,
       consecutiveLosses,
       lastLossTime,
     },
@@ -1105,7 +1142,7 @@ export function loadPositionHistory() {
 
   type PositionFile = {
     open: Position[];
-    stats: { dailyPnlUsdc: number; consecutiveLosses: number; lastLossTime: number };
+    stats: { dailyPnlUsdc: number; dailyStartEquityUsdc?: number; consecutiveLosses: number; lastLossTime: number };
   };
 
   function tryLoadFile(date: string): PositionFile | null {
@@ -1130,12 +1167,15 @@ export function loadPositionHistory() {
     }
     if (todayData!.stats) {
       dailyPnlUsdc = todayData!.stats.dailyPnlUsdc ?? 0;
+      dailyStartEquity = todayData!.stats.dailyStartEquityUsdc ?? dailyStartEquity;
       consecutiveLosses = todayData!.stats.consecutiveLosses ?? 0;
       lastLossTime = todayData!.stats.lastLossTime ?? 0;
     }
+    dailyStatsDateUtc = today;
     log.info('Position history loaded (today)', {
       openRestored: openPositions.size,
       strippedNoopExits,
+      dailyStartEquity: dailyStartEquity.toFixed(2),
       dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
       consecutiveLosses,
     });
@@ -1151,9 +1191,11 @@ export function loadPositionHistory() {
       openPositions.set(p.id, p);
     }
     // Do NOT restore yesterday's dailyPnlUsdc/consecutiveLosses — start fresh for today
+    dailyStartEquity = 0;
     dailyPnlUsdc = 0;
     consecutiveLosses = 0;
     lastLossTime = 0;
+    dailyStatsDateUtc = today;
     log.warn('Position history loaded from yesterday (today file absent/empty)', {
       openRestored: openPositions.size,
       strippedNoopExits,

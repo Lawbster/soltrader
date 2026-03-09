@@ -6,6 +6,7 @@ export {
   getPortfolioState,
   initPortfolio,
   resetDailyStats,
+  rollDailyStatsIfNeeded,
   openPosition,
   updatePositions,
   getOpenPositions,
