@@ -516,6 +516,7 @@ async function main() {
   loadPositionHistory();
   await initPortfolio();
   initMetrics();
+  savePositionHistory();
   await startDashboard();
 
   function addTokenToUniverse(launch: TokenLaunch) {
