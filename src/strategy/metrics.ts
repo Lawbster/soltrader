@@ -18,6 +18,7 @@ export interface TradeMetric {
   pnlUsdc: number;
   pnlPct: number;
   exitType: string;
+  entryReason?: string;
   isPaper: boolean;
 }
 
@@ -142,6 +143,7 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     pnlUsdc,
     pnlPct,
     exitType,
+    entryReason: position.strategyPlan?.entryReason,
     isPaper,
   };
 

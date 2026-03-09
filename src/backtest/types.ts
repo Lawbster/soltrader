@@ -112,6 +112,12 @@ export interface BacktestConfig {
   executionCandles?: Candle[];
   signalTimeframeMinutes?: number;
   executionTimeframeMinutes?: number;
+  indicatorConfig?: {
+    rsiPeriod?: number;
+    connorsRsiPeriod?: number;
+    connorsStreakRsiPeriod?: number;
+    connorsPercentRankPeriod?: number;
+  };
   signalRegimes?: BacktestTrendRegime[];
   entryRegimeFilter?: BacktestTrendRegime;
 }

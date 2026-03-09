@@ -25,14 +25,42 @@ interface PrecomputedIndicators {
   snapshots: IndicatorValues[];
 }
 
+interface IndicatorPrecomputeConfig {
+  rsiPeriod: number;
+  connorsRsiPeriod: number;
+  connorsStreakRsiPeriod: number;
+  connorsPercentRankPeriod: number;
+}
+
 interface BacktestOpenPosition extends BacktestPosition {
   entryRegime?: BacktestConfig['entryRegimeFilter'];
 }
 
-const precomputedCache = new WeakMap<Candle[], PrecomputedIndicators>();
+const precomputedCache = new WeakMap<Candle[], Map<string, PrecomputedIndicators>>();
 
-function precompute(candles: Candle[]): PrecomputedIndicators {
-  const cached = precomputedCache.get(candles);
+function normalizeIndicatorConfig(config?: BacktestConfig['indicatorConfig']): IndicatorPrecomputeConfig {
+  return {
+    rsiPeriod: Number.isFinite(config?.rsiPeriod) ? Math.max(2, Math.round(config!.rsiPeriod!)) : 14,
+    connorsRsiPeriod: Number.isFinite(config?.connorsRsiPeriod) ? Math.max(2, Math.round(config!.connorsRsiPeriod!)) : 3,
+    connorsStreakRsiPeriod: Number.isFinite(config?.connorsStreakRsiPeriod) ? Math.max(2, Math.round(config!.connorsStreakRsiPeriod!)) : 2,
+    connorsPercentRankPeriod: Number.isFinite(config?.connorsPercentRankPeriod) ? Math.max(2, Math.round(config!.connorsPercentRankPeriod!)) : 100,
+  };
+}
+
+function indicatorConfigKey(config: IndicatorPrecomputeConfig): string {
+  return [
+    config.rsiPeriod,
+    config.connorsRsiPeriod,
+    config.connorsStreakRsiPeriod,
+    config.connorsPercentRankPeriod,
+  ].join('|');
+}
+
+function precompute(candles: Candle[], rawConfig?: BacktestConfig['indicatorConfig']): PrecomputedIndicators {
+  const config = normalizeIndicatorConfig(rawConfig);
+  const cacheKey = indicatorConfigKey(config);
+  const cachedByConfig = precomputedCache.get(candles);
+  const cached = cachedByConfig?.get(cacheKey);
   if (cached) {
     return cached;
   }
@@ -43,9 +71,14 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
   const volumes = volumeSeries(candles);
 
   const pre: PrecomputedIndicators = {
-    rsi: computeRsiSeries(closes, 14),
+    rsi: computeRsiSeries(closes, config.rsiPeriod),
     rsiShort: computeRsiSeries(closes, 2),
-    connorsRsi: computeConnorsRsiSeries(closes, 3, 2, 100),
+    connorsRsi: computeConnorsRsiSeries(
+      closes,
+      config.connorsRsiPeriod,
+      config.connorsStreakRsiPeriod,
+      config.connorsPercentRankPeriod,
+    ),
     sma: {
       10: computeSma(closes, 10),
       20: computeSma(closes, 20),
@@ -66,7 +99,9 @@ function precompute(candles: Candle[]): PrecomputedIndicators {
   };
 
   pre.snapshots = candles.map((_, index) => snapshotAt(pre, index));
-  precomputedCache.set(candles, pre);
+  const next = cachedByConfig ?? new Map<string, PrecomputedIndicators>();
+  next.set(cacheKey, pre);
+  precomputedCache.set(candles, next);
   return pre;
 }
 
@@ -311,7 +346,7 @@ export function runBacktest(candles: Candle[], config: BacktestConfig): Backtest
     };
   }
 
-  const pre = precompute(signalCandles);
+  const pre = precompute(signalCandles, config.indicatorConfig);
   const trades: BacktestTrade[] = [];
   const positions: BacktestOpenPosition[] = [];
   const signalCloseTimes = signalCandles.map(candle => candle.timestamp + signalTimeframeMs);

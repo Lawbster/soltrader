@@ -365,7 +365,9 @@ export function getDashboardHtml(): string {
         <span class="subtle-note" id="tradeRangeLabel">All time</span>
       </div>
       <div class="table-controls">
-        <button class="filter-btn active" id="filterAllBtn" onclick="setTradeDateFilter('')">All</button>
+        <button class="filter-btn active" id="filterAllBtn" onclick="setTradeOutcomeFilter('all')">All</button>
+        <button class="filter-btn" id="filterWinsBtn" onclick="setTradeOutcomeFilter('wins')">Wins</button>
+        <button class="filter-btn" id="filterLossesBtn" onclick="setTradeOutcomeFilter('losses')">Losses</button>
         <button class="filter-btn" id="filterTodayBtn" onclick="setTradeDateFilter(dateKeyFromOffset(0))">Today</button>
         <button class="filter-btn" id="filterYesterdayBtn" onclick="setTradeDateFilter(dateKeyFromOffset(-1))">Yesterday</button>
         <select id="tradeMintSelect" onchange="setTradeMintFilter(this.value)">
@@ -378,7 +380,7 @@ export function getDashboardHtml(): string {
     <div style="max-height: 400px; overflow-y: auto;">
       <table>
         <thead>
-          <tr><th>Time</th><th>Mint</th><th>PnL</th><th>PnL %</th><th>Hold</th><th>Exit</th></tr>
+          <tr><th>Time</th><th>Mint</th><th>PnL</th><th>PnL %</th><th>Hold</th><th>Exit / Entry</th></tr>
         </thead>
         <tbody id="tradeTable">
           <tr><td colspan="6" class="no-data">No trades yet</td></tr>
@@ -401,6 +403,7 @@ let signalCache = [];
 let latestTrades = [];
 let selectedTradeDate = '';
 let selectedTradeMint = '';
+let selectedTradeOutcome = 'all';
 function fmt(n, d=2) { return n === Infinity || n === -Infinity ? '--' : Number(n).toFixed(d); }
 function fmtPct(n) { return fmt(n,1) + '%'; }
 function pnlColor(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
@@ -469,9 +472,14 @@ function tokenNameFromMint(mint) {
   return sig ? labelFor(sig) : shortMint(mint);
 }
 function formatTradeRangeLabel() {
+  const outcomeLabel = selectedTradeOutcome === 'wins'
+    ? 'Wins'
+    : selectedTradeOutcome === 'losses'
+      ? 'Losses'
+      : 'All';
   const dateLabel = formatDateKey(selectedTradeDate);
   const tokenLabel = selectedTradeMint ? tokenNameFromMint(selectedTradeMint) : 'All tokens';
-  return dateLabel + ' | ' + tokenLabel;
+  return outcomeLabel + ' | ' + dateLabel + ' | ' + tokenLabel;
 }
 function normalizeTrades(trades) {
   if (!Array.isArray(trades)) return [];
@@ -490,10 +498,13 @@ function normalizeTrades(trades) {
       pnlUsdc: Number(t.pnlUsdc),
       pnlPct: Number(t.pnlPct),
       holdTimeMinutes: Number(t.holdTimeMinutes),
+      entryReason: typeof t.entryReason === 'string' ? t.entryReason : '',
     }));
 }
 function filterTradesByDate(trades) {
   return trades.filter(t => {
+    if (selectedTradeOutcome === 'wins' && !(t.pnlUsdc > 0)) return false;
+    if (selectedTradeOutcome === 'losses' && !(t.pnlUsdc <= 0)) return false;
     if (selectedTradeDate && toDateKey(t.exitTime) !== selectedTradeDate) return false;
     if (selectedTradeMint && t.mint !== selectedTradeMint) return false;
     return true;
@@ -524,6 +535,8 @@ function updateTradeMintOptions(trades) {
 }
 function syncTradeFilterButtons() {
   const allBtn = document.getElementById('filterAllBtn');
+  const winsBtn = document.getElementById('filterWinsBtn');
+  const lossesBtn = document.getElementById('filterLossesBtn');
   const todayBtn = document.getElementById('filterTodayBtn');
   const ydayBtn = document.getElementById('filterYesterdayBtn');
   const dateInput = document.getElementById('tradeDateInput');
@@ -532,9 +545,16 @@ function syncTradeFilterButtons() {
   const yday = dateKeyFromOffset(-1);
   if (dateInput) dateInput.value = selectedTradeDate;
   if (mintSelect) mintSelect.value = selectedTradeMint;
-  if (allBtn) allBtn.classList.toggle('active', !selectedTradeDate);
+  if (allBtn) allBtn.classList.toggle('active', selectedTradeOutcome === 'all');
+  if (winsBtn) winsBtn.classList.toggle('active', selectedTradeOutcome === 'wins');
+  if (lossesBtn) lossesBtn.classList.toggle('active', selectedTradeOutcome === 'losses');
   if (todayBtn) todayBtn.classList.toggle('active', selectedTradeDate === today);
   if (ydayBtn) ydayBtn.classList.toggle('active', selectedTradeDate === yday);
+}
+function setTradeOutcomeFilter(outcome) {
+  selectedTradeOutcome = outcome || 'all';
+  syncTradeFilterButtons();
+  renderTradePanels();
 }
 function setTradeDateFilter(dateKey) {
   selectedTradeDate = dateKey || '';
@@ -915,7 +935,8 @@ function renderTrades(trades, totalTrades) {
       '<td class="' + pnlColor(t.pnlUsdc) + '">' + (t.pnlUsdc >= 0 ? '+' : '') + fmt(t.pnlUsdc, 4) + '</td>' +
       '<td><span class="badge ' + (isWin ? 'win' : 'loss') + '">' + (t.pnlPct >= 0 ? '+' : '') + fmtPct(t.pnlPct) + '</span></td>' +
       '<td>' + Math.round(t.holdTimeMinutes) + 'm</td>' +
-      '<td>' + t.exitType + '</td>' +
+      '<td><div>' + escapeHtml(t.exitType || '--') + '</div>' +
+      '<div style="margin-top:2px;font-size:0.72rem;color:#8b949e;max-width:560px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escapeHtml(t.entryReason || '') + '">Entry: ' + escapeHtml(t.entryReason || '--') + '</div></td>' +
       '</tr>';
   }).join('');
 }

@@ -35,7 +35,15 @@
     "repair-metrics": "tsx scripts/repair-metrics-from-positions.ts",
     "repairmetrics": "tsx scripts/repair-metrics-from-positions.ts",
     "slippage-report": "tsx scripts/slippage-report.ts",
-    "slippagereport": "tsx scripts/slippage-report.ts"
+    "slippagereport": "tsx scripts/slippage-report.ts",
+    "live-confidence-report_parked": "tsx scripts/live-confidence-report_parked.ts",
+    "liveconfidencereport_parked": "tsx scripts/live-confidence-report_parked.ts",
+    "live-route-backtest-report": "tsx scripts/live-route-backtest-report.ts",
+    "liveroutebacktestreport": "tsx scripts/live-route-backtest-report.ts",
+    "live-candidate-summary": "tsx scripts/live-candidate-summary.ts",
+    "livecandidatesummary": "tsx scripts/live-candidate-summary.ts",
+    "live-portfolio-backtest_parked": "tsx scripts/live-portfolio-backtest_parked.ts",
+    "liveportfoliobacktest_parked": "tsx scripts/live-portfolio-backtest_parked.ts"
   },
   "dependencies": {
     "@jup-ag/api": "^6.0.0",
