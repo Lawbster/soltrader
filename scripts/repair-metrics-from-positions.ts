@@ -14,6 +14,7 @@ type TradeMetric = {
   pnlUsdc: number;
   pnlPct: number;
   exitType: string;
+  entryReason?: string;
   isPaper: boolean;
 };
 
@@ -70,6 +71,7 @@ function rebuildTradeMetric(metric: TradeMetric, position: Position): TradeMetri
     pnlUsdc,
     pnlPct,
     exitType: position.closeReason || lastExit?.type || metric.exitType,
+    entryReason: position.strategyPlan?.entryReason,
   };
 }
 
@@ -93,6 +95,7 @@ function buildTradeMetricFromPosition(position: Position, isPaper: boolean): Tra
     pnlUsdc,
     pnlPct,
     exitType: position.closeReason || lastExit?.type || 'unknown',
+    entryReason: position.strategyPlan?.entryReason,
     isPaper,
   };
 }
@@ -103,7 +106,8 @@ function differs(a: TradeMetric, b: TradeMetric): boolean {
     Math.abs(a.pnlUsdc - b.pnlUsdc) > 1e-9 ||
     Math.abs(a.pnlPct - b.pnlPct) > 1e-9 ||
     Math.abs(a.holdTimeMinutes - b.holdTimeMinutes) > 1e-9 ||
-    a.exitType !== b.exitType
+    a.exitType !== b.exitType ||
+    (a.entryReason ?? '') !== (b.entryReason ?? '')
   );
 }
 
