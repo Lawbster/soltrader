@@ -68,7 +68,7 @@
   "portfolio": {
     "maxConcurrentPositions": 6,
     "maxOpenExposurePct": 90,
-    "dailyLossLimitPct": -8,
+    "dailyLossLimitPct": -100,
     "consecutiveLossLimit": 99,
     "consecutiveLossCooldownMinutes": 60,
     "reEntryLockoutHours": 0.0666666667
