@@ -254,7 +254,7 @@
               },
               "params": {
                 "entry": 25,
-                "exit": 70
+                "exit": 85
               },
               "sl": -5,
               "tp": 1,
@@ -283,7 +283,7 @@
                 "entry": 25,
                 "exit": 70
               },
-              "sl": -3,
+              "sl": -5,
               "tp": 1,
               "exitMode": "indicator"
             }
@@ -333,7 +333,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "hnt-15m-macd-zero-down-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 15,
@@ -350,7 +350,7 @@
                 "rsiMax": 55,
                 "rsiExit": 70
               },
-              "sl": -3,
+              "sl": -2,
               "tp": 4,
               "exitMode": "indicator"
             },
@@ -450,15 +450,39 @@
       "label": "cbBTC",
       "tier": "core",
       "maxPositionEquityPct": 1.5,
-      "enabled": false,
+      "enabled": true,
       "regimes": {
         "uptrend": {
           "enabled": false,
           "routes": []
         },
         "sideways": {
-          "enabled": false,
-          "routes": []
+          "enabled": true,
+          "routes": [
+            {
+              "enabled": true,
+              "routeId": "cbbtc-1m-rsi-session-side-research",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 430,
+              "protection": {
+                "profitLockArmPct": 0.75,
+                "profitLockPct": 0.15,
+                "trailArmPct": 1.5,
+                "trailGapPct": 0.75,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 30,
+                "exit": 85,
+                "session": 0
+              },
+              "sl": -3,
+              "tp": 1,
+              "exitMode": "indicator"
+            }
+          ]
         },
         "downtrend": {
           "enabled": false,

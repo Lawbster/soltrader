@@ -724,14 +724,10 @@ function computeTrendAdjustedScore(
   combinedStat: number,
   alphaWindowPct: number | null,
   alphaBlendPct: number | null,
-  parityDelta: number | null = null,
 ): number {
   const alphaWindow = clamp(alphaWindowPct ?? 0, -50, 50);
   const alphaBlend = clamp(alphaBlendPct ?? 0, -50, 50);
-  // parityAdj: penalizes strategies that rely on indicator exits not available live.
-  // Max -2 at delta <= -20pp, max +2 at delta >= +20pp.
-  const parityAdj = parityDelta !== null ? clamp(parityDelta * 0.10, -2, 2) : 0;
-  return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend) + parityAdj;
+  return combinedStat + (0.20 * alphaWindow) + (0.10 * alphaBlend);
 }
 
 interface TimeframeStats {
@@ -825,7 +821,7 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, pari
   const alpha72hPct = alphaFromReturn(row.pnlPct, row.tokenRet72hPct);
   const alphaWindowPct = alphaFromReturn(row.pnlPct, row.tokenRetWindowPct);
   const alphaBlendPct = alphaFromReturn(row.pnlPct, weightedRetBaseline);
-  const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct, parityDelta);
+  const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct);
 
   return {
     ...row,
@@ -895,9 +891,9 @@ function formatOptionalNum(value: number | null, digits = 2): string {
   return value.toFixed(digits);
 }
 
-function printCandidateTable(title: string, rows: CandidateRow[], top: number, topPerToken: number): void {
+function printCandidateTable(title: string, rows: CandidateRow[], top: number): void {
   if (rows.length === 0) {
-    console.log(`\n${title} (top 0):`);
+    console.log(`\n${title} (top ${top} per token):`);
     console.log('  none');
     return;
   }
@@ -906,6 +902,7 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
   const tokenCounts = new Map<string, number>();
   for (const r of rows) tokenCounts.set(r.token, (tokenCounts.get(r.token) ?? 0) + 1);
 
+  // Each token gets its own top-N — no global cap across tokens
   const ranked = capPerToken(
     rows.slice().sort((a, b) => {
       const diff = b.mtfScore - a.mtfScore;
@@ -916,10 +913,10 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
       if (Math.abs(combinedDiff) > 1e-9) return combinedDiff;
       return b.pnlPct - a.pnlPct;
     }),
-    topPerToken
-  ).slice(0, top);
+    top
+  );
 
-  console.log(`\n${title} (top ${ranked.length}):`);
+  console.log(`\n${title} (top ${top} per token):`);
   for (const [token, count] of [...tokenCounts.entries()].sort()) {
     const shown = ranked.filter(r => r.token === token).length;
     console.log(`  ${token}: ${count} qualifying (showing ${shown})`);
@@ -929,25 +926,29 @@ function printCandidateTable(title: string, rows: CandidateRow[], top: number, t
     return;
   }
 
-  const table = ranked.map((r, i) => ({
-    rank: i + 1,
-    token: r.token,
-    template: r.template,
-    barTf: `${r.timeframe}m`,
-    trades: r.trades,
-    winRate: `${r.winRate.toFixed(2)}%`,
-    adjWR: `${(r.adjustedWinRate * 100).toFixed(2)}%`,
-    pnlPct: `${r.pnlPct.toFixed(4)}%`,
-    pf: r.profitFactor === null ? 'n/a' : r.profitFactor.toFixed(3),
-    holdMin: r.avgHoldMinutes.toFixed(1),
-    regime: r.trendRegime,
-    alphaW: r.alphaWindowPct === null ? 'n/a' : `${r.alphaWindowPct.toFixed(2)}%`,
-    tfSupport: r.timeframeSupport,
-    score: r.mtfScore.toFixed(4),
-    params: r.params,
-  }));
-
-  console.table(table);
+  // Print a separate ranked table per token
+  const tokens = [...new Set(ranked.map(r => r.token))].sort();
+  for (const token of tokens) {
+    const tokenRows = ranked.filter(r => r.token === token);
+    if (tokenRows.length === 0) continue;
+    console.log(`\n  ${token}:`);
+    console.table(tokenRows.map((r, i) => ({
+      rank: i + 1,
+      template: r.template,
+      barTf: `${r.timeframe}m`,
+      trades: r.trades,
+      winRate: `${r.winRate.toFixed(2)}%`,
+      adjWR: `${(r.adjustedWinRate * 100).toFixed(2)}%`,
+      pnlPct: `${r.pnlPct.toFixed(4)}%`,
+      pf: r.profitFactor === null ? 'n/a' : r.profitFactor.toFixed(3),
+      holdMin: r.avgHoldMinutes.toFixed(1),
+      regime: r.trendRegime,
+      alphaW: r.alphaWindowPct === null ? 'n/a' : `${r.alphaWindowPct.toFixed(2)}%`,
+      tfSupport: r.timeframeSupport,
+      score: r.mtfScore.toFixed(4),
+      params: r.params,
+    })));
+  }
 }
 
 function printRegimeBreakdown(label: string, rows: CandidateRow[]): void {
@@ -1002,47 +1003,6 @@ function buildPatterns(rows: CandidateRow[]): PatternRow[] {
   return out;
 }
 
-function printPatternTable(title: string, patterns: PatternRow[], top: number): void {
-  console.log(`\n${title} (top ${Math.min(top, patterns.length)}):`);
-  if (patterns.length === 0) {
-    console.log('  none');
-    return;
-  }
-
-  const ranked = patterns
-    .slice()
-    .sort((a, b) => {
-      if (Math.abs(b.avgMtfScore - a.avgMtfScore) > 1e-9) {
-        return b.avgMtfScore - a.avgMtfScore;
-      }
-      if (Math.abs(b.avgTrendAdjustedScore - a.avgTrendAdjustedScore) > 1e-9) {
-        return b.avgTrendAdjustedScore - a.avgTrendAdjustedScore;
-      }
-      if (b.tokens !== a.tokens) return b.tokens - a.tokens;
-      if (b.rows !== a.rows) return b.rows - a.rows;
-      return b.avgAdjustedWinRate - a.avgAdjustedWinRate;
-    })
-    .slice(0, top)
-    .map((p, i) => ({
-      rank: i + 1,
-      template: p.template,
-      tokens: p.tokens,
-      rows: p.rows,
-      avgAdjWR: `${(p.avgAdjustedWinRate * 100).toFixed(2)}%`,
-      avgWin: `${p.avgWinRate.toFixed(2)}%`,
-      avgPnl: `${p.avgPnlPct.toFixed(4)}%`,
-      avgAlphaW: p.avgAlphaWindowPct === null ? 'n/a' : `${p.avgAlphaWindowPct.toFixed(2)}%`,
-      avgPF: p.avgProfitFactor === null ? 'n/a' : p.avgProfitFactor.toFixed(3),
-      avgTrades: p.avgTrades.toFixed(1),
-      avgHold: p.avgHoldMinutes.toFixed(1),
-      avgTfSupport: p.avgTimeframeSupportCount.toFixed(2),
-      mtfScore: p.avgMtfScore.toFixed(3),
-      trendScore: p.avgTrendAdjustedScore.toFixed(3),
-      params: p.params,
-    }));
-
-  console.table(ranked);
-}
 
 function writeCsv<T extends Record<string, unknown>>(filePath: string, rows: T[]): void {
   if (rows.length === 0) {
@@ -1212,7 +1172,6 @@ function main(): void {
     const sorted = deltaRows.slice().sort((a, b) => (b.parityDelta ?? 0) - (a.parityDelta ?? 0));
     const topDelta = [...sorted.slice(0, 5), ...sorted.slice(-5)].filter((v, i, a) => a.indexOf(v) === i);
     console.log('\n=== Parity Delta Report (price.pnlPct - indicator.pnlPct) ===');
-    console.log('(Negative = strategy relies on indicator exits unavailable live; prefer small negatives or positives)');
     console.table(topDelta.map(r => ({
       token: r.token,
       template: r.template,
@@ -1223,10 +1182,8 @@ function main(): void {
     })));
   }
 
-  printCandidateTable('Probe Candidates', probe, args.top, args.topPerToken);
-  printPatternTable('Probe Shared Patterns', probePatterns, args.top);
-  printCandidateTable('Core Candidates', core, args.top, args.topPerToken);
-  printPatternTable('Core Shared Patterns', corePatterns, args.top);
+  printCandidateTable('Probe Candidates', probe, args.top);
+  printCandidateTable('Core Candidates', core, args.top);
 
   if (!args.writeCsv) return;
 
