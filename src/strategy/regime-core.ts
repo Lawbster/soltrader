@@ -11,8 +11,19 @@ export const DOWNTREND_SCORE = -6;
 export const DOWNTREND_GATE24 = -2;
 export const WEIGHTS = { ret24h: 0.5, ret48h: 0.3, ret72h: 0.2 };
 
+// Intraday override thresholds (applied on top of long-term score).
+// Crypto assets commonly move 7-12% intraday; these values are calibrated
+// to catch genuine reversals (-7% 6h slide) vs normal meme-coin noise.
+// Strong-down forces downtrend regardless of multi-day score.
+// Up-side is cap-only (suppress downtrend → sideways): a +12% 6h rip during
+// a confirmed downtrend is often a dead-cat bounce — never force uptrend.
+export const INTRADAY_DOWN_CAP = -7;      // ret6h below this: suppress uptrend → sideways
+export const INTRADAY_STRONG_DOWN = -12;  // ret6h below this: force downtrend
+export const INTRADAY_UP_CAP = 7;         // ret6h above this: suppress downtrend → sideways
+
 export interface RegimeData {
   trendScore: number | null;
+  ret6h: number | null;
   ret24h: number | null;
   ret48h: number | null;
   ret72h: number | null;
@@ -42,12 +53,25 @@ export function classifyRegime(data: RegimeData): TrendRegime {
 
   const score = data.trendScore;
   const gate24 = data.ret24h ?? score;
+  const ret6h = data.ret6h ?? null;
 
+  // Long-term regime from 24h/48h/72h weighted score
+  let longTerm: TrendRegime = 'sideways';
   if (score !== null && gate24 !== null) {
-    if (score >= UPTREND_SCORE && gate24 >= UPTREND_GATE24) return 'uptrend';
-    if (score <= DOWNTREND_SCORE && gate24 <= DOWNTREND_GATE24) return 'downtrend';
+    if (score >= UPTREND_SCORE && gate24 >= UPTREND_GATE24) longTerm = 'uptrend';
+    else if (score <= DOWNTREND_SCORE && gate24 <= DOWNTREND_GATE24) longTerm = 'downtrend';
   }
-  return 'sideways';
+
+  // Intraday override: catches same-day reversals the multi-day score misses.
+  // Two-level on the downside; cap-only on the upside (avoid forcing uptrend
+  // into dead-cat bounces during confirmed downtrends).
+  if (ret6h !== null) {
+    if (ret6h <= INTRADAY_STRONG_DOWN) return 'downtrend';
+    if (ret6h <= INTRADAY_DOWN_CAP && longTerm === 'uptrend') return 'sideways';
+    if (ret6h >= INTRADAY_UP_CAP && longTerm === 'downtrend') return 'sideways';
+  }
+
+  return longTerm;
 }
 
 export function isNearThreshold(score: number | null): boolean {
@@ -68,9 +92,12 @@ export function buildRegimeSeriesFromCandles(
   const window48h = 48 * 60 * 60_000;
   const window24h = 24 * 60 * 60_000;
 
+  const window6h = 6 * 60 * 60_000;
+
   const hourCounts = new Map<number, number>();
   const rawSeries: Array<{ asOfMs: number; data: RegimeData; raw: TrendRegime }> = [];
   let left72 = 0;
+  let idx6h = -1;
   let idx24 = -1;
   let idx48 = -1;
   let idx72 = -1;
@@ -92,12 +119,16 @@ export function buildRegimeSeriesFromCandles(
       left72++;
     }
 
+    while (idx6h + 1 <= i && candles[idx6h + 1].timestamp <= asOfMs - window6h) idx6h++;
     while (idx24 + 1 <= i && candles[idx24 + 1].timestamp <= asOfMs - window24h) idx24++;
     while (idx48 + 1 <= i && candles[idx48 + 1].timestamp <= asOfMs - window48h) idx48++;
     while (idx72 + 1 <= i && candles[idx72 + 1].timestamp <= asOfMs - window72h) idx72++;
 
     const coverageHours = hourCounts.size;
     const lastPrice = candle.close;
+    const ret6h = coverageHours >= 6 && idx6h >= 0 && candles[idx6h].close > 0
+      ? ((lastPrice - candles[idx6h].close) / candles[idx6h].close) * 100
+      : null;
     const ret24h = coverageHours >= 24 && idx24 >= 0 && candles[idx24].close > 0
       ? ((lastPrice - candles[idx24].close) / candles[idx24].close) * 100
       : null;
@@ -109,6 +140,7 @@ export function buildRegimeSeriesFromCandles(
       : null;
     const data: RegimeData = {
       trendScore: computeWeightedScore(ret24h, ret48h, ret72h),
+      ret6h,
       ret24h,
       ret48h,
       ret72h,

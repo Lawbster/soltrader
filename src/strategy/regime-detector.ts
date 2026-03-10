@@ -27,6 +27,7 @@ interface RegimeEntry {
 export interface RegimeState {
   confirmed: TrendRegime;
   trendScore: number | null;
+  ret6h: number | null;
   ret24h: number | null;
   ret48h: number | null;
   ret72h: number | null;
@@ -63,6 +64,7 @@ export function getTokenRegimeCached(mint: string): RegimeState | null {
   return {
     confirmed: entry.confirmed,
     trendScore: entry.data.trendScore,
+    ret6h: entry.data.ret6h,
     ret24h: entry.data.ret24h,
     ret48h: entry.data.ret48h,
     ret72h: entry.data.ret72h,
@@ -86,6 +88,7 @@ function computeRegimeData(mint: string): RegimeData {
   const window72h = 72 * 60 * 60_000;
   const window48h = 48 * 60 * 60_000;
   const window24h = 24 * 60 * 60_000;
+  const window6h = 6 * 60 * 60_000;
 
   const toDate = toDateStr(now);
   const fromDate = toDateStr(now - 8 * 24 * 60 * 60_000);
@@ -93,19 +96,21 @@ function computeRegimeData(mint: string): RegimeData {
   const candles = allCandles.filter(c => c.timestamp >= now - window72h);
 
   if (candles.length === 0) {
-    return { trendScore: null, ret24h: null, ret48h: null, ret72h: null, coverageHours: 0 };
+    return { trendScore: null, ret6h: null, ret24h: null, ret48h: null, ret72h: null, coverageHours: 0 };
   }
 
   const hourBuckets = new Set(candles.map(c => Math.floor(c.timestamp / (60 * 60_000))));
   const coverageHours = hourBuckets.size;
   const lastPrice = candles[candles.length - 1].close;
 
+  const ret6h = coverageHours >= 6 ? getReturn(candles, lastPrice, now - window6h) : null;
   const ret24h = coverageHours >= 24 ? getReturn(candles, lastPrice, now - window24h) : null;
   const ret48h = coverageHours >= 36 ? getReturn(candles, lastPrice, now - window48h) : null;
   const ret72h = coverageHours >= 60 ? getReturn(candles, lastPrice, now - window72h) : null;
 
   return {
     trendScore: computeWeightedScore(ret24h, ret48h, ret72h),
+    ret6h,
     ret24h,
     ret48h,
     ret72h,
@@ -162,6 +167,7 @@ function applyHysteresis(mint: string, raw: TrendRegime, data: RegimeData): void
         from: prev,
         to: raw,
         score: data.trendScore?.toFixed(2),
+        ret6h: data.ret6h?.toFixed(2),
         ret24h: data.ret24h?.toFixed(2),
         ret48h: data.ret48h?.toFixed(2),
         ret72h: data.ret72h?.toFixed(2),
