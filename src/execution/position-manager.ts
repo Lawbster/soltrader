@@ -1117,6 +1117,7 @@ function closePosition(position: Position, reason: string) {
     consecutiveLosses,
     orphanedUsdcIgnored: exitSummary.orphanedUsdcOut.toFixed(4),
   });
+  savePositionHistory(); // persist immediately — prevents crash-and-replay on restart
 }
 
 export function getOpenPositions(): Map<string, Position> {
