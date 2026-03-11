@@ -105,7 +105,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-15m-atr-breakout-side-research",
               "templateId": "atr-breakout-follow",
               "timeframeMinutes": 15,
@@ -126,7 +126,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-5m-crsi-session-side-research",
               "templateId": "crsi-session-gate",
               "timeframeMinutes": 5,
@@ -174,7 +174,7 @@
             },
 
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-5m-connors-sma50-side-research",
               "templateId": "connors-sma50-pullback",
               "timeframeMinutes": 5,
@@ -269,7 +269,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-1m-bb-rsi-crsi-down-research",
               "templateId": "bb-rsi-crsi-reversal",
               "timeframeMinutes": 1,
@@ -353,6 +353,29 @@
             },
             {
               "enabled": true,
+              "routeId": "pump-5m-bb-rsi-crsi-side-research",
+              "templateId": "bb-rsi-crsi-reversal",
+              "timeframeMinutes": 5,
+              "priority": 430,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 600,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsiEntry": 30,
+                "crsiEntry": 15,
+                "rsiExit": 55
+              },
+              "sl": -5,
+              "tp": 2,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": false,
               "routeId": "pump-15m-macd-zero-side-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 15,
@@ -401,7 +424,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pump-15m-macd-zero-down-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 15,
@@ -482,6 +505,29 @@
               },
               "sl": -2,
               "tp": 4,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "hnt-1m-rsi-session-side-research",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 430,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 20,
+                "exit": 70,
+                "session": 8
+              },
+              "sl": -3,
+              "tp": 3,
               "exitMode": "indicator"
             }
           ]

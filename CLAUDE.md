@@ -23,8 +23,12 @@ npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-1min.csv --top 
 npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-5min.csv --top 2000 --top-per-token 300
 npm run sweep-candidates -- --file data/sweep-results/YYYY-MM-DD-15min.csv --top 2000 --top-per-token 300
 
-npm run sweep-robustness -- --from 2026-02-18 --window-days 1,2 --step-days 1 --timeframes 1,5,15 --cost empirical --exit-parity both --rank-exit-parity indicator --top 2000 --top-per-token 300
+# Robustness (15min fast, ~5min): use family-ranked output, ignore coreRows=0 (expected)
+npm run sweep-robustness -- --from 2026-02-18 --window-days 3,5 --step-days 2 --timeframes 15 --cost empirical --exit-parity both --rank-exit-parity indicator --top 500 --top-per-token 300
+# Robustness (full 1/5/15min, slow ~30-60min):
+npm run sweep-robustness -- --from 2026-02-18 --window-days 3,5 --step-days 2 --timeframes 1,5,15 --cost empirical --exit-parity both --rank-exit-parity indicator --top 500 --top-per-token 300
 npm run robustness-report
+# Key output: stability-family-ranked.csv — focus on windowsSeen >= 5 AND worstPnlPct > 0
 ```
 
 ## Runtime Architecture
