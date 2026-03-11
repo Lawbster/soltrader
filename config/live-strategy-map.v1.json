@@ -149,7 +149,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-1m-rsi-crsi-side-research",
               "templateId": "rsi-crsi-confluence",
               "timeframeMinutes": 1,
@@ -172,6 +172,7 @@
               "tp": 4,
               "exitMode": "indicator"
             },
+
             {
               "enabled": true,
               "routeId": "pippin-5m-connors-sma50-side-research",
