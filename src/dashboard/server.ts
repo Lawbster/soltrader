@@ -251,6 +251,18 @@ function handleSignals(res: http.ServerResponse) {
             })
           )
         ).sort((a, b) => a - b),
+        allRegimeRoutes: regimeRoutes.map(r => ({
+          routeId: r.routeId ?? null,
+          templateId: r.templateId,
+          timeframeMinutes: r.timeframeMinutes ?? null,
+          priority: r.priority ?? null,
+          params: r.params,
+          sl: r.sl ?? null,
+          tp: r.tp ?? null,
+          slAtr: r.slAtr ?? null,
+          tpAtr: r.tpAtr ?? null,
+          exitMode: r.exitMode,
+        })),
         strategyParams: tokenStrategy?.params ?? null,
         exitMode: tokenStrategy?.exitMode ?? null,
         trendRegime: regimeState?.confirmed ?? null,

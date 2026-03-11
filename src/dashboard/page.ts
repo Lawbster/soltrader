@@ -666,6 +666,30 @@ async function fetchAll() {
   }
 }
 
+function renderRouteList(routes, topRouteId) {
+  if (!routes || routes.length === 0) {
+    return '<div class="signal-row" style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Routes</span><span class="muted">none</span></div>';
+  }
+  const items = routes.map((r, i) => {
+    const isTop = topRouteId ? r.routeId === topRouteId : i === 0;
+    const color = isTop ? '#3fb950' : '#6e7681';
+    const templateShort = (r.templateId || '--').replace(/-/g, '\u2011'); // non-breaking hyphens
+    const tf = r.timeframeMinutes ? (r.timeframeMinutes + 'm') : '--';
+    const params = r.params && typeof r.params === 'object'
+      ? Object.entries(r.params).filter(([, v]) => isFiniteNumber(v)).map(([k, v]) => k + '=' + fmtParamValue(v)).join(' ')
+      : '';
+    const sl = isFiniteNumber(r.slAtr) ? ('sl ' + fmtParamValue(r.slAtr) + 'atr') : (isFiniteNumber(r.sl) ? ('sl' + fmtParamValue(r.sl) + '%') : '');
+    const tp = isFiniteNumber(r.tpAtr) ? ('tp ' + fmtParamValue(r.tpAtr) + 'atr') : (isFiniteNumber(r.tp) ? ('tp' + fmtParamValue(r.tp) + '%') : '');
+    const stops = [sl, tp].filter(Boolean).join(' ');
+    const line = [templateShort, tf, params, stops].filter(Boolean).join(' \u00b7 ');
+    return '<div style="font-family:Consolas,Monaco,monospace;font-size:0.7rem;color:' + color + ';padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escapeHtml(line) + '">' + escapeHtml(line) + '</div>';
+  });
+  return '<div style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;">' +
+    '<div style="font-size:0.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:3px;">Routes (' + routes.length + ')</div>' +
+    items.join('') +
+    '</div>';
+}
+
 function renderSignals(signals) {
   const el = document.getElementById('signalGrid');
   if (!signals || signals.length === 0) {
@@ -702,16 +726,6 @@ function renderSignals(signals) {
     const cardBorderColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#21262d';
     const statusText = !s.masterEnabled ? 'Master: disabled' : s.regimeActive ? (s.trendRegime || 'unknown') + ': active' : (s.trendRegime || 'unknown') + ': no strategy';
     const statusColor = !s.masterEnabled ? '#f85149' : s.regimeActive ? '#3fb950' : '#6e7681';
-    const strategySummary = s.templateId
-      ? (
-          (s.routeId || s.templateId) +
-          ' | ' + (s.timeframeMinutes ? (s.timeframeMinutes + 'm') : '--') +
-          ' | ' + (s.exitMode || 'price') +
-          (isFiniteNumber(s.routePriority) ? (' | p' + fmt(s.routePriority, 0)) : '')
-        )
-      : '--';
-    const paramsText = formatStrategyParams(s.strategyParams);
-    const stopsText = formatStops(s.sl, s.tp, s.slAtr, s.tpAtr);
     const maxSizeText = (isFiniteNumber(s.tokenMaxEquityPct))
       ? (fmt(s.tokenMaxEquityPct, 2) + '% equity' + (isFiniteNumber(s.tokenMaxUsdc) ? (' (cap ' + fmt(s.tokenMaxUsdc, 2) + ' USDC)') : ''))
       : (isFiniteNumber(s.tokenMaxUsdc) ? (fmt(s.tokenMaxUsdc, 2) + ' USDC') : '--');
@@ -734,9 +748,7 @@ function renderSignals(signals) {
         '<div class="signal-row"><span class="label">Last impact</span><span class="' + (s.quotedImpact !== undefined && s.quotedImpact > s.maxEntryImpactPct ? 'red' : 'green') + '">' + (s.quotedImpact !== undefined ? fmt(s.quotedImpact, 4) + '%' : 'N/A') + '</span></div>' +
         '<div class="signal-row" style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;"><span class="label">Status</span><span style="color:' + statusColor + ';font-size:0.75rem;">' + statusText + '</span></div>' +
         '<div class="signal-row"><span class="label">Tier</span><span class="' + tierTextClass + '">' + tierText + '</span></div>' +
-        '<div class="signal-row"><span class="label">Live strategy</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + strategySummary + '</span></div>' +
-        '<div class="signal-row"><span class="label">Params</span><span style="font-family:Consolas,Monaco,monospace;font-size:0.72rem;color:#c9d1d9;">' + paramsText + '</span></div>' +
-        '<div class="signal-row"><span class="label">Stops</span><span style="font-size:0.75rem;color:#c9d1d9;">' + stopsText + '</span></div>' +
+        renderRouteList(s.allRegimeRoutes, s.routeId) +
       '</div>' +
     '</div>';
   }).join('');
