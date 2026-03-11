@@ -380,7 +380,7 @@ export function getDashboardHtml(): string {
     <div style="max-height: 400px; overflow-y: auto;">
       <table>
         <thead>
-          <tr><th>Time</th><th>Mint</th><th>PnL</th><th>PnL %</th><th>Hold</th><th>Exit / Entry</th></tr>
+          <tr id="tradeHeaderRow"><th onclick="setTradeSort('exitTime')" style="cursor:pointer">Time</th><th onclick="setTradeSort('mint')" style="cursor:pointer">Mint</th><th onclick="setTradeSort('pnlUsdc')" style="cursor:pointer">PnL</th><th onclick="setTradeSort('pnlPct')" style="cursor:pointer">PnL %</th><th onclick="setTradeSort('holdTimeMinutes')" style="cursor:pointer">Hold</th><th onclick="setTradeSort('exitType')" style="cursor:pointer">Exit / Entry</th></tr>
         </thead>
         <tbody id="tradeTable">
           <tr><td colspan="6" class="no-data">No trades yet</td></tr>
@@ -404,6 +404,8 @@ let latestTrades = [];
 let selectedTradeDate = '';
 let selectedTradeMint = '';
 let selectedTradeOutcome = 'all';
+let tradeSortKey = 'exitTime';
+let tradeSortDir = -1;
 function fmt(n, d=2) { return n === Infinity || n === -Infinity ? '--' : Number(n).toFixed(d); }
 function fmtPct(n) { return fmt(n,1) + '%'; }
 function pnlColor(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
@@ -564,7 +566,29 @@ function setTradeDateFilter(dateKey) {
 function setTradeMintFilter(mint) {
   selectedTradeMint = mint || '';
   syncTradeFilterButtons();
+}
+function setTradeSort(key) {
+  if (tradeSortKey === key) {
+    tradeSortDir = -tradeSortDir;
+  } else {
+    tradeSortKey = key;
+    tradeSortDir = key === 'exitTime' ? -1 : (key === 'pnlUsdc' || key === 'pnlPct' ? -1 : 1);
+  }
+  updateTradeHeaderSort();
+  const filtered = filterTradesByDate(latestTrades);
+  renderPerformance(filtered);
+  renderTrades(filtered, latestTrades.length);
   renderTradePanels();
+}
+function updateTradeHeaderSort() {
+  const row = document.getElementById('tradeHeaderRow');
+  if (!row) return;
+  const keys = ['exitTime', 'mint', 'pnlUsdc', 'pnlPct', 'holdTimeMinutes', 'exitType'];
+  Array.from(row.querySelectorAll('th')).forEach((th, i) => {
+    const k = keys[i];
+    const arrow = k === tradeSortKey ? (tradeSortDir === -1 ? ' ▼' : ' ▲') : '';
+    th.textContent = th.textContent.replace(/ [▲▼]$/, '') + arrow;
+  });
 }
 function computeTradeStats(trades) {
   const totalTrades = trades.length;
@@ -924,7 +948,13 @@ function renderTrades(trades, totalTrades) {
     el.innerHTML = '<tr><td colspan="6" class="no-data">No trades yet</td></tr>';
     return;
   }
-  const sorted = [...trades].sort((a, b) => b.exitTime - a.exitTime);
+  const sorted = [...trades].sort((a, b) => {
+    const av = a[tradeSortKey] ?? '';
+    const bv = b[tradeSortKey] ?? '';
+    if (typeof av === 'number' && typeof bv === 'number') return tradeSortDir * (av - bv);
+    return tradeSortDir * String(av).localeCompare(String(bv));
+  });
+  updateTradeHeaderSort();
   el.innerHTML = sorted.map(t => {
     const isWin = t.pnlUsdc > 0;
     const sig = signalCache.find(sc => sc.mint === t.mint);
