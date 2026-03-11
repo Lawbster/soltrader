@@ -270,9 +270,9 @@ function confidenceFromWindows(windowsSeen: number): 'strong' | 'moderate' | 'fr
 }
 
 function actionFromRow(r: RankedRow): 'keep' | 'watch' | 'avoid' {
-  if (r.windowsSeen >= 6 && r.worstPnlPct > 0 && r.meanTrades >= 10) return 'keep';
-  if (r.windowsSeen >= 4 && r.meanPnlPct > 0 && r.meanTrades >= 8) return 'watch';
-  if (r.meanPnlPct > 0) return 'watch';
+  if (r.windowsSeen >= 6 && r.worstPnlPct > 0 && r.meanTrades >= 4) return 'keep';
+  if (r.windowsSeen >= 4 && r.meanPnlPct > 0 && r.meanTrades >= 3) return 'watch';
+  if (r.meanPnlPct > 0) return 'watch'; // fallthrough: positive mean, low window/trade count — advisory only
   return 'avoid';
 }
 

@@ -864,6 +864,51 @@
               "sl": -3,
               "tp": 4,
               "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "popcat-1m-macd-zero-down-research",
+              "templateId": "macd-zero-rsi-confirm",
+              "timeframeMinutes": 1,
+              "priority": 420,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 720,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsiMax": 50,
+                "rsiExit": 60
+              },
+              "sl": -3,
+              "tp": 4,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "popcat-1m-adx-range-down-research",
+              "templateId": "adx-range-rsi-bb",
+              "timeframeMinutes": 1,
+              "priority": 410,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 720,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "adxMax": 25,
+                "rsiEntry": 35,
+                "rsiExit": 50
+              },
+              "sl": -2,
+              "tp": 4,
+              "exitMode": "indicator"
             }
           ]
         }
