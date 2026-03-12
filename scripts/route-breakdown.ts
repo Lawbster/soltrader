@@ -22,11 +22,14 @@ import type { Position } from '../src/execution/types';
 const DATA_DIR = path.resolve(__dirname, '../data');
 
 const args = process.argv.slice(2);
-const dateArg   = args[args.indexOf('--date')    + 1] as string | undefined;
-const sinceArg  = args[args.indexOf('--since')   + 1] as string | undefined;
-const daysArg   = args[args.indexOf('--days')    + 1] as string | undefined;
-const maxPctArg = args[args.indexOf('--max-pct') + 1] as string | undefined;
-const maxPct    = maxPctArg ? parseFloat(maxPctArg) : null;
+function argVal(flag: string): string | undefined {
+  const i = args.indexOf(flag);
+  return i >= 0 ? args[i + 1] : undefined;
+}
+const dateArg  = argVal('--date');
+const sinceArg = argVal('--since');
+const daysArg  = argVal('--days');
+const maxPct   = argVal('--max-pct') ? parseFloat(argVal('--max-pct')!) : null;
 
 function pad(s: string | number, w: number, right = false): string {
   const str = String(s);
