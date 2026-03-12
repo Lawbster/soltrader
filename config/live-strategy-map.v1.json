@@ -25,7 +25,7 @@
                 "staleMinPnlPct": 0
               },
               "params": {
-                "widthThreshold": 0.08
+                "widthThreshold": 0.05
               },
               "sl": -3,
               "tp": 3,
@@ -225,25 +225,69 @@
           "routes": [
             {
               "enabled": true,
-              "routeId": "pippin-15m-rsi2-down-research",
-              "templateId": "rsi2-micro-range",
-              "timeframeMinutes": 15,
+              "routeId": "pippin-1m-bb-rsi-crsi-down-research",
+              "templateId": "bb-rsi-crsi-reversal",
+              "timeframeMinutes": 1,
+              "priority": 460,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "rsiEntry": 25,
+                "crsiEntry": 20,
+                "rsiExit": 55
+              },
+              "sl": -2,
+              "tp": 4,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "pippin-1m-rsi-session-down-research",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
               "priority": 450,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 30,
+                "exit": 75,
+                "session": 0
+              },
+              "sl": -3,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "routeId": "pippin-15m-bb-squeeze-down-research",
+              "templateId": "bb-squeeze-breakout",
+              "timeframeMinutes": 15,
+              "priority": 440,
               "protection": {
                 "profitLockArmPct": 1,
                 "profitLockPct": 0.2,
                 "trailArmPct": 2.5,
                 "trailGapPct": 1.25,
-                "staleMaxHoldMinutes": 960,
+                "staleMaxHoldMinutes": 480,
                 "staleMinPnlPct": 0
               },
               "params": {
-                "rsi2Entry": 15,
-                "rsi2Exit": 95,
-                "adxMax": 20
+                "widthThreshold": 0.05
               },
-              "sl": -1,
-              "tp": 3,
+              "sl": -1.5,
+              "tp": 6,
               "exitMode": "indicator"
             },
             {
@@ -270,25 +314,25 @@
             },
             {
               "enabled": false,
-              "routeId": "pippin-1m-bb-rsi-crsi-down-research",
-              "templateId": "bb-rsi-crsi-reversal",
-              "timeframeMinutes": 1,
-              "priority": 420,
+              "routeId": "pippin-15m-rsi2-down-research",
+              "templateId": "rsi2-micro-range",
+              "timeframeMinutes": 15,
+              "priority": 410,
               "protection": {
                 "profitLockArmPct": 1,
                 "profitLockPct": 0.2,
-                "trailArmPct": 2,
-                "trailGapPct": 1,
-                "staleMaxHoldMinutes": 360,
+                "trailArmPct": 2.5,
+                "trailGapPct": 1.25,
+                "staleMaxHoldMinutes": 960,
                 "staleMinPnlPct": 0
               },
               "params": {
-                "rsiEntry": 25,
-                "crsiEntry": 20,
-                "rsiExit": 55
+                "rsi2Entry": 15,
+                "rsi2Exit": 95,
+                "adxMax": 20
               },
-              "sl": -3,
-              "tp": 4,
+              "sl": -1,
+              "tp": 3,
               "exitMode": "indicator"
             }
           ]
@@ -308,6 +352,29 @@
         "sideways": {
           "enabled": true,
           "routes": [
+            {
+              "enabled": true,
+              "routeId": "pump-15m-adx-range-side-research",
+              "templateId": "adx-range-rsi-bb",
+              "timeframeMinutes": 15,
+              "priority": 470,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2.5,
+                "trailGapPct": 1.25,
+                "staleMaxHoldMinutes": 960,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "adxMax": 25,
+                "rsiEntry": 35,
+                "rsiExit": 50
+              },
+              "sl": -3,
+              "tp": 6,
+              "exitMode": "indicator"
+            },
             {
               "enabled": true,
               "routeId": "pump-15m-rsi-crsi-mid-side-research",
@@ -559,8 +626,8 @@
             },
             {
               "enabled": true,
-              "routeId": "hnt-1m-vwap-rsi-down-research",
-              "templateId": "vwap-rsi-range-revert",
+              "routeId": "hnt-1m-adx-range-down-research",
+              "templateId": "adx-range-rsi-bb",
               "timeframeMinutes": 1,
               "priority": 430,
               "protection": {
@@ -568,12 +635,13 @@
                 "profitLockPct": 0.2,
                 "trailArmPct": 2,
                 "trailGapPct": 1,
-                "staleMaxHoldMinutes": 480,
+                "staleMaxHoldMinutes": 720,
                 "staleMinPnlPct": 0
               },
               "params": {
                 "adxMax": 25,
-                "rsiEntry": 35
+                "rsiEntry": 35,
+                "rsiExit": 50
               },
               "sl": -2,
               "tp": 4,
@@ -842,6 +910,28 @@
         "downtrend": {
           "enabled": true,
           "routes": [
+            {
+              "enabled": true,
+              "routeId": "popcat-1m-connors-down-research",
+              "templateId": "connors-sma50-pullback",
+              "timeframeMinutes": 1,
+              "priority": 440,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 720,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 20,
+                "exit": 70
+              },
+              "sl": -2,
+              "tp": 4,
+              "exitMode": "indicator"
+            },
             {
               "enabled": true,
               "routeId": "popcat-1m-crsi-session-down-research",

@@ -62,6 +62,7 @@ interface CliArgs {
   rankExitParity: 'indicator' | 'price' | 'both';
   requireTimeframes: number[];
   timeframeSupportMin: number;
+  minWorstOtherRegimePct: number; // filter by worst pnl in non-target regimes; default -Infinity
 }
 
 interface SweepRow {
@@ -125,6 +126,10 @@ interface CandidateRow extends SweepRow {
   hasRequiredTimeframes: boolean;
   mtfScore: number;
   parityDelta: number | null; // price.pnlPct - indicator.pnlPct; null if not paired
+  regimeUpPnlPct: number | null;   // avg pnlPct in uptrend entry windows for this combo
+  regimeSidePnlPct: number | null; // avg pnlPct in sideways entry windows for this combo
+  regimeDownPnlPct: number | null; // avg pnlPct in downtrend entry windows for this combo
+  worstOtherRegimePnlPct: number | null; // min of the 2 non-target regimes (regime brittleness check)
 }
 
 interface PatternRow {
@@ -166,6 +171,7 @@ function presetDefaults(preset: CandidatePreset): Omit<CliArgs, 'file' | 'files'
       rankExitParity: 'indicator',
       requireTimeframes: [],
       timeframeSupportMin: 1,
+      minWorstOtherRegimePct: Number.NEGATIVE_INFINITY,
     };
   }
 
@@ -187,6 +193,7 @@ function presetDefaults(preset: CandidatePreset): Omit<CliArgs, 'file' | 'files'
     rankExitParity: 'indicator',
     requireTimeframes: [],
     timeframeSupportMin: 1,
+    minWorstOtherRegimePct: Number.NEGATIVE_INFINITY,
   };
 }
 
@@ -343,6 +350,11 @@ function parseArgs(argv: string[]): CliArgs {
       i++;
       continue;
     }
+    if (arg === '--min-worst-other-regime') {
+      args.minWorstOtherRegimePct = parseNumber(arg, next);
+      i++;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -407,6 +419,8 @@ function printHelp(): void {
     '                            both: rank all rows (note: same strategy may appear twice)',
     '  --require-timeframes CSV  Require candidates to exist on all listed TFs, e.g. 1,5,15',
     '  --timeframe-support-min N Minimum TF support count for candidate rows (default: 1)',
+    '  --min-worst-other-regime N Filter out candidates where worst non-target regime pnl < N% (e.g. -10)',
+    '                            Requires exit-parity both sweep data. Skipped if only one regime seen.',
   ];
   console.log(help.join('\n'));
 }
@@ -689,6 +703,33 @@ function buildParityDeltaMap(rows: SweepRow[]): Map<string, number | null> {
   return result;
 }
 
+interface RegimePnlStats {
+  up: number | null;
+  side: number | null;
+  down: number | null;
+}
+
+function buildRegimePnlMap(rows: SweepRow[]): Map<string, RegimePnlStats> {
+  const buckets = new Map<string, { up: number[]; side: number[]; down: number[] }>();
+  for (const row of rows) {
+    const key = `${row.template}||${row.token}||${row.timeframe}||${row.params}||${row.exitParity ?? 'none'}`;
+    if (!buckets.has(key)) buckets.set(key, { up: [], side: [], down: [] });
+    const b = buckets.get(key)!;
+    const regime = (row.entryTrendRegime && row.entryTrendRegime !== 'unknown')
+      ? row.entryTrendRegime : row.trendRegime;
+    if (regime === 'uptrend') b.up.push(row.pnlPct);
+    else if (regime === 'sideways') b.side.push(row.pnlPct);
+    else if (regime === 'downtrend') b.down.push(row.pnlPct);
+  }
+  const avg = (arr: number[]): number | null =>
+    arr.length > 0 ? arr.reduce((a, v) => a + v, 0) / arr.length : null;
+  const result = new Map<string, RegimePnlStats>();
+  for (const [key, b] of buckets) {
+    result.set(key, { up: avg(b.up), side: avg(b.side), down: avg(b.down) });
+  }
+  return result;
+}
+
 function computeCombinedStat(
   pnlPct: number,
   trades: number,
@@ -792,7 +833,7 @@ function computeMtfScore(
   return trendAdjustedScore + supportBonus - consistencyPenalty + requiredBonus;
 }
 
-function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, parityDelta: number | null = null): CandidateRow {
+function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, parityDelta: number | null = null, regimeStats: RegimePnlStats | null = null): CandidateRow {
   const wins = (row.winRate / 100) * row.trades;
   const losses = Math.max(row.trades - wins, 0);
   const adjustedWinRate = (wins + priorWins) / (row.trades + priorWins + priorLosses);
@@ -823,6 +864,18 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, pari
   const alphaBlendPct = alphaFromReturn(row.pnlPct, weightedRetBaseline);
   const trendAdjustedScore = computeTrendAdjustedScore(combinedStat, alphaWindowPct, alphaBlendPct);
 
+  // Cross-regime: compute worst pnlPct in the OTHER two regimes
+  const targetRegime = (row.entryTrendRegime && row.entryTrendRegime !== 'unknown')
+    ? row.entryTrendRegime : row.trendRegime;
+  const regimeUpPnlPct = regimeStats?.up ?? null;
+  const regimeSidePnlPct = regimeStats?.side ?? null;
+  const regimeDownPnlPct = regimeStats?.down ?? null;
+  const otherVals: number[] = [];
+  if (targetRegime !== 'uptrend'   && regimeUpPnlPct   !== null) otherVals.push(regimeUpPnlPct);
+  if (targetRegime !== 'sideways'  && regimeSidePnlPct !== null) otherVals.push(regimeSidePnlPct);
+  if (targetRegime !== 'downtrend' && regimeDownPnlPct !== null) otherVals.push(regimeDownPnlPct);
+  const worstOtherRegimePnlPct = otherVals.length > 0 ? Math.min(...otherVals) : null;
+
   return {
     ...row,
     wins,
@@ -847,13 +900,21 @@ function toCandidate(row: SweepRow, priorWins: number, priorLosses: number, pari
     hasRequiredTimeframes: true,
     mtfScore: trendAdjustedScore,
     parityDelta,
+    regimeUpPnlPct,
+    regimeSidePnlPct,
+    regimeDownPnlPct,
+    worstOtherRegimePnlPct,
   };
 }
 
 function matchesCandidateFloor(row: CandidateRow, args: CliArgs): boolean {
-  return row.winRate >= args.minWinRate
-    && row.pnlPct >= args.minPnlPct
-    && row.expectancyPct >= args.minExpectancyPct;
+  if (row.winRate < args.minWinRate) return false;
+  if (row.pnlPct < args.minPnlPct) return false;
+  if (row.expectancyPct < args.minExpectancyPct) return false;
+  if (Number.isFinite(args.minWorstOtherRegimePct) &&
+      row.worstOtherRegimePnlPct !== null &&
+      row.worstOtherRegimePnlPct < args.minWorstOtherRegimePct) return false;
+  return true;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -1064,6 +1125,7 @@ function main(): void {
   }
 
   const parityDeltaMap = buildParityDeltaMap(rows);
+  const regimePnlMap = buildRegimePnlMap(rows);
   const hasParityColumn = rows.some(r => r.exitParity !== null);
 
   let rankingRows: SweepRow[];
@@ -1085,7 +1147,8 @@ function main(): void {
 
   const candidateRows = rankingRows.map(r => {
     const key = `${r.template}||${r.token}||${r.timeframe}||${r.params}`;
-    return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null);
+    const regimeKey = `${r.template}||${r.token}||${r.timeframe}||${r.params}||${r.exitParity ?? 'none'}`;
+    return toCandidate(r, args.priorWins, args.priorLosses, parityDeltaMap.get(key) ?? null, regimePnlMap.get(regimeKey) ?? null);
   });
 
   const baseCandidates = candidateRows.filter(r => matchesCandidateFloor(r, args));
@@ -1143,6 +1206,10 @@ function main(): void {
   if (args.timeframeSupportMin > 1 || args.requireTimeframes.length > 0) {
     const req = args.requireTimeframes.length > 0 ? args.requireTimeframes.join('|') : 'none';
     console.log(`Rows after MTF filters (support>=${args.timeframeSupportMin}, required=${req}): ${filtered.length}`);
+  }
+  if (Number.isFinite(args.minWorstOtherRegimePct)) {
+    const withData = candidateRows.filter(r => r.worstOtherRegimePnlPct !== null).length;
+    console.log(`Regime brittleness filter (worstOtherRegime >= ${args.minWorstOtherRegimePct}%): ${baseCandidates.length} passed (${withData} of ${candidateRows.length} had cross-regime data)`);
   }
   console.log(`Probe bucket (${args.probeMinTrades}-${args.probeMaxTrades} trades): ${probe.length}`);
   console.log(`Core bucket (trades >= ${args.coreMinTrades}, pnl >= ${args.coreMinPnlPct}%, PF >= ${args.coreMinProfitFactor}): ${core.length}`);
@@ -1252,6 +1319,10 @@ function main(): void {
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
       mtfScore: formatNum(r.mtfScore, 6),
       parityDelta: formatOptionalNum(r.parityDelta, 4),
+      regimeUpPnlPct: formatOptionalNum(r.regimeUpPnlPct, 4),
+      regimeSidePnlPct: formatOptionalNum(r.regimeSidePnlPct, 4),
+      regimeDownPnlPct: formatOptionalNum(r.regimeDownPnlPct, 4),
+      worstOtherRegimePnlPct: formatOptionalNum(r.worstOtherRegimePnlPct, 4),
     }));
 
   const coreRows = capPerToken(
@@ -1293,6 +1364,10 @@ function main(): void {
       trendAdjustedScore: formatNum(r.trendAdjustedScore, 6),
       mtfScore: formatNum(r.mtfScore, 6),
       parityDelta: formatOptionalNum(r.parityDelta, 4),
+      regimeUpPnlPct: formatOptionalNum(r.regimeUpPnlPct, 4),
+      regimeSidePnlPct: formatOptionalNum(r.regimeSidePnlPct, 4),
+      regimeDownPnlPct: formatOptionalNum(r.regimeDownPnlPct, 4),
+      worstOtherRegimePnlPct: formatOptionalNum(r.worstOtherRegimePnlPct, 4),
     }));
 
   const patternRows = [...probePatterns, ...corePatterns]

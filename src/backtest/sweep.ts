@@ -1231,9 +1231,10 @@ function main() {
 
   fs.mkdirSync(SWEEP_OUT_DIR, { recursive: true });
   const dateStr = new Date().toISOString().split('T')[0];
+  const filterSuffix = [templateFilter, tokenFilter].filter(Boolean).join('-');
   const outPath = outFileFlag
     ? path.resolve(outFileFlag)
-    : path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min.csv`);
+    : path.join(SWEEP_OUT_DIR, `${dateStr}-${timeframe}min${filterSuffix ? `-${filterSuffix}` : ''}.csv`);
   fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
   const csvHeader = [
