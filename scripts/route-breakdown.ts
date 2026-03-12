@@ -12,6 +12,7 @@
  *   npx tsx scripts/route-breakdown.ts --date 2026-03-11   # exited on this date
  *   npx tsx scripts/route-breakdown.ts --since 2026-03-11  # exited on or after
  *   npx tsx scripts/route-breakdown.ts --days 2            # exited in last N calendar days
+ *   npx tsx scripts/route-breakdown.ts --max-pct 20        # exclude trades with |pnlPct| > 20 (outliers/errors)
  */
 
 import fs from 'fs';
@@ -21,9 +22,11 @@ import type { Position } from '../src/execution/types';
 const DATA_DIR = path.resolve(__dirname, '../data');
 
 const args = process.argv.slice(2);
-const dateArg  = args[args.indexOf('--date')  + 1] as string | undefined;
-const sinceArg = args[args.indexOf('--since') + 1] as string | undefined;
-const daysArg  = args[args.indexOf('--days')  + 1] as string | undefined;
+const dateArg   = args[args.indexOf('--date')    + 1] as string | undefined;
+const sinceArg  = args[args.indexOf('--since')   + 1] as string | undefined;
+const daysArg   = args[args.indexOf('--days')    + 1] as string | undefined;
+const maxPctArg = args[args.indexOf('--max-pct') + 1] as string | undefined;
+const maxPct    = maxPctArg ? parseFloat(maxPctArg) : null;
 
 function pad(s: string | number, w: number, right = false): string {
   const str = String(s);
@@ -165,11 +168,15 @@ function run() {
     pnlUsdc: 0, pnlPcts: [], holdMins: [],
   };
 
+  let excluded = 0;
   for (const pos of positions) {
     const routeId = pos.strategyPlan?.routeId ?? 'unknown';
     const token = pos.mint.slice(0, 6);
     const tf = pos.strategyPlan?.timeframeMinutes ? pos.strategyPlan.timeframeMinutes + 'm' : '--';
     const { pnlUsdc, pnlPct, holdMins } = computePnl(pos);
+
+    if (maxPct !== null && Math.abs(pnlPct) > maxPct) { excluded++; continue; }
+
     const isWin = pnlUsdc > 0;
 
     // By route
@@ -207,7 +214,8 @@ function run() {
   const tokenStats = Array.from(byToken.values()).sort((a, b) => b.pnlUsdc - a.pnlUsdc);
 
   const label = dateArg ? `date=${dateArg}` : sinceArg ? `since=${sinceArg}` : daysArg ? `last ${daysArg} days` : 'all dates';
-  console.log(`\nRoute breakdown — ${label} — ${positions.length} closed positions`);
+  const excludedNote = excluded > 0 ? ` (${excluded} excluded >|${maxPct}%|)` : '';
+  console.log(`\nRoute breakdown — ${label} — ${positions.length - excluded} closed positions${excludedNote}`);
 
   printTable(routeStats, 'BY ROUTE (sorted by PnL)');
   printTable(tokenStats, 'BY TOKEN');

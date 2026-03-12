@@ -55,7 +55,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-1m-adx-range-up-research",
               "templateId": "adx-range-rsi-bb",
               "timeframeMinutes": 1,
@@ -196,7 +196,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "pippin-1m-bb-rsi-crsi-side-research",
               "templateId": "bb-rsi-crsi-reversal",
               "timeframeMinutes": 1,
