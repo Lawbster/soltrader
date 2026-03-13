@@ -553,7 +553,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-15m-rsi-crsi-mid-side-research",
               "templateId": "rsi-crsi-midpoint-exit",
               "timeframeMinutes": 15,
@@ -575,7 +575,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-1m-rsi-session-side-research",
               "templateId": "rsi-session-gate",
               "timeframeMinutes": 1,
