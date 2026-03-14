@@ -35,6 +35,20 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 60_000; // 60 minutes
 
+// Serial request queue — prevents burst of simultaneous fetches hitting rate limit.
+// Birdeye free tier allows ~1 req/sec; enforce 1.1s gap between calls.
+let fetchQueue: Promise<void> = Promise.resolve();
+const FETCH_GAP_MS = 1100;
+
+function enqueue<T>(fn: () => Promise<T>): Promise<T> {
+  const result = fetchQueue.then(fn);
+  fetchQueue = result.then(
+    () => new Promise(r => setTimeout(r, FETCH_GAP_MS)),
+    () => new Promise(r => setTimeout(r, FETCH_GAP_MS)),
+  );
+  return result;
+}
+
 export async function fetchBirdeyeVolume(
   mint: string,
   type: '1m' | '5m' | '15m',
@@ -58,9 +72,7 @@ export async function fetchBirdeyeVolume(
   let items: BirdeyeCandle[] = [];
 
   try {
-    const res = await fetch(url, {
-      headers: { 'X-API-KEY': apiKey },
-    });
+    const res = await enqueue(() => fetch(url, { headers: { 'X-API-KEY': apiKey } }));
     if (!res.ok) {
       log.warn('Birdeye OHLCV fetch failed', { mint, status: res.status });
       return cached?.data ?? new Map();
