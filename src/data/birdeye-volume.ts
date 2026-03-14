@@ -15,7 +15,6 @@
 import { createLogger } from '../utils';
 
 const log = createLogger('birdeye-volume');
-const API_KEY = process.env.BIRDEYE_API_KEY ?? '';
 const BASE = 'https://public-api.birdeye.so/defi/ohlcv';
 
 interface BirdeyeCandle {
@@ -42,7 +41,8 @@ export async function fetchBirdeyeVolume(
   from: number, // unix seconds
   to: number,   // unix seconds
 ): Promise<Map<number, number>> {
-  if (!API_KEY) {
+  const apiKey = process.env.BIRDEYE_API_KEY ?? '';
+  if (!apiKey) {
     log.warn('BIRDEYE_API_KEY not set — skipping volume fetch');
     return new Map();
   }
@@ -59,7 +59,7 @@ export async function fetchBirdeyeVolume(
 
   try {
     const res = await fetch(url, {
-      headers: { 'X-API-KEY': API_KEY },
+      headers: { 'X-API-KEY': apiKey },
     });
     if (!res.ok) {
       log.warn('Birdeye OHLCV fetch failed', { mint, status: res.status });
