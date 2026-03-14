@@ -35,10 +35,14 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 60_000; // 60 minutes
 
+// Backoff for 429s — don't retry a failed mint for this long.
+const backoff = new Map<string, number>();
+const BACKOFF_MS = 10 * 60_000; // 10 minutes
+
 // Serial request queue — prevents burst of simultaneous fetches hitting rate limit.
-// Birdeye free tier allows ~1 req/sec; enforce 1.1s gap between calls.
+// Birdeye free tier is restrictive; enforce 2s gap between calls.
 let fetchQueue: Promise<void> = Promise.resolve();
-const FETCH_GAP_MS = 1100;
+const FETCH_GAP_MS = 2000;
 
 function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const result = fetchQueue.then(fn);
@@ -68,6 +72,12 @@ export async function fetchBirdeyeVolume(
     return cached.data;
   }
 
+  // Skip if we recently got a 429 for this mint
+  const backedOff = backoff.get(cacheKey);
+  if (backedOff && Date.now() - backedOff < BACKOFF_MS) {
+    return cached?.data ?? new Map();
+  }
+
   const url = `${BASE}?address=${mint}&type=${type}&time_from=${from}&time_to=${to}`;
   let items: BirdeyeCandle[] = [];
 
@@ -75,6 +85,7 @@ export async function fetchBirdeyeVolume(
     const res = await enqueue(() => fetch(url, { headers: { 'X-API-KEY': apiKey } }));
     if (!res.ok) {
       log.warn('Birdeye OHLCV fetch failed', { mint, status: res.status });
+      if (res.status === 429) backoff.set(cacheKey, Date.now());
       return cached?.data ?? new Map();
     }
     const json = await res.json() as { success: boolean; data?: { items?: BirdeyeCandle[] } };
