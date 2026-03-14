@@ -11,7 +11,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "pippin-15m-bb-squeeze-up-research",
               "templateId": "bb-squeeze-breakout",
               "timeframeMinutes": 15,
@@ -270,7 +270,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "pippin-15m-bb-squeeze-down-research",
               "templateId": "bb-squeeze-breakout",
               "timeframeMinutes": 15,
@@ -603,7 +603,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "hnt-15m-macd-zero-down-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 15,
@@ -648,7 +648,7 @@
               "exitMode": "indicator"
             },
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "hnt-15m-rsi-crsi-mid-down-research",
               "templateId": "rsi-crsi-midpoint-exit",
               "timeframeMinutes": 15,
@@ -753,7 +753,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "cbbtc-1m-rsi-session-side-research",
               "templateId": "rsi-session-gate",
               "timeframeMinutes": 1,
@@ -883,7 +883,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": false,
+              "enabled": true,
               "routeId": "popcat-15m-rsi-session-side-research",
               "templateId": "rsi-session-gate",
               "timeframeMinutes": 15,
