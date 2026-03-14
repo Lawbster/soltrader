@@ -26,7 +26,10 @@ export type TemplateId =
   | 'rsi-session-gate'
   | 'crsi-session-gate'
   | 'volume-spike-reversal'
-  | 'atr-percentile-entry';
+  | 'atr-percentile-entry'
+  | 'adx-vwap-trend-continue'
+  | 'bb-squeeze-volume-breakout'
+  | 'atr-lowvol-meanrevert';
 
 /**
  * Shared signal context for template evaluators — usable from both sweep (via adapter)

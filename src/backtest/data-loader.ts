@@ -65,7 +65,7 @@ export function loadCandles(mint: string, fromDate?: string, toDate?: string): C
       if (!line) continue;
       const parts = line.split(',');
       if (parts.length < 6) continue;
-      const [timestamp, open, high, low, close, pricePoints] = parts;
+      const [timestamp, open, high, low, close, pricePoints, volumeCol] = parts;
       const ts = Number(timestamp);
       const o = Number(open);
       const h = Number(high);
@@ -73,9 +73,11 @@ export function loadCandles(mint: string, fromDate?: string, toDate?: string): C
       const c = Number(close);
       const pp = Number(pricePoints);
       if (isNaN(ts) || isNaN(o) || isNaN(h) || isNaN(l) || isNaN(c)) continue;
+      const vol = volumeCol !== undefined && volumeCol.trim() !== '' ? Number(volumeCol) : undefined;
       candles.push({
         timestamp: ts, open: o, high: h, low: l, close: c,
         pricePoints: isNaN(pp) ? 0 : pp,
+        volume: vol !== undefined && !isNaN(vol) ? vol : undefined,
       });
     }
   }
@@ -110,7 +112,8 @@ export function lowSeries(candles: Candle[]): number[] {
 }
 
 export function volumeSeries(candles: Candle[]): number[] {
-  return candles.map(c => c.pricePoints);
+  // Prefer real Birdeye USD volume; fall back to pricePoints poll count for older candles.
+  return candles.map(c => c.volume ?? c.pricePoints);
 }
 
 /** Aggregate 1-min candles into higher timeframe bars.
@@ -126,28 +129,31 @@ export function aggregateCandles(candles: Candle[], intervalMinutes: number): Ca
   let low = candles[0].low;
   let close = candles[0].close;
   let pp = candles[0].pricePoints;
+  let vol: number | undefined = candles[0].volume;
 
   for (let i = 1; i < candles.length; i++) {
     const c = candles[i];
     const bucket = Math.floor(c.timestamp / intervalMs) * intervalMs;
 
     if (bucket !== bucketStart) {
-      result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp });
+      result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp, volume: vol });
       bucketStart = bucket;
       open = c.open;
       high = c.high;
       low = c.low;
       close = c.close;
       pp = c.pricePoints;
+      vol = c.volume;
     } else {
       if (c.high > high) high = c.high;
       if (c.low < low) low = c.low;
       close = c.close;
       pp += c.pricePoints;
+      if (c.volume !== undefined) vol = (vol ?? 0) + c.volume;
     }
   }
 
   // Push final bar
-  result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp });
+  result.push({ timestamp: bucketStart, open, high, low, close, pricePoints: pp, volume: vol });
   return result;
 }

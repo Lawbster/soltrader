@@ -14,6 +14,8 @@ export interface Candle {
   low: number;
   close: number;
   pricePoints: number;
+  /** Real USD trade volume from Birdeye. Absent on older candles. */
+  volume?: number;
 }
 
 export interface TokenDataset {

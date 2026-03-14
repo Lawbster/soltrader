@@ -238,6 +238,36 @@ const evaluators: Record<TemplateId, Evaluator> = {
     return 'hold';
   },
 
+  'adx-vwap-trend-continue': (p, ctx) => {
+    const { adx, rsi, vwapProxy } = ctx.indicators;
+    if (adx === undefined || rsi === undefined || vwapProxy === undefined) return 'hold';
+    if (ctx.hasPosition && (ctx.close < vwapProxy || rsi > p.rsiExit)) return 'sell';
+    if (adx > p.adxMin && ctx.close > vwapProxy && rsi <= p.rsiEntryMax) return 'buy';
+    return 'hold';
+  },
+
+  'bb-squeeze-volume-breakout': (p, ctx) => {
+    const { bollingerBands, volumeZScore } = ctx.indicators;
+    const prev = ctx.prevIndicators;
+    if (!bollingerBands || volumeZScore === undefined || !prev?.bollingerBands) return 'hold';
+    if (ctx.hasPosition && ctx.close < bollingerBands.middle) return 'sell';
+    if (
+      prev.bollingerBands.width < p.widthThreshold &&
+      bollingerBands.width > prev.bollingerBands.width &&
+      ctx.close > bollingerBands.upper &&
+      volumeZScore > p.volZScoreMin
+    ) return 'buy';
+    return 'hold';
+  },
+
+  'atr-lowvol-meanrevert': (p, ctx) => {
+    const { atrPctRank, rsi, adx } = ctx.indicators;
+    if (atrPctRank === undefined || rsi === undefined || adx === undefined) return 'hold';
+    if (ctx.hasPosition && (rsi > p.rsiExit || atrPctRank > p.atrPctExit)) return 'sell';
+    if (atrPctRank < p.atrPctMax && adx < p.adxMax && rsi < p.rsiEntry) return 'buy';
+    return 'hold';
+  },
+
   'volume-spike-reversal': (p, ctx) => {
     const { rsi, volumeZScore } = ctx.indicators;
     if (rsi === undefined || volumeZScore === undefined) return 'hold';
@@ -283,8 +313,11 @@ const metadataMap: Record<TemplateId, TemplateMetadata> = {
   'atr-breakout-follow':     { id: 'atr-breakout-follow',     requiredHistory: 15,  requiredIndicators: ['atr', 'adx'],                           liveCompatible: true },
   'rsi-session-gate':           { id: 'rsi-session-gate',           requiredHistory: 15,  requiredIndicators: ['rsi'],                                  liveCompatible: true },
   'crsi-session-gate':          { id: 'crsi-session-gate',          requiredHistory: 102, requiredIndicators: ['connorsRsi'],                            liveCompatible: true },
-  'volume-spike-reversal':      { id: 'volume-spike-reversal',      requiredHistory: 21,  requiredIndicators: ['rsi', 'volumeZScore'],                   liveCompatible: true },
-  'atr-percentile-entry':       { id: 'atr-percentile-entry',       requiredHistory: 70,  requiredIndicators: ['atrPctRank', 'rsi'],                        liveCompatible: true },
+  'volume-spike-reversal':      { id: 'volume-spike-reversal',      requiredHistory: 21,  requiredIndicators: ['rsi', 'volumeZScore'],                        liveCompatible: true },
+  'atr-percentile-entry':       { id: 'atr-percentile-entry',       requiredHistory: 70,  requiredIndicators: ['atrPctRank', 'rsi'],                          liveCompatible: true },
+  'adx-vwap-trend-continue':    { id: 'adx-vwap-trend-continue',    requiredHistory: 28,  requiredIndicators: ['adx', 'rsi', 'vwapProxy'],                    liveCompatible: true },
+  'bb-squeeze-volume-breakout': { id: 'bb-squeeze-volume-breakout', requiredHistory: 21,  requiredIndicators: ['bollingerBands', 'volumeZScore'],             liveCompatible: true },
+  'atr-lowvol-meanrevert':      { id: 'atr-lowvol-meanrevert',      requiredHistory: 70,  requiredIndicators: ['atrPctRank', 'rsi', 'adx'],                   liveCompatible: true },
 };
 
 // ── Required params per template (for validation) ────────────────────
@@ -316,6 +349,9 @@ const REQUIRED_PARAMS: Record<TemplateId, string[]> = {
   'crsi-session-gate':          ['entry', 'exit', 'session'],
   'volume-spike-reversal':      ['volZScore', 'rsiEntry', 'rsiExit', 'wickMin'],
   'atr-percentile-entry':       ['atrPctEntry', 'atrPctExit', 'rsiEntry', 'rsiExit'],
+  'adx-vwap-trend-continue':    ['adxMin', 'rsiEntryMax', 'rsiExit'],
+  'bb-squeeze-volume-breakout': ['widthThreshold', 'volZScoreMin'],
+  'atr-lowvol-meanrevert':      ['atrPctMax', 'atrPctExit', 'rsiEntry', 'rsiExit', 'adxMax'],
 };
 
 // ── Public API ────────────────────────────────────────────────────────

@@ -663,7 +663,7 @@ async function main() {
       savePriceHistory(priceHist);
       for (const entry of watchlist) {
         const pts = priceHist.get(entry.mint);
-        if (pts && pts.length > 0) exportCandles(entry.mint, pts);
+        if (pts && pts.length > 0) await exportCandles(entry.mint, pts);
       }
       const portfolio = getPortfolioState();
       const stats = getStats();

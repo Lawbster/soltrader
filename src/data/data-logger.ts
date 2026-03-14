@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { createLogger } from '../utils';
+import { fetchBirdeyeVolume } from './birdeye-volume';
 
 const log = createLogger('data-logger');
 const DATA_DIR = path.resolve(__dirname, '../../data');
@@ -94,7 +95,7 @@ interface PricePoint {
   price: number;
 }
 
-export function exportCandles(mint: string, priceHistory: PricePoint[]) {
+export async function exportCandles(mint: string, priceHistory: PricePoint[]) {
   if (priceHistory.length === 0) return;
 
   const date = getDateStr();
@@ -118,7 +119,10 @@ export function exportCandles(mint: string, priceHistory: PricePoint[]) {
     bucket.push(p);
   }
 
-  const header = 'timestamp,open,high,low,close,pricePoints';
+  // Fetch real USD volume from Birdeye (cached 60 min per mint/date)
+  const volumeMap = await fetchBirdeyeVolume(mint, '1m', dayStart / 1000, dayEnd / 1000);
+
+  const header = 'timestamp,open,high,low,close,pricePoints,volume';
   const dir = path.join(DATA_DIR, `candles/${mint}`);
   ensureDir(dir);
   const filePath = path.join(dir, `${date}.csv`);
@@ -143,7 +147,8 @@ export function exportCandles(mint: string, priceHistory: PricePoint[]) {
     const close = prices[prices.length - 1];
     const high = Math.max(...prices);
     const low = Math.min(...prices);
-    existing.set(ts, `${ts},${open},${high},${low},${close},${points.length}`);
+    const vol = volumeMap.get(ts);
+    existing.set(ts, `${ts},${open},${high},${low},${close},${points.length},${vol ?? ''}`);
   }
 
   // Write merged candles sorted by timestamp

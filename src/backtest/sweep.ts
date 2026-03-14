@@ -860,6 +860,84 @@ const templates: SweepTemplate[] = [
     },
   },
 
+  // ── ADX + VWAP trend continuation — buy pullbacks inside a confirmed trend ──
+  // Entry: ADX trending + close above VWAP + RSI pulled back into range.
+  // Exit: close drops below VWAP or RSI extends.
+  {
+    name: 'adx-vwap-trend-continue',
+    paramGrid: {
+      adxMin:      [18, 20, 25, 30],
+      rsiEntryMax: [45, 50, 55],
+      rsiExit:     [60, 65, 70],
+      sl:          [-2, -3, -5],
+      tp:          [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `adx-vwap-tc-adx${p.adxMin}-re${p.rsiEntryMax}-rx${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `ADX>${p.adxMin} + close>VWAP + RSI<${p.rsiEntryMax}, exit VWAP break or RSI>${p.rsiExit}`,
+        requiredHistory: 28,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('adx-vwap-trend-continue', p),
+      };
+    },
+  },
+
+  // ── BB squeeze + volume confirmation breakout ──
+  // Upgrades bb-squeeze-breakout by requiring volume participation on the breakout.
+  // Entry: squeeze (prev width below threshold) + expansion + close above upper + volumeZScore high.
+  // Exit: close retreats below middle band.
+  {
+    name: 'bb-squeeze-volume-breakout',
+    paramGrid: {
+      widthThreshold: [0.04, 0.05, 0.06, 0.08],
+      volZScoreMin:   [1.0, 1.5, 2.0],
+      sl:             [-1.5, -2, -3],
+      tp:             [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `bb-sqz-vol-w${p.widthThreshold}-vz${p.volZScoreMin}-sl${p.sl}-tp${p.tp}`,
+        description: `BB squeeze+vol breakout: width<${p.widthThreshold} then expand+upper+volZ>${p.volZScoreMin}`,
+        requiredHistory: 21,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('bb-squeeze-volume-breakout', p),
+      };
+    },
+  },
+
+  // ── ATR low-vol mean reversion — mean reversion gated by range + low volatility ──
+  // Distinct from atr-percentile-entry: adds ADX range gate (no entry during trending markets).
+  // Entry: ATR compressed + ADX below max (range env) + RSI oversold.
+  // Exit: RSI recovers or ATR re-expands.
+  {
+    name: 'atr-lowvol-meanrevert',
+    paramGrid: {
+      atrPctMax:  [20, 30],
+      atrPctExit: [50, 60],
+      rsiEntry:   [25, 30, 35],
+      rsiExit:    [55, 65],
+      adxMax:     [20, 25],
+      sl:         [-2, -3, -5],
+      tp:         [2, 3, 4],
+    },
+    build(p) {
+      return {
+        name: `atr-lv-mr-ap${p.atrPctMax}-ax${p.atrPctExit}-r${p.rsiEntry}-re${p.rsiExit}-adx${p.adxMax}-sl${p.sl}-tp${p.tp}`,
+        description: `ATR pct<${p.atrPctMax} + ADX<${p.adxMax} (range) + RSI<${p.rsiEntry}, exit RSI>${p.rsiExit} or ATR>${p.atrPctExit}`,
+        requiredHistory: 70,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('atr-lowvol-meanrevert', p),
+      };
+    },
+  },
+
   // ── ATR percentile compression entry — buy the dip during low-volatility phase ──
   // Entry: ATR at low percentile (compressed) + mild RSI oversold.
   // Exit: ATR re-expands (percentile rises) or RSI recovers.
@@ -918,6 +996,8 @@ const TEMPLATE_SETS: Record<string, string[]> = {
     'bb-squeeze-breakout',
     'volume-spike-reversal',
     'atr-percentile-entry',
+    'bb-squeeze-volume-breakout',
+    'atr-lowvol-meanrevert',
   ],
   trend: [
     'trend-pullback-rsi',
@@ -927,6 +1007,7 @@ const TEMPLATE_SETS: Record<string, string[]> = {
     'vwap-trend-pullback',
     'connors-sma50-pullback',
     'atr-breakout-follow',
+    'adx-vwap-trend-continue',
   ],
 };
 
