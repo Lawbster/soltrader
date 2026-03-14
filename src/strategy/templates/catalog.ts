@@ -229,6 +229,31 @@ const evaluators: Record<TemplateId, Evaluator> = {
     if (inSession && connorsRsi < p.entry) return 'buy';
     return 'hold';
   },
+
+  'atr-percentile-entry': (p, ctx) => {
+    const { atrPctRank, rsi } = ctx.indicators;
+    if (atrPctRank === undefined || rsi === undefined) return 'hold';
+    if (ctx.hasPosition && (atrPctRank > p.atrPctExit || rsi > p.rsiExit)) return 'sell';
+    if (atrPctRank < p.atrPctEntry && rsi < p.rsiEntry) return 'buy';
+    return 'hold';
+  },
+
+  'volume-spike-reversal': (p, ctx) => {
+    const { rsi, volumeZScore } = ctx.indicators;
+    if (rsi === undefined || volumeZScore === undefined) return 'hold';
+    if (ctx.high === undefined || ctx.low === undefined || ctx.open === undefined) return 'hold';
+    const range = ctx.high - ctx.low;
+    if (range <= 0) return 'hold';
+    const wickRatio = (ctx.close - ctx.low) / range;
+    if (ctx.hasPosition && rsi > p.rsiExit) return 'sell';
+    if (
+      volumeZScore > p.volZScore &&
+      rsi < p.rsiEntry &&
+      wickRatio > p.wickMin &&
+      ctx.close > ctx.open
+    ) return 'buy';
+    return 'hold';
+  },
 };
 
 // ── Metadata ──────────────────────────────────────────────────────────
@@ -256,8 +281,10 @@ const metadataMap: Record<TemplateId, TemplateMetadata> = {
   'connors-sma50-pullback':  { id: 'connors-sma50-pullback',  requiredHistory: 102, requiredIndicators: ['connorsRsi', 'sma'],                    liveCompatible: true },
   'rsi2-micro-range':        { id: 'rsi2-micro-range',        requiredHistory: 15,  requiredIndicators: ['rsiShort', 'adx'],                      liveCompatible: true },
   'atr-breakout-follow':     { id: 'atr-breakout-follow',     requiredHistory: 15,  requiredIndicators: ['atr', 'adx'],                           liveCompatible: true },
-  'rsi-session-gate':        { id: 'rsi-session-gate',        requiredHistory: 15,  requiredIndicators: ['rsi'],                                  liveCompatible: true },
-  'crsi-session-gate':       { id: 'crsi-session-gate',       requiredHistory: 102, requiredIndicators: ['connorsRsi'],                            liveCompatible: true },
+  'rsi-session-gate':           { id: 'rsi-session-gate',           requiredHistory: 15,  requiredIndicators: ['rsi'],                                  liveCompatible: true },
+  'crsi-session-gate':          { id: 'crsi-session-gate',          requiredHistory: 102, requiredIndicators: ['connorsRsi'],                            liveCompatible: true },
+  'volume-spike-reversal':      { id: 'volume-spike-reversal',      requiredHistory: 21,  requiredIndicators: ['rsi', 'volumeZScore'],                   liveCompatible: true },
+  'atr-percentile-entry':       { id: 'atr-percentile-entry',       requiredHistory: 70,  requiredIndicators: ['atrPctRank', 'rsi'],                        liveCompatible: true },
 };
 
 // ── Required params per template (for validation) ────────────────────
@@ -285,8 +312,10 @@ const REQUIRED_PARAMS: Record<TemplateId, string[]> = {
   'connors-sma50-pullback':  ['entry', 'exit'],
   'rsi2-micro-range':        ['rsi2Entry', 'rsi2Exit', 'adxMax'],
   'atr-breakout-follow':     ['adxMin'],
-  'rsi-session-gate':        ['entry', 'exit', 'session'],
-  'crsi-session-gate':       ['entry', 'exit', 'session'],
+  'rsi-session-gate':           ['entry', 'exit', 'session'],
+  'crsi-session-gate':          ['entry', 'exit', 'session'],
+  'volume-spike-reversal':      ['volZScore', 'rsiEntry', 'rsiExit', 'wickMin'],
+  'atr-percentile-entry':       ['atrPctEntry', 'atrPctExit', 'rsiEntry', 'rsiExit'],
 };
 
 // ── Public API ────────────────────────────────────────────────────────

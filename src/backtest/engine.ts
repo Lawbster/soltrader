@@ -8,6 +8,8 @@ import {
   computeBollingerBands, computeAtr, computeAdx,
   computeVwapProxy, computeObvProxy,
   computeRsiSeries, computeConnorsRsiSeries,
+  computeVolumeZScoreSeries,
+  computeAtrPercentileSeries,
 } from './indicators';
 
 interface PrecomputedIndicators {
@@ -22,6 +24,8 @@ interface PrecomputedIndicators {
   adx: number[];
   vwapProxy: number[];
   obvProxy: number[];
+  volumeZScore: (number | null)[];
+  atrPctRank: (number | null)[];
   snapshots: IndicatorValues[];
 }
 
@@ -95,6 +99,8 @@ function precompute(candles: Candle[], rawConfig?: BacktestConfig['indicatorConf
     adx: computeAdx(highs, lows, closes, 14),
     vwapProxy: computeVwapProxy(candles),
     obvProxy: computeObvProxy(closes, volumes),
+    volumeZScore: computeVolumeZScoreSeries(volumes),
+    atrPctRank: computeAtrPercentileSeries(computeAtr(highs, lows, closes, 14)),
     snapshots: [],
   };
 
@@ -131,6 +137,8 @@ function snapshotAt(pre: PrecomputedIndicators, index: number): IndicatorValues 
     adx: isNaN(pre.adx[index]) ? undefined : pre.adx[index],
     vwapProxy: pre.vwapProxy[index],
     obvProxy: pre.obvProxy[index],
+    volumeZScore: pre.volumeZScore[index] ?? undefined,
+    atrPctRank: pre.atrPctRank[index] ?? undefined,
   };
 }
 

@@ -269,6 +269,19 @@ export function computeAdx(
   return result;
 }
 
+/** Rolling volume z-score series — z-score of each candle's volume vs a rolling window. */
+export function computeVolumeZScoreSeries(volumes: number[], period = 20): (number | null)[] {
+  const result: (number | null)[] = new Array(volumes.length).fill(null);
+  for (let i = period - 1; i < volumes.length; i++) {
+    const window = volumes.slice(i - period + 1, i + 1);
+    const mean = window.reduce((a, v) => a + v, 0) / period;
+    const variance = window.reduce((a, v) => a + (v - mean) ** 2, 0) / period;
+    const std = Math.sqrt(variance);
+    result[i] = std > 0 ? (volumes[i] - mean) / std : 0;
+  }
+  return result;
+}
+
 /** Rolling RSI series — returns value at every candle position. */
 export function computeRsiSeries(values: number[], period: number): (number | null)[] {
   const result: (number | null)[] = new Array(values.length).fill(null);
@@ -295,6 +308,20 @@ export function computeRsiSeries(values: number[], period: number): (number | nu
     result[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
   }
 
+  return result;
+}
+
+/** Rolling ATR percentile series — percentile rank of each ATR value within a rolling window. */
+export function computeAtrPercentileSeries(atrs: number[], period = 50): (number | null)[] {
+  const result: (number | null)[] = new Array(atrs.length).fill(null);
+  for (let i = period - 1; i < atrs.length; i++) {
+    const current = atrs[i];
+    if (!Number.isFinite(current) || current <= 0) continue;
+    const window = atrs.slice(i - period + 1, i + 1).filter(v => Number.isFinite(v) && v > 0);
+    if (window.length < 2) continue;
+    const rank = window.filter(v => v <= current).length;
+    result[i] = (rank / window.length) * 100;
+  }
   return result;
 }
 

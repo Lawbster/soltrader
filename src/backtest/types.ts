@@ -25,16 +25,18 @@ export interface TokenDataset {
 
 export interface IndicatorValues {
   rsi?: number;          // RSI(14)
-  rsiShort?: number;     // RSI(2) â€” fast scalping RSI
+  rsiShort?: number;     // RSI(2) — fast scalping RSI
   connorsRsi?: number;   // CRSI(3,2,100)
   sma?: Record<number, number>;
   ema?: Record<number, number>;
   macd?: { macd: number; signal: number; histogram: number };
   bollingerBands?: { upper: number; middle: number; lower: number; width: number };
   atr?: number;
-  adx?: number;          // ADX(14) â€” trend strength
+  adx?: number;          // ADX(14) — trend strength
   vwapProxy?: number;
   obvProxy?: number;
+  volumeZScore?: number; // rolling 20-bar z-score of candle pricePoints (volume proxy)
+  atrPctRank?: number;   // rolling 50-bar percentile rank of ATR(14), 0-100
 }
 
 export type BacktestTrendRegime = 'uptrend' | 'sideways' | 'downtrend';

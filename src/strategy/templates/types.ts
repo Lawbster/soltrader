@@ -24,7 +24,9 @@ export type TemplateId =
   | 'rsi2-micro-range'
   | 'atr-breakout-follow'
   | 'rsi-session-gate'
-  | 'crsi-session-gate';
+  | 'crsi-session-gate'
+  | 'volume-spike-reversal'
+  | 'atr-percentile-entry';
 
 /**
  * Shared signal context for template evaluators — usable from both sweep (via adapter)
@@ -33,6 +35,12 @@ export type TemplateId =
 export interface LiveTemplateContext {
   /** Current bar close price */
   close: number;
+  /** Current bar high (for wick/range calculations) */
+  high?: number;
+  /** Current bar low (for wick/range calculations) */
+  low?: number;
+  /** Current bar open */
+  open?: number;
   /** Previous bar close (from history or price-feed series) */
   prevClose?: number;
   /** Previous bar high (from trade-derived or price-feed OHLC) */

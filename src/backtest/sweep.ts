@@ -26,6 +26,9 @@ import { buildRegimeSeriesFromCandles } from '../strategy/regime-core';
 function toTemplateCtx(ctx: StrategyContext) {
   return {
     close: ctx.candle.close,
+    high: ctx.candle.high,
+    low: ctx.candle.low,
+    open: ctx.candle.open,
     prevClose: ctx.history[ctx.index - 1]?.close,
     prevHigh: ctx.history[ctx.index - 1]?.high,
     indicators: ctx.indicators,
@@ -834,6 +837,55 @@ const templates: SweepTemplate[] = [
       };
     },
   },
+  {
+    name: 'volume-spike-reversal',
+    paramGrid: {
+      volZScore: [1.5, 2.0, 2.5],
+      rsiEntry:  [25, 30, 35, 40],
+      rsiExit:   [55, 60, 65],
+      wickMin:   [0.5, 0.6, 0.7],
+      sl:        [-2, -3, -5],
+      tp:        [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `vol-spike-vz${p.volZScore}-r${p.rsiEntry}-e${p.rsiExit}-w${p.wickMin}-sl${p.sl}-tp${p.tp}`,
+        description: `Volume spike z>${p.volZScore} + RSI oversold<${p.rsiEntry} + bullish wick>${p.wickMin * 100}% exit RSI>${p.rsiExit}`,
+        requiredHistory: 21,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('volume-spike-reversal', p),
+      };
+    },
+  },
+
+  // ── ATR percentile compression entry — buy the dip during low-volatility phase ──
+  // Entry: ATR at low percentile (compressed) + mild RSI oversold.
+  // Exit: ATR re-expands (percentile rises) or RSI recovers.
+  // Codex note: restrict to uptrend/sideways — meme token compressions resolve down more often in downtrend.
+  {
+    name: 'atr-percentile-entry',
+    paramGrid: {
+      atrPctEntry: [15, 20, 25],       // compressed: ATR below this percentile
+      atrPctExit:  [50, 60, 70],       // expanded: ATR above this percentile → exit
+      rsiEntry:    [35, 40, 45],       // mild oversold
+      rsiExit:     [55, 60, 65],       // recovered
+      sl:          [-2, -3, -5],
+      tp:          [3, 4, 6],
+    },
+    build(p) {
+      return {
+        name: `atr-pct-e${p.atrPctEntry}-x${p.atrPctExit}-r${p.rsiEntry}-re${p.rsiExit}-sl${p.sl}-tp${p.tp}`,
+        description: `ATR pctRank<${p.atrPctEntry} compressed + RSI<${p.rsiEntry}, exit ATR>${p.atrPctExit} or RSI>${p.rsiExit}`,
+        requiredHistory: 70,
+        stopLossPct: p.sl,
+        takeProfitPct: p.tp,
+        protection: withProtection(DEFAULT_LIVE_PROTECTION),
+        evaluate: catalogEvaluate('atr-percentile-entry', p),
+      };
+    },
+  },
 ];
 
 const TEMPLATE_SETS: Record<string, string[]> = {
@@ -864,6 +916,8 @@ const TEMPLATE_SETS: Record<string, string[]> = {
     'vwap-rsi-reclaim',
     'rsi2-micro-range',
     'bb-squeeze-breakout',
+    'volume-spike-reversal',
+    'atr-percentile-entry',
   ],
   trend: [
     'trend-pullback-rsi',
