@@ -95,6 +95,12 @@ let lastLossTime = 0;
 let dailyStatsDateUtc = new Date().toISOString().split('T')[0];
 const stoppedOutTokens = new Map<string, number>();
 
+// Per-route consecutive loss circuit breaker
+const routeLossCounts = new Map<string, number>(); // routeId → consecutive losses
+const routeCooldowns = new Map<string, number>();   // routeId → cooldownUntil ms timestamp
+const ROUTE_LOSS_LIMIT = 3;
+const ROUTE_COOLDOWN_MS = 12 * 60 * 60_000; // 12 hours
+
 // LP tracking for emergency exits
 const lpHistory = new Map<string, { timestamp: number; liquidityUsd: number }[]>();
 
@@ -115,6 +121,46 @@ const IMPACT_TRANSIENT_FAIL_WARN_THRESHOLD = 3;
 function getPositionExitTime(position: Position): number {
   const lastExit = position.exits[position.exits.length - 1];
   return lastExit?.timestamp ?? position.entryTime;
+}
+
+function recomputeRouteCooldowns(positions: Position[]) {
+  routeLossCounts.clear();
+  routeCooldowns.clear();
+
+  const byRoute = new Map<string, Position[]>();
+  for (const p of positions) {
+    const rid = p.strategyPlan?.routeId;
+    if (!rid) continue;
+    if (!byRoute.has(rid)) byRoute.set(rid, []);
+    byRoute.get(rid)!.push(p);
+  }
+
+  for (const [rid, routePositions] of byRoute) {
+    const sorted = routePositions.slice().sort((a, b) => getPositionExitTime(a) - getPositionExitTime(b));
+    let streak = 0;
+    let lastLossTs = 0;
+    for (const p of sorted) {
+      const pnl = calculateTrackedPnlUsdc(p);
+      if (pnl < 0) {
+        streak++;
+        lastLossTs = getPositionExitTime(p);
+      } else {
+        streak = 0;
+      }
+    }
+    routeLossCounts.set(rid, streak);
+    if (streak >= ROUTE_LOSS_LIMIT && lastLossTs > 0) {
+      const until = lastLossTs + ROUTE_COOLDOWN_MS;
+      if (until > Date.now()) {
+        routeCooldowns.set(rid, until);
+        log.info('Route cooldown restored from history', {
+          routeId: rid,
+          streak,
+          cooldownUntilIso: new Date(until).toISOString(),
+        });
+      }
+    }
+  }
 }
 
 function recomputeSavedStats(positions: Position[]) {
@@ -243,6 +289,7 @@ export function getPortfolioState(): PortfolioState {
     consecutiveLosses,
     lastLossTime,
     stoppedOutTokens,
+    routeCooldowns: new Map(routeCooldowns),
   };
 }
 
@@ -1099,6 +1146,27 @@ function closePosition(position: Position, reason: string) {
     consecutiveLosses = 0;
   }
 
+  // Per-route circuit breaker: 3 consecutive losses → 12-hour cooldown
+  const routeId = position.strategyPlan?.routeId;
+  if (routeId) {
+    if (pnlUsdc < 0) {
+      const newCount = (routeLossCounts.get(routeId) ?? 0) + 1;
+      routeLossCounts.set(routeId, newCount);
+      if (newCount >= ROUTE_LOSS_LIMIT) {
+        const until = Date.now() + ROUTE_COOLDOWN_MS;
+        routeCooldowns.set(routeId, until);
+        log.warn('Route cooldown activated', {
+          routeId,
+          consecutiveLosses: newCount,
+          cooldownUntilIso: new Date(until).toISOString(),
+        });
+      }
+    } else {
+      routeLossCounts.set(routeId, 0);
+      routeCooldowns.delete(routeId);
+    }
+  }
+
   openPositions.delete(position.id);
   closedPositions.push(position);
   lpHistory.delete(position.mint);
@@ -1204,6 +1272,7 @@ export function loadPositionHistory() {
     dailyPnlUsdc = recomputedStats.dailyPnlUsdc;
     consecutiveLosses = recomputedStats.consecutiveLosses;
     lastLossTime = recomputedStats.lastLossTime;
+    recomputeRouteCooldowns(closedPositions);
     dailyStatsDateUtc = today;
     log.info('Position history loaded (today)', {
       openRestored: openPositions.size,

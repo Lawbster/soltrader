@@ -34,6 +34,7 @@ export interface PortfolioState {
   consecutiveLosses: number;
   lastLossTime: number;
   stoppedOutTokens: Map<string, number>; // mint → stop-out timestamp
+  routeCooldowns: Map<string, number>;   // routeId → cooldownUntil ms timestamp
 }
 
 // --- Entry Logic ---
@@ -73,6 +74,23 @@ export function evaluateEntry(
         mint: token.mint,
         passed: false,
         filterResult: { passed: false, reason: `Re-entry lockout: ${Math.round(hoursSinceLockout)}h < ${cfg.portfolio.reEntryLockoutHours}h` },
+        scoreResult: null,
+        positionSizeUsdc: 0,
+        stopLossPct: 0,
+      };
+    }
+  }
+
+  // Route-level circuit breaker: block entry if this route has 3+ consecutive losses
+  // within the last 12 hours.
+  if (tokenStrategy?.routeId) {
+    const cooldownUntil = portfolio.routeCooldowns?.get(tokenStrategy.routeId) ?? 0;
+    if (Date.now() < cooldownUntil) {
+      const minsLeft = Math.round((cooldownUntil - Date.now()) / 60_000);
+      return {
+        mint: token.mint,
+        passed: false,
+        filterResult: { passed: false, reason: `route-cooldown:${tokenStrategy.routeId} ${minsLeft}m remaining` },
         scoreResult: null,
         positionSizeUsdc: 0,
         stopLossPct: 0,

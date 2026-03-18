@@ -25,6 +25,7 @@ interface RankedRow {
   worstPnlPct: number;
   meanTrades: number;
   consistencyScore: number;
+  pct12PlusWindowsRatePct: number;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -260,6 +261,7 @@ function rankRows(rows: CsvRow[]): RankedRow[] {
     worstPnlPct: asNum(r, 'worstPnlPct'),
     meanTrades: asNum(r, 'meanTrades'),
     consistencyScore: asNum(r, 'consistencyScore'),
+    pct12PlusWindowsRatePct: asNum(r, 'pct12PlusWindowsRatePct'),
   })).sort((a, b) => b.consistencyScore - a.consistencyScore);
 }
 
@@ -270,6 +272,8 @@ function confidenceFromWindows(windowsSeen: number): 'strong' | 'moderate' | 'fr
 }
 
 function actionFromRow(r: RankedRow): 'keep' | 'watch' | 'avoid' {
+  // Negative worst window: require 75%+ of windows to be highly profitable (≥12%)
+  if (r.worstPnlPct < 0 && r.pct12PlusWindowsRatePct < 75) return 'avoid';
   if (r.windowsSeen >= 6 && r.worstPnlPct > 0 && r.meanTrades >= 4) return 'keep';
   if (r.windowsSeen >= 4 && r.meanPnlPct > 0 && r.meanTrades >= 3) return 'watch';
   if (r.meanPnlPct > 0) return 'watch'; // fallthrough: positive mean, low window/trade count — advisory only
@@ -288,6 +292,7 @@ function toDecisionCsv(rows: RankedRow[], top: number): string {
     'windowsSeen',
     'meanPnlPct',
     'worstPnlPct',
+    'pct12PlusWindowsRatePct',
     'meanTrades',
     'consistencyScore',
   ];
@@ -303,6 +308,7 @@ function toDecisionCsv(rows: RankedRow[], top: number): string {
       String(r.windowsSeen),
       r.meanPnlPct.toFixed(4),
       r.worstPnlPct.toFixed(4),
+      r.pct12PlusWindowsRatePct.toFixed(2),
       r.meanTrades.toFixed(2),
       r.consistencyScore.toFixed(6),
     ];
