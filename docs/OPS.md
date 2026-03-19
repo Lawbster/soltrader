@@ -77,7 +77,7 @@ ls data/positions-*.json
 Manual pull from VPS into local repo root:
 
 ```bash
-scp -r deploy@46.225.80.0:/opt/sol-trader/data/ .
+scp -r deploy@IP:/opt/sol-trader/data/ .
 ```
 
 PowerShell helper scripts:

@@ -720,8 +720,8 @@
     },
     "So11111111111111111111111111111111111111112": {
       "label": "SOL",
-      "tier": "probe",
-      "maxPositionEquityPct": 2,
+      "tier": "core",
+      "maxPositionEquityPct": 15,
       "enabled": true,
       "regimes": {
         "uptrend": {
