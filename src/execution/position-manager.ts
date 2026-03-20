@@ -1273,6 +1273,19 @@ export function loadPositionHistory() {
     consecutiveLosses = recomputedStats.consecutiveLosses;
     lastLossTime = recomputedStats.lastLossTime;
     recomputeRouteCooldowns(closedPositions);
+    // Restore re-entry lockouts that are still within the lockout window
+    const reEntryCfg = loadStrategyConfig();
+    const lockoutMs = reEntryCfg.portfolio.reEntryLockoutHours * 3_600_000;
+    for (const p of closedPositions) {
+      const lastExit = p.exits[p.exits.length - 1];
+      if (!lastExit) continue;
+      const pnl = calculateTrackedPnlUsdc(p);
+      if (pnl < 0 && (lastExit.type === 'hard_stop' || lastExit.type === 'emergency')) {
+        if (lastExit.timestamp + lockoutMs > Date.now()) {
+          stoppedOutTokens.set(p.mint, lastExit.timestamp);
+        }
+      }
+    }
     dailyStatsDateUtc = today;
     log.info('Position history loaded (today)', {
       openRestored: openPositions.size,

@@ -455,8 +455,12 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 // Round-robin index so we cycle through all candidates over time
 let analysisOffset = 0;
 const MAX_CANDIDATES_PER_CYCLE = 8;
+let isAnalysisLoopRunning = false;
 
 async function analysisLoop() {
+  if (isAnalysisLoopRunning) return;
+  isAnalysisLoopRunning = true;
+  try {
   const mints = Array.from(pendingTokens.keys());
   if (mints.length === 0) return;
 
@@ -482,6 +486,9 @@ async function analysisLoop() {
 
     // 500ms pause between candidates to stay under rate limits
     await new Promise(r => setTimeout(r, 500));
+  }
+  } finally {
+    isAnalysisLoopRunning = false;
   }
 }
 

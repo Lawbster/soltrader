@@ -100,8 +100,13 @@ async function main() {
     process.exit(1);
   }
 
+  if (config.trading.paperTrading) {
+    console.error('ERROR: Cannot run in paper mode — paper positions have no real on-chain tokens to close.');
+    process.exit(1);
+  }
+
   console.log('=== close-all-positions ===');
-  console.log(`Mode: ${config.trading.paperTrading ? 'PAPER' : 'LIVE'}`);
+  console.log('Mode: LIVE');
   console.log('');
 
   const found = findPositionsFile();

@@ -163,8 +163,11 @@ export function evaluateEntry(
       portfolio.equityUsdc,
       cfg.position.maxPositionUsdc
     );
+    // Use the route's actual sl as stop distance so Kelly sizing is correct.
+    // tokenStrategy.sl is negative (e.g. -3), so take absolute value.
+    const routeStopPct = tokenStrategy.sl != null ? Math.abs(tokenStrategy.sl) : undefined;
     const positionSizeUsdc = Math.min(
-      calculatePositionSize(portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades),
+      calculatePositionSize(portfolio.equityUsdc, cfg, token.liquidityUsd, totalTrades, routeStopPct),
       tokenCapUsdc
     );
 
@@ -337,11 +340,12 @@ function calculatePositionSize(
   equityUsdc: number,
   cfg: ReturnType<typeof loadStrategyConfig>,
   liquidityUsd: number,
-  totalTrades: number
+  totalTrades: number,
+  stopPct?: number  // per-route stop override (absolute %, e.g. 3 for -3% sl)
 ): number {
   // risk_per_trade / stop_distance (all in USDC)
   const riskUsdc = equityUsdc * (cfg.position.riskPerTradePct / 100);
-  const stopDistance = cfg.position.initialStopPct / 100;
+  const stopDistance = (stopPct ?? cfg.position.initialStopPct) / 100;
   const sizeFromRisk = riskUsdc / stopDistance;
 
   // Cap at max position size and equity percentage
