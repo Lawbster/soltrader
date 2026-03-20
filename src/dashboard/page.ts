@@ -408,6 +408,7 @@ let tradeSortKey = 'exitTime';
 let tradeSortDir = -1;
 function fmt(n, d=2) { return n === Infinity || n === -Infinity ? '--' : Number(n).toFixed(d); }
 function fmtPct(n) { return fmt(n,1) + '%'; }
+function fmtSigned(n, d=2) { const v = Number(n) || 0; return (v >= 0 ? '+' : '') + fmt(v, d); }
 function pnlColor(n) { return n > 0 ? 'green' : n < 0 ? 'red' : ''; }
 function shortMint(m) { return m.slice(0,4) + '...' + m.slice(-4); }
 function labelFor(s) { return s.label || shortMint(s.mint); }
@@ -866,6 +867,7 @@ function renderPortfolio(s) {
   const wb = s.walletBalances || {};
   const solPrice = s.solPriceUsd || 0;
   const solUsd = (wb.sol || 0) * solPrice;
+  const dailyPnlUsdc = Number.isFinite(s?.portfolio?.dailyPnlUsdc) ? s.portfolio.dailyPnlUsdc : 0;
   // Compute open positions notional: initialSizeUsdc * remainingPct/100 * (1 + pnlPct/100)
   const openNotional = (s.openPositions || []).reduce((sum, p) => {
     return sum + (p.initialSizeUsdc || 0) * (p.remainingPct / 100) * (1 + p.pnlPct / 100);
@@ -894,7 +896,7 @@ function renderPortfolio(s) {
     {
       label: 'Daily PnL',
       value: fmtPct(s.portfolio.dailyPnlPct),
-      sub: 'Total equity ~ $' + fmt(totalEquity, 2),
+      sub: fmtSigned(dailyPnlUsdc, 2) + ' USDC today · Total equity ~ $' + fmt(totalEquity, 2),
       cls: pnlColor(s.portfolio.dailyPnlPct),
     },
   ];
@@ -1139,4 +1141,3 @@ setInterval(fetchAll, 30000);
 </body>
 </html>`;
 }
-

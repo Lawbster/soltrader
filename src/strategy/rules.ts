@@ -30,6 +30,7 @@ export interface PortfolioState {
   equityUsdc: number;
   openPositions: number;
   openExposureUsdc: number;
+  dailyPnlUsdc: number;
   dailyPnlPct: number;
   consecutiveLosses: number;
   lastLossTime: number;

@@ -123,6 +123,14 @@ function getPositionExitTime(position: Position): number {
   return lastExit?.timestamp ?? position.entryTime;
 }
 
+function getUtcDateForTimestamp(timestamp: number): string {
+  return new Date(timestamp).toISOString().split('T')[0];
+}
+
+function isPositionClosedOnUtcDate(position: Position, utcDate: string): boolean {
+  return getUtcDateForTimestamp(getPositionExitTime(position)) === utcDate;
+}
+
 function recomputeRouteCooldowns(positions: Position[]) {
   routeLossCounts.clear();
   routeCooldowns.clear();
@@ -163,15 +171,16 @@ function recomputeRouteCooldowns(positions: Position[]) {
   }
 }
 
-function recomputeSavedStats(positions: Position[]) {
+export function recomputeSavedStatsForDate(positions: Position[], statsDateUtc: string) {
   const sorted = positions.slice().sort((a, b) => getPositionExitTime(a) - getPositionExitTime(b));
   const totalTrades = sorted.length;
   const wins = sorted.filter(position => calculateTrackedPnlUsdc(position) > 0).length;
-  const realizedDailyPnlUsdc = sorted.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
+  const dailyPositions = sorted.filter(position => isPositionClosedOnUtcDate(position, statsDateUtc));
+  const realizedDailyPnlUsdc = dailyPositions.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
 
   let recomputedConsecutiveLosses = 0;
   let recomputedLastLossTime = 0;
-  for (const position of sorted) {
+  for (const position of dailyPositions) {
     const pnl = calculateTrackedPnlUsdc(position);
     const exitTime = getPositionExitTime(position);
     if (pnl < 0) {
@@ -189,6 +198,10 @@ function recomputeSavedStats(positions: Position[]) {
     consecutiveLosses: recomputedConsecutiveLosses,
     lastLossTime: recomputedLastLossTime,
   };
+}
+
+function recomputeSavedStats(positions: Position[], statsDateUtc: string = currentUtcDate()) {
+  return recomputeSavedStatsForDate(positions, statsDateUtc);
 }
 
 async function withMintOperationLock<T>(
@@ -285,6 +298,7 @@ export function getPortfolioState(): PortfolioState {
     equityUsdc,
     openPositions: openPositions.size,
     openExposureUsdc,
+    dailyPnlUsdc,
     dailyPnlPct: dailyStartEquity > 0 ? ((dailyPnlUsdc + openPnlUsdc) / dailyStartEquity) * 100 : 0,
     consecutiveLosses,
     lastLossTime,
@@ -1220,7 +1234,7 @@ export function savePositionHistory() {
     open: Array.from(openPositions.values()),
     closed: closedPositions,
     stats: {
-      ...recomputeSavedStats(closedPositions),
+      ...recomputeSavedStats(closedPositions, currentUtcDate()),
       dailyStartEquityUsdc: dailyStartEquity,
     },
   };
@@ -1268,7 +1282,7 @@ export function loadPositionHistory() {
     if (todayData!.stats) {
       dailyStartEquity = todayData!.stats.dailyStartEquityUsdc ?? dailyStartEquity;
     }
-    const recomputedStats = recomputeSavedStats(closedPositions);
+    const recomputedStats = recomputeSavedStats(closedPositions, today);
     dailyPnlUsdc = recomputedStats.dailyPnlUsdc;
     consecutiveLosses = recomputedStats.consecutiveLosses;
     lastLossTime = recomputedStats.lastLossTime;

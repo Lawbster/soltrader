@@ -526,7 +526,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-1m-macd-zero-up-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 1,
@@ -553,7 +553,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "hnt-5m-macd-zero-side-research",
               "templateId": "macd-zero-rsi-confirm",
               "timeframeMinutes": 5,
@@ -952,7 +952,7 @@
           "enabled": true,
           "routes": [
             {
-              "enabled": true,
+              "enabled": false,
               "routeId": "popcat-1m-adx-range-side-research",
               "templateId": "adx-range-rsi-bb",
               "timeframeMinutes": 1,
