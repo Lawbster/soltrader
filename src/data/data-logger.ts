@@ -48,6 +48,7 @@ export function logPricePoint(
 
 export interface SignalLogEntry {
   mint: string;
+  decisionId?: string;
   crsi?: number;
   rsi?: number;
   source: string;
@@ -59,6 +60,9 @@ export interface SignalLogEntry {
   templateId?: string;
   timeframeMinutes?: number;
   regime?: string;
+  exitMode?: string;
+  executionMode?: string;
+  entryReason?: string;
   score?: number;
   quotedImpactPct?: number;
   liquidityUsd: number;
@@ -73,8 +77,17 @@ export function logSignal(data: SignalLogEntry) {
 // --- Phase 3: Execution Events ---
 
 export interface ExecutionLogEntry {
+  decisionId?: string;
+  positionId?: string;
   mint: string;
   side: 'buy' | 'sell';
+  routeId?: string;
+  templateId?: string;
+  timeframeMinutes?: number;
+  regime?: string;
+  exitMode?: string;
+  executionMode?: string;
+  entryReason?: string;
   sizeUsdc: number;
   slippageBps: number;
   quotedImpactPct: number;

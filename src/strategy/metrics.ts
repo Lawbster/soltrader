@@ -9,6 +9,7 @@ const DATA_DIR = path.resolve(__dirname, '../../data');
 
 export interface TradeMetric {
   id: string;
+  decisionId?: string;
   mint: string;
   entryTime: number;
   exitTime: number;
@@ -19,6 +20,12 @@ export interface TradeMetric {
   pnlPct: number;
   exitType: string;
   entryReason?: string;
+  routeId?: string;
+  templateId?: string;
+  timeframeMinutes?: number;
+  entryRegime?: string;
+  exitMode?: string;
+  executionMode?: string;
   isPaper: boolean;
 }
 
@@ -134,6 +141,7 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
 
   const metric: TradeMetric = {
     id: position.id,
+    decisionId: position.strategyPlan?.decisionId,
     mint: position.mint,
     entryTime: position.entryTime,
     exitTime,
@@ -144,6 +152,12 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     pnlPct,
     exitType,
     entryReason: position.strategyPlan?.entryReason,
+    routeId: position.strategyPlan?.routeId,
+    templateId: position.strategyPlan?.templateId,
+    timeframeMinutes: position.strategyPlan?.timeframeMinutes,
+    entryRegime: position.strategyPlan?.entryRegime,
+    exitMode: position.strategyPlan?.exitMode,
+    executionMode: position.strategyPlan?.executionMode ?? (isPaper ? 'paper' : 'live'),
     isPaper,
   };
 

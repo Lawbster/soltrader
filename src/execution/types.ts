@@ -1,5 +1,5 @@
 import type { TemplateId } from '../strategy/templates/types';
-import type { ExitMode, RouteProtectionConfig } from '../strategy/live-strategy-map';
+import type { ExitMode, RouteExecutionMode, RouteProtectionConfig } from '../strategy/live-strategy-map';
 
 export interface SwapQuote {
   inputMint: string;
@@ -37,9 +37,11 @@ export interface StrategyPlan {
   slAtr?: number; // stop loss in ATR multiples from entry price
   tpAtr?: number; // take profit in ATR multiples from entry price
   entryAtr?: number; // ATR captured at entry for ATR-based exit parity
+  decisionId?: string; // ties signal -> execution -> trade -> closed position
   templateId?: TemplateId;                 // always set for template-routed tokens
   templateParams?: Record<string, number>; // template-specific params
   exitMode?: ExitMode;                     // 'price' (default) | 'indicator'
+  executionMode?: RouteExecutionMode;      // optional per-route execution override
   routeId?: string;                        // unique per-token route identifier
   timeframeMinutes?: number;               // route timeframe (1/5/15)
   priority?: number;                       // route priority used for arbitration
@@ -93,6 +95,8 @@ export interface PositionExit {
 
 export interface TradeLog {
   id: string;
+  decisionId?: string;
+  positionId?: string;
   mint: string;
   side: 'buy' | 'sell';
   timestamp: number;
@@ -113,6 +117,13 @@ export interface TradeLog {
   signature: string;
   success: boolean;
   tradeType?: 'trade' | 'replenish';
+  routeId?: string;
+  templateId?: string;
+  timeframeMinutes?: number;
+  entryRegime?: string;
+  exitMode?: ExitMode;
+  executionMode?: RouteExecutionMode;
+  entryReason?: string;
   error?: string;
 }
 

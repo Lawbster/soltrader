@@ -102,6 +102,7 @@ async function handleStatus(res: http.ServerResponse) {
     templateId: p.strategyPlan?.templateId ?? null,
     timeframeMinutes: p.strategyPlan?.timeframeMinutes ?? null,
     exitMode: p.strategyPlan?.exitMode ?? null,
+    executionMode: p.strategyPlan?.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
     entryRegime: p.strategyPlan?.entryRegime ?? null,
     entryReason: p.strategyPlan?.entryReason ?? null,
   }));
@@ -240,6 +241,7 @@ function handleSignals(res: http.ServerResponse) {
         indicatorKind: tokenStrategy?.indicator?.kind ?? 'crsi',
         templateId: tokenStrategy?.templateId ?? null,
         routeId: tokenStrategy?.routeId ?? null,
+        executionMode: tokenStrategy?.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
         timeframeMinutes,
         routePriority: tokenStrategy?.priority ?? null,
         activeRouteCount: regimeRoutes.length,
@@ -262,6 +264,7 @@ function handleSignals(res: http.ServerResponse) {
           slAtr: r.slAtr ?? null,
           tpAtr: r.tpAtr ?? null,
           exitMode: r.exitMode,
+          executionMode: r.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
         })),
         strategyParams: tokenStrategy?.params ?? null,
         exitMode: tokenStrategy?.exitMode ?? null,

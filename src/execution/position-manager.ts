@@ -19,19 +19,42 @@ import { logExecution } from '../data';
 import { rawToBigInt, rawToHumanAmount } from './amounts';
 import { calculateTrackedPnlUsdc, summarizeTrackedExits } from './position-accounting';
 
-// Route buy/sell through paper executor when in paper mode
-async function executeBuy(mint: string, sizeUsdc: number, slippageBps: number): Promise<SwapResult> {
-  if (config.trading.paperTrading) {
-    return paperBuyToken(mint, sizeUsdc, slippageBps);
-  }
-  return buyToken(mint, sizeUsdc, slippageBps, true);
+function resolveExecutionMode(strategyPlan?: StrategyPlan): 'live' | 'paper' {
+  if (strategyPlan?.executionMode) return strategyPlan.executionMode;
+  return config.trading.paperTrading ? 'paper' : 'live';
 }
 
-async function executeSell(mint: string, tokenAmountRaw: string, slippageBps: number): Promise<SwapResult> {
-  if (config.trading.paperTrading) {
+// Route buy/sell through paper executor when in paper mode or when a route explicitly asks for paper execution.
+async function executeBuy(
+  mint: string,
+  sizeUsdc: number,
+  slippageBps: number,
+  strategyPlan?: StrategyPlan,
+): Promise<SwapResult> {
+  if (resolveExecutionMode(strategyPlan) === 'paper') {
+    return paperBuyToken(mint, sizeUsdc, slippageBps);
+  }
+  return buyToken(mint, sizeUsdc, slippageBps, true, {
+    decisionId: strategyPlan?.decisionId,
+    strategyPlan,
+  });
+}
+
+async function executeSell(
+  mint: string,
+  tokenAmountRaw: string,
+  slippageBps: number,
+  strategyPlan?: StrategyPlan,
+  positionId?: string,
+): Promise<SwapResult> {
+  if (resolveExecutionMode(strategyPlan) === 'paper') {
     return paperSellToken(mint, tokenAmountRaw, slippageBps);
   }
-  return sellToken(mint, tokenAmountRaw, slippageBps, true);
+  return sellToken(mint, tokenAmountRaw, slippageBps, true, {
+    decisionId: strategyPlan?.decisionId,
+    positionId,
+    strategyPlan,
+  });
 }
 
 const log = createLogger('positions');
@@ -299,6 +322,8 @@ export function getPortfolioState(): PortfolioState {
     openPositions: openPositions.size,
     openExposureUsdc,
     dailyPnlUsdc,
+    openPnlUsdc,
+    dailyTotalPnlUsdc: dailyPnlUsdc + openPnlUsdc,
     dailyPnlPct: dailyStartEquity > 0 ? ((dailyPnlUsdc + openPnlUsdc) / dailyStartEquity) * 100 : 0,
     consecutiveLosses,
     lastLossTime,
@@ -521,24 +546,32 @@ export async function openPosition(
     const buyStart = Date.now();
     let result!: SwapResult;
     try {
-      result = await executeBuy(mint, sizeUsdc, slippageBps);
+      result = await executeBuy(mint, sizeUsdc, slippageBps, strategyPlan);
     } finally {
       inFlightEntriesByMint.delete(mint);
       reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
     }
 
     recordExecutionAttempt(result.success);
-    logExecution({
-      mint,
-      side: 'buy',
-      sizeUsdc: result.usdcAmount || sizeUsdc,
-      slippageBps,
-      quotedImpactPct: result.priceImpactPct || 0,
-      result: result.success ? 'success' : 'fail',
-      error: result.error || '',
-      latencyMs: Date.now() - buyStart,
-    });
     if (!result.success) {
+      logExecution({
+        decisionId: strategyPlan?.decisionId,
+        mint,
+        side: 'buy',
+        routeId: strategyPlan?.routeId,
+        templateId: strategyPlan?.templateId,
+        timeframeMinutes: strategyPlan?.timeframeMinutes,
+        regime: strategyPlan?.entryRegime,
+        exitMode: strategyPlan?.exitMode,
+        executionMode: resolveExecutionMode(strategyPlan),
+        entryReason: strategyPlan?.entryReason,
+        sizeUsdc: result.usdcAmount || sizeUsdc,
+        slippageBps,
+        quotedImpactPct: result.priceImpactPct || 0,
+        result: 'fail',
+        error: result.error || '',
+        latencyMs: Date.now() - buyStart,
+      });
       log.error('Buy failed', { mint, error: result.error });
       return null;
     }
@@ -570,6 +603,26 @@ export async function openPosition(
       status: 'open',
       strategyPlan,
     };
+
+    logExecution({
+      decisionId: strategyPlan?.decisionId,
+      positionId: position.id,
+      mint,
+      side: 'buy',
+      routeId: strategyPlan?.routeId,
+      templateId: strategyPlan?.templateId,
+      timeframeMinutes: strategyPlan?.timeframeMinutes,
+      regime: strategyPlan?.entryRegime,
+      exitMode: strategyPlan?.exitMode,
+      executionMode: resolveExecutionMode(strategyPlan),
+      entryReason: strategyPlan?.entryReason,
+      sizeUsdc: result.usdcAmount || sizeUsdc,
+      slippageBps,
+      quotedImpactPct: result.priceImpactPct || 0,
+      result: 'success',
+      error: result.error || '',
+      latencyMs: Date.now() - buyStart,
+    });
 
     openPositions.set(position.id, position);
     log.info('Position opened', {
@@ -1013,11 +1066,26 @@ async function executeExit(
     });
 
     const sellStart = Date.now();
-    const result = await executeSell(position.mint, rawTokensToSell, slippageBps);
+    const result = await executeSell(
+      position.mint,
+      rawTokensToSell,
+      slippageBps,
+      position.strategyPlan,
+      position.id,
+    );
     recordExecutionAttempt(result.success);
     logExecution({
+      decisionId: position.strategyPlan?.decisionId,
+      positionId: position.id,
       mint: position.mint,
       side: 'sell',
+      routeId: position.strategyPlan?.routeId,
+      templateId: position.strategyPlan?.templateId,
+      timeframeMinutes: position.strategyPlan?.timeframeMinutes,
+      regime: position.strategyPlan?.entryRegime,
+      exitMode: position.strategyPlan?.exitMode,
+      executionMode: resolveExecutionMode(position.strategyPlan),
+      entryReason: position.strategyPlan?.entryReason,
       sizeUsdc: result.usdcAmount || 0,
       slippageBps,
       quotedImpactPct: result.priceImpactPct || 0,
@@ -1186,7 +1254,7 @@ function closePosition(position: Position, reason: string) {
   lpHistory.delete(position.mint);
 
   // Record to metrics tracker
-  recordClosedPosition(position, config.trading.paperTrading);
+  recordClosedPosition(position, resolveExecutionMode(position.strategyPlan) === 'paper');
 
   log.info('Position closed', {
     id: position.id,

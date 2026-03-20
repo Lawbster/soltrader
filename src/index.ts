@@ -42,6 +42,12 @@ const TEN_MINUTES_MS = 10 * 60_000;
 const CLEANUP_INTERVAL_MS = 5 * 60_000;
 const MAX_PENDING_TOKENS = 500;
 
+function createDecisionId(mint: string, routeId?: string): string {
+  const mintTag = mint.slice(0, 4).toLowerCase();
+  const routeTag = (routeId ?? 'route').slice(0, 12).replace(/[^a-z0-9-]/gi, '').toLowerCase();
+  return `dec-${Date.now()}-${mintTag}-${routeTag}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 // Tokens waiting for their age window before analysis
 const pendingTokens = new Map<string, TokenLaunch>();
 
@@ -328,7 +334,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     const rejectIndicators = topRejected?.indicators;
     const rejectRoute = topRejected?.route;
     const rejectSignal = topRejected?.signal;
+    const decisionId = rejectRoute ? createDecisionId(mint, rejectRoute.routeId ?? rejectRoute.templateId) : undefined;
     logSignal({
+      decisionId,
       mint,
       crsi: rejectIndicators?.connorsRsi,
       rsi: rejectIndicators?.rsi,
@@ -342,6 +350,8 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       templateId: rejectRoute?.templateId,
       timeframeMinutes: topRejected?.timeframeMinutes,
       regime,
+      exitMode: rejectRoute?.exitMode,
+      executionMode: rejectRoute?.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
       score: rejectSignal?.scoreResult ? Math.round(rejectSignal.scoreResult.total) : undefined,
       liquidityUsd: tokenData.liquidityUsd,
       effectiveMaxUsdc: 0,
@@ -354,6 +364,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const winnerSignal = winner.signal;
   const winnerIndicators = winner.indicators;
   const winnerScore = winnerSignal.scoreResult ? Math.round(winnerSignal.scoreResult.total) : 0;
+  const decisionId = createDecisionId(mint, winnerRoute.routeId ?? winnerRoute.templateId);
   const acceptReason =
     `route:${winnerRoute.routeId ?? winnerRoute.templateId}@${winner.timeframeMinutes}m ` +
     `regime=${regime} template=${winnerRoute.templateId} score=${winnerScore} ` +
@@ -375,6 +386,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   }
 
   logSignal({
+    decisionId,
     mint,
     crsi: winnerIndicators?.connorsRsi,
     rsi: winnerIndicators?.rsi,
@@ -387,6 +399,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     templateId: winnerRoute.templateId,
     timeframeMinutes: winner.timeframeMinutes,
     regime,
+    exitMode: winnerRoute.exitMode,
+    executionMode: winnerRoute.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
+    entryReason: acceptReason,
     score: winnerScore,
     liquidityUsd: tokenData.liquidityUsd,
     effectiveMaxUsdc: winnerSignal.positionSizeUsdc,
@@ -417,9 +432,11 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     slAtr: winnerRoute.slAtr,
     tpAtr: winnerRoute.tpAtr,
     entryAtr: winnerIndicators?.atr,
+    decisionId,
     templateId: winnerRoute.templateId,
     templateParams: winnerRoute.params,
     exitMode: winnerRoute.exitMode,
+    executionMode: winnerRoute.executionMode,
     routeId: winnerRoute.routeId,
     timeframeMinutes: winner.timeframeMinutes,
     priority: winnerRoute.priority,

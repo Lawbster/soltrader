@@ -34,6 +34,7 @@ export function getDashboardHtml(): string {
   }
   .badge-paper { background: #1a3a2a; color: #3fb950; border: 1px solid #238636; }
   .badge-live { background: #3a1a1a; color: #f85149; border: 1px solid #da3633; }
+  .badge-mixed { background: #3a2d14; color: #d29922; border: 1px solid #9e6a03; }
   .badge-watchlist { background: #1a2a3a; color: #58a6ff; border: 1px solid #1f6feb; }
   .updated { font-size: 0.75rem; color: #6e7681; margin-top: 4px; }
 
@@ -502,6 +503,7 @@ function normalizeTrades(trades) {
       pnlPct: Number(t.pnlPct),
       holdTimeMinutes: Number(t.holdTimeMinutes),
       entryReason: typeof t.entryReason === 'string' ? t.entryReason : '',
+      isPaper: !!t.isPaper,
     }));
 }
 function filterTradesByDate(trades) {
@@ -679,10 +681,11 @@ function renderRouteList(routes, topRouteId) {
     const params = r.params && typeof r.params === 'object'
       ? Object.entries(r.params).filter(([, v]) => isFiniteNumber(v)).map(([k, v]) => k + '=' + fmtParamValue(v)).join(' ')
       : '';
+    const mode = r.executionMode === 'paper' ? 'paper' : r.executionMode === 'live' ? 'live' : '';
     const sl = isFiniteNumber(r.slAtr) ? ('sl ' + fmtParamValue(r.slAtr) + 'atr') : (isFiniteNumber(r.sl) ? ('sl' + fmtParamValue(r.sl) + '%') : '');
     const tp = isFiniteNumber(r.tpAtr) ? ('tp ' + fmtParamValue(r.tpAtr) + 'atr') : (isFiniteNumber(r.tp) ? ('tp' + fmtParamValue(r.tp) + '%') : '');
     const stops = [sl, tp].filter(Boolean).join(' ');
-    const line = [templateShort, tf, params, stops].filter(Boolean).join(' \u00b7 ');
+    const line = [templateShort, tf, mode, params, stops].filter(Boolean).join(' \u00b7 ');
     return '<div style="font-family:Consolas,Monaco,monospace;font-size:0.7rem;color:' + color + ';padding:1px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escapeHtml(line) + '">' + escapeHtml(line) + '</div>';
   });
   return '<div style="margin-top:6px;border-top:1px solid #21262d;padding-top:6px;">' +
@@ -867,7 +870,12 @@ function renderPortfolio(s) {
   const wb = s.walletBalances || {};
   const solPrice = s.solPriceUsd || 0;
   const solUsd = (wb.sol || 0) * solPrice;
-  const dailyPnlUsdc = Number.isFinite(s?.portfolio?.dailyPnlUsdc) ? s.portfolio.dailyPnlUsdc : 0;
+  const dailyRealizedPnlUsdc = Number.isFinite(s?.portfolio?.dailyPnlUsdc) ? s.portfolio.dailyPnlUsdc : 0;
+  const openPnlUsdc = Number.isFinite(s?.portfolio?.openPnlUsdc) ? s.portfolio.openPnlUsdc : 0;
+  const dailyTotalPnlUsdc = Number.isFinite(s?.portfolio?.dailyTotalPnlUsdc)
+    ? s.portfolio.dailyTotalPnlUsdc
+    : (dailyRealizedPnlUsdc + openPnlUsdc);
+  const dailyTotalPnlPct = Number.isFinite(s?.portfolio?.dailyPnlPct) ? s.portfolio.dailyPnlPct : 0;
   // Compute open positions notional: initialSizeUsdc * remainingPct/100 * (1 + pnlPct/100)
   const openNotional = (s.openPositions || []).reduce((sum, p) => {
     return sum + (p.initialSizeUsdc || 0) * (p.remainingPct / 100) * (1 + p.pnlPct / 100);
@@ -894,10 +902,22 @@ function renderPortfolio(s) {
       cls: s.openPositions.length > 0 ? 'yellow' : '',
     },
     {
-      label: 'Daily PnL',
-      value: fmtPct(s.portfolio.dailyPnlPct),
-      sub: fmtSigned(dailyPnlUsdc, 2) + ' USDC today · Total equity ~ $' + fmt(totalEquity, 2),
-      cls: pnlColor(s.portfolio.dailyPnlPct),
+      label: 'Daily Realized',
+      value: fmtSigned(dailyRealizedPnlUsdc, 2) + ' USDC',
+      sub: 'Closed positions today | Equity ~ $' + fmt(totalEquity, 2),
+      cls: pnlColor(dailyRealizedPnlUsdc),
+    },
+    {
+      label: 'Open PnL',
+      value: fmtSigned(openPnlUsdc, 2) + ' USDC',
+      sub: s.openPositions.length > 0 ? 'Mark-to-market open trades' : 'No open exposure',
+      cls: pnlColor(openPnlUsdc),
+    },
+    {
+      label: 'Daily Total',
+      value: fmtPct(dailyTotalPnlPct),
+      sub: fmtSigned(dailyTotalPnlUsdc, 2) + ' USDC total | Equity ~ $' + fmt(totalEquity, 2),
+      cls: pnlColor(dailyTotalPnlUsdc),
     },
   ];
   el.innerHTML = cards.map(c =>
@@ -916,11 +936,12 @@ function renderPortfolio(s) {
         .filter(Boolean)
         .join(' | ');
       const reasonText = p.entryReason || routeSummary;
+      const executionMode = p.executionMode === 'paper' ? 'PAPER' : 'LIVE';
       return '<div class="pos-card">' +
       '<div class="pos-meta"><div class="pos-mint">' + name + '</div>' +
       '<div class="pos-detail">Entry: $' + fmt(p.entryPrice, p.entryPrice < 0.01 ? 6 : p.entryPrice < 1 ? 4 : 2) + ' | Hold: ' + p.holdTimeMins + 'm | Remaining: ' + fmt(p.remainingPct,0) + '%' +
       (p.tp1Hit ? ' | TP1' : '') + '</div>' +
-      '<div class="pos-detail">Route: ' + escapeHtml(routeSummary) + (p.exitMode ? (' | Exit: ' + escapeHtml(p.exitMode)) : '') + '</div>' +
+      '<div class="pos-detail">Route: ' + escapeHtml(routeSummary) + ' | Mode: ' + executionMode + (p.exitMode ? (' | Exit: ' + escapeHtml(p.exitMode)) : '') + '</div>' +
       '<div class="pos-reason">Opened because: ' + escapeHtml(reasonText) + '</div></div>' +
       '<div class="pos-pnl ' + pnlColor(p.pnlPct) + '">' + (p.pnlPct >= 0 ? '+' : '') + fmtPct(p.pnlPct) + '</div>' +
       '</div>';
@@ -939,6 +960,7 @@ function renderPerformance(trades) {
   const el = document.getElementById('perfMetrics');
   const cards = [
     { label: 'Total Trades', value: stats.totalTrades, cls: 'blue' },
+    { label: 'Live / Paper', value: trades.filter(t => !t.isPaper).length + ' / ' + trades.filter(t => t.isPaper).length, cls: 'blue' },
     { label: 'Win Rate', value: fmtPct(stats.winRate), cls: stats.winRate >= 50 ? 'green' : 'red' },
     { label: 'Profit Factor', value: fmt(stats.profitFactor), cls: stats.profitFactor >= 1.25 ? 'green' : 'red' },
     { label: 'Total PnL', value: fmt(stats.totalPnlUsdc, 2) + ' USDC', cls: pnlColor(stats.totalPnlUsdc) },
@@ -980,6 +1002,7 @@ function renderTrades(trades, totalTrades) {
       '<td><span class="badge ' + (isWin ? 'win' : 'loss') + '">' + (t.pnlPct >= 0 ? '+' : '') + fmtPct(t.pnlPct) + '</span></td>' +
       '<td>' + Math.round(t.holdTimeMinutes) + 'm</td>' +
       '<td><div>' + escapeHtml(t.exitType || '--') + '</div>' +
+      '<div style="margin-top:2px;font-size:0.72rem;color:#8b949e;">Mode: ' + (t.isPaper ? 'PAPER' : 'LIVE') + '</div>' +
       '<div style="margin-top:2px;font-size:0.72rem;color:#8b949e;max-width:560px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + escapeHtml(t.entryReason || '') + '">Entry: ' + escapeHtml(t.entryReason || '--') + '</div></td>' +
       '</tr>';
   }).join('');
@@ -1111,8 +1134,30 @@ function renderSystem(status, metrics, signals) {
 function renderBadges(status, signals) {
   // PAPER/LIVE badge
   const modeBadge = document.getElementById('modeLabel');
-  modeBadge.textContent = status.isPaperTrading ? 'PAPER' : 'LIVE';
-  modeBadge.className = 'badge-pill ' + (status.isPaperTrading ? 'badge-paper' : 'badge-live');
+  const routeModes = Array.isArray(signals)
+    ? Array.from(new Set(
+        signals.flatMap(sig => {
+          if (Array.isArray(sig.allRegimeRoutes) && sig.allRegimeRoutes.length > 0) {
+            return sig.allRegimeRoutes.map(route => route.executionMode === 'paper' ? 'paper' : 'live');
+          }
+          if (sig.executionMode === 'paper' || sig.executionMode === 'live') {
+            return [sig.executionMode];
+          }
+          return [];
+        })
+      ))
+    : [];
+  const effectiveMode = routeModes.length > 1
+    ? 'mixed'
+    : routeModes[0] || (status.isPaperTrading ? 'paper' : 'live');
+  modeBadge.textContent = effectiveMode.toUpperCase();
+  modeBadge.className = 'badge-pill ' + (
+    effectiveMode === 'mixed'
+      ? 'badge-mixed'
+      : effectiveMode === 'paper'
+        ? 'badge-paper'
+        : 'badge-live'
+  );
   // Signal source badge
   const srcBadge = document.getElementById('crsiSourceBadge');
   const source = signals && signals.length > 0 ? signals[0].source : 'none';

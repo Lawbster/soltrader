@@ -1,7 +1,7 @@
 import { VersionedTransaction, PublicKey } from '@solana/web3.js';
 import { getConnection, getKeypair, createLogger } from '../utils';
 import { loadStrategyConfig } from '../strategy/strategy-config';
-import { FillSource, SwapQuote, SwapResult, TradeLog } from './types';
+import { FillSource, StrategyPlan, SwapQuote, SwapResult, TradeLog } from './types';
 import { validateQuote, validateSimulation } from './guards';
 import { sendWithJito } from './jito-bundle';
 import { jupiterGet, jupiterPost } from './jupiter-client';
@@ -19,6 +19,12 @@ const JUPITER_QUOTE_URL = 'https://lite-api.jup.ag/swap/v1/quote';
 const JUPITER_SWAP_URL = 'https://lite-api.jup.ag/swap/v1/swap';
 
 const tradeLogs: TradeLog[] = [];
+
+interface TradeContext {
+  decisionId?: string;
+  positionId?: string;
+  strategyPlan?: StrategyPlan;
+}
 
 // Cache token decimals to avoid repeated lookups
 const decimalsCache = new Map<string, number>();
@@ -167,7 +173,12 @@ export async function getQuote(
   }
 }
 
-export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tradeType?: 'trade' | 'replenish'): Promise<SwapResult> {
+export async function executeSwap(
+  quote: SwapQuote,
+  useJito: boolean = false,
+  tradeType?: 'trade' | 'replenish',
+  context?: TradeContext,
+): Promise<SwapResult> {
   const cfg = loadStrategyConfig();
   const startTime = Date.now();
   const keypair = getKeypair();
@@ -396,7 +407,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
         });
       }
 
-      logTrade(quote, result, tradeType);
+      logTrade(quote, result, tradeType, context);
 
       log.info('Swap executed', {
         side,
@@ -416,7 +427,7 @@ export async function executeSwap(quote: SwapQuote, useJito: boolean = false, tr
   }
 
   const result = failResult(`Failed after ${maxRetries + 1} attempts: ${lastError}`);
-  logTrade(quote, result);
+  logTrade(quote, result, undefined, context);
   return result;
 }
 
@@ -425,7 +436,8 @@ export async function buyToken(
   mint: string,
   usdcAmount: number,
   slippageBps: number,
-  useJito: boolean = false
+  useJito: boolean = false,
+  context?: TradeContext,
 ): Promise<SwapResult> {
   const rawUsdc = Math.floor(usdcAmount * 1e6).toString();
   const quote = await getQuote(USDC_MINT, mint, rawUsdc, slippageBps);
@@ -443,7 +455,7 @@ export async function buyToken(
       error: 'Failed to get quote',
     };
   }
-  return executeSwap(quote, useJito);
+  return executeSwap(quote, useJito, undefined, context);
 }
 
 // Sell tokens for USDC — takes raw token amount (smallest unit)
@@ -451,7 +463,8 @@ export async function sellToken(
   mint: string,
   tokenAmountRaw: string,
   slippageBps: number,
-  useJito: boolean = false
+  useJito: boolean = false,
+  context?: TradeContext,
 ): Promise<SwapResult> {
   const quote = await getQuote(mint, USDC_MINT, tokenAmountRaw, slippageBps);
   if (!quote) {
@@ -468,7 +481,7 @@ export async function sellToken(
       error: 'Failed to get quote',
     };
   }
-  return executeSwap(quote, useJito);
+  return executeSwap(quote, useJito, undefined, context);
 }
 
 // Get a quote estimate without executing (for paper trading & impact checks)
@@ -481,7 +494,12 @@ export async function getQuoteEstimate(
   return getQuote(inputMint, outputMint, amountRaw, slippageBps);
 }
 
-function logTrade(quote: SwapQuote, result: SwapResult, tradeType?: 'trade' | 'replenish') {
+function logTrade(
+  quote: SwapQuote,
+  result: SwapResult,
+  tradeType?: 'trade' | 'replenish',
+  context?: TradeContext,
+) {
   const isBuy = quote.inputMint === USDC_MINT;
   const tokenMint = isBuy ? quote.outputMint : quote.inputMint;
   const inHuman = rawToHuman(quote.inAmount, quote.inputDecimals);
@@ -527,6 +545,8 @@ function logTrade(quote: SwapQuote, result: SwapResult, tradeType?: 'trade' | 'r
 
   const entry: TradeLog = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    decisionId: context?.decisionId,
+    positionId: context?.positionId,
     mint: tokenMint,
     side: result.side,
     timestamp: Date.now(),
@@ -544,6 +564,13 @@ function logTrade(quote: SwapQuote, result: SwapResult, tradeType?: 'trade' | 'r
     signature: result.signature || '',
     success: result.success,
     tradeType,
+    routeId: context?.strategyPlan?.routeId,
+    templateId: context?.strategyPlan?.templateId,
+    timeframeMinutes: context?.strategyPlan?.timeframeMinutes,
+    entryRegime: context?.strategyPlan?.entryRegime,
+    exitMode: context?.strategyPlan?.exitMode,
+    executionMode: context?.strategyPlan?.executionMode,
+    entryReason: context?.strategyPlan?.entryReason,
     error: result.error,
   };
   tradeLogs.push(entry);

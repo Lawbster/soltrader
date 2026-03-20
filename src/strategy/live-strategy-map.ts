@@ -8,6 +8,7 @@ const log = createLogger('live-strategy-map');
 
 export type TrendRegime = 'uptrend' | 'sideways' | 'downtrend';
 export type ExitMode = 'indicator' | 'price';
+export type RouteExecutionMode = 'live' | 'paper';
 
 export interface RouteProtectionConfig {
   // Arm lock once PnL reaches this threshold (pct), then protect at lockPct.
@@ -42,6 +43,7 @@ export interface TokenStrategy {
   maxPositionUsdc?: number;
   maxPositionEquityPct?: number;
   enabled: boolean;
+  executionMode?: RouteExecutionMode;
   indicator?: TokenIndicator;
   templateId: TemplateId;
   params: Record<string, number>;
@@ -65,6 +67,7 @@ interface RegimeConfigNewSingle {
   enabled: boolean;
   templateId: TemplateId;
   params: Record<string, number>;
+  executionMode?: RouteExecutionMode;
   sl?: number;
   tp?: number;
   slAtr?: number;
@@ -82,6 +85,7 @@ interface RegimeConfigNewSingle {
 interface RegimeRouteConfig {
   routeId?: string;
   enabled: boolean;
+  executionMode?: RouteExecutionMode;
   timeframeMinutes: number;
   priority?: number;
   protection?: RouteProtectionConfig;
@@ -309,6 +313,10 @@ function normalizePositivePctNumber(v?: number): number | undefined {
   return n;
 }
 
+function normalizeExecutionMode(v?: RouteExecutionMode): RouteExecutionMode | undefined {
+  return v === 'live' || v === 'paper' ? v : undefined;
+}
+
 function resolveAtrMult(
   direct: number | undefined,
   params: Record<string, number>,
@@ -381,6 +389,7 @@ function normalizeLegacyRegime(
     maxPositionUsdc: entry.maxPositionUsdc,
     maxPositionEquityPct: entry.maxPositionEquityPct,
     enabled: true,
+    executionMode: undefined,
     indicator: entry.indicator,
     templateId,
     params: { entry: rc.params.entry, exit: rc.params.exit, sl: rc.params.sl, tp: rc.params.tp },
@@ -411,6 +420,7 @@ function normalizeSingleRegime(
     maxPositionUsdc: rc.maxPositionUsdc ?? entry.maxPositionUsdc,
     maxPositionEquityPct: rc.maxPositionEquityPct ?? entry.maxPositionEquityPct,
     enabled: true,
+    executionMode: normalizeExecutionMode(rc.executionMode),
     indicator: rc.indicator ?? entry.indicator,
     templateId: rc.templateId,
     params: rc.params,
@@ -457,6 +467,7 @@ function normalizeRouteRegime(
       maxPositionUsdc: route.maxPositionUsdc ?? entry.maxPositionUsdc,
       maxPositionEquityPct: route.maxPositionEquityPct ?? entry.maxPositionEquityPct,
       enabled: true,
+      executionMode: normalizeExecutionMode(route.executionMode),
       indicator: route.indicator ?? entry.indicator,
       templateId: route.templateId,
       params: route.params,
