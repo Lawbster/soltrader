@@ -317,6 +317,10 @@ type SignalLogRow = {
   templateId?: string;
   timeframeMinutes?: number;
   regime?: string;
+  gateType?: string;
+  blockedRouteIds?: string[];
+  paramsKey?: string;
+  protectionKey?: string;
   score?: number;
   effectiveMaxUsdc?: number;
 };
@@ -329,8 +333,15 @@ function findLatestSignalFileName(): string | null {
   return files.length > 0 ? files[files.length - 1] : null;
 }
 
-function normalizeRejectReason(reason: string): string {
-  const r = (reason || '').trim();
+function normalizeRejectReason(row: SignalLogRow): string {
+  const gateType = (row.gateType || '').trim();
+  if (gateType === 'route-window') {
+    const blockedCount = Array.isArray(row.blockedRouteIds) ? row.blockedRouteIds.length : 0;
+    return blockedCount > 0 ? `route-window (${blockedCount} blocked)` : 'route-window';
+  }
+  if (gateType) return gateType;
+
+  const r = (row.rejectReason || '').trim();
   if (!r) return 'unknown';
 
   if (r.startsWith('route-window:')) {
@@ -430,7 +441,7 @@ function parseSignalStats(filePath: string) {
       const reasonRaw = (row.rejectReason || 'unknown').trim() || 'unknown';
       reasonCounts.set(reasonRaw, (reasonCounts.get(reasonRaw) || 0) + 1);
 
-      const group = normalizeRejectReason(reasonRaw);
+      const group = normalizeRejectReason(row);
       reasonGroupCounts.set(group, (reasonGroupCounts.get(group) || 0) + 1);
     }
 

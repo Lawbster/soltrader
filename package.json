@@ -22,6 +22,8 @@
     "sweepmtf": "tsx scripts/sweep-mtf.ts",
     "sweep-robustness": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs scripts/sweep-window-robustness.ts",
     "sweeprobustness": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs scripts/sweep-window-robustness.ts",
+    "strategy-review-run": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs scripts/strategy-review-run.ts",
+    "strategyreviewrun": "node --max-old-space-size=8192 ./node_modules/tsx/dist/cli.mjs scripts/strategy-review-run.ts",
     "robustness-report": "tsx scripts/robustness-report.ts",
     "robustnessreport": "tsx scripts/robustness-report.ts",
     "template-health": "tsx scripts/template-health.ts",

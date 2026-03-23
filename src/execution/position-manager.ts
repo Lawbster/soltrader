@@ -24,6 +24,32 @@ function resolveExecutionMode(strategyPlan?: StrategyPlan): 'live' | 'paper' {
   return config.trading.paperTrading ? 'paper' : 'live';
 }
 
+function isPaperStrategyPlan(strategyPlan?: StrategyPlan): boolean {
+  return resolveExecutionMode(strategyPlan) === 'paper';
+}
+
+function isPaperPosition(position: Position): boolean {
+  return isPaperStrategyPlan(position.strategyPlan);
+}
+
+function calculateOpenPnlUsdc(positions: Iterable<Position>): number {
+  let total = 0;
+  for (const position of positions) {
+    const currentValue = position.remainingTokens * position.currentPrice;
+    const costBasis = (position.remainingTokens / position.initialTokens) * position.initialSizeUsdc;
+    total += currentValue - costBasis;
+  }
+  return total;
+}
+
+function calculateOpenExposureUsdc(positions: Iterable<Position>): number {
+  let total = 0;
+  for (const position of positions) {
+    total += position.remainingTokens * position.currentPrice;
+  }
+  return total;
+}
+
 // Route buy/sell through paper executor when in paper mode or when a route explicitly asks for paper execution.
 async function executeBuy(
   mint: string,
@@ -46,6 +72,7 @@ async function executeSell(
   slippageBps: number,
   strategyPlan?: StrategyPlan,
   positionId?: string,
+  closeReason?: string,
 ): Promise<SwapResult> {
   if (resolveExecutionMode(strategyPlan) === 'paper') {
     return paperSellToken(mint, tokenAmountRaw, slippageBps);
@@ -54,6 +81,7 @@ async function executeSell(
     decisionId: strategyPlan?.decisionId,
     positionId,
     strategyPlan,
+    closeReason,
   });
 }
 
@@ -113,6 +141,7 @@ const closedPositions: Position[] = [];
 // Portfolio tracking (USDC denominated)
 let dailyStartEquity = 0;
 let dailyPnlUsdc = 0;
+let dailyPaperPnlUsdc = 0;
 let consecutiveLosses = 0;
 let lastLossTime = 0;
 let dailyStatsDateUtc = new Date().toISOString().split('T')[0];
@@ -198,12 +227,16 @@ export function recomputeSavedStatsForDate(positions: Position[], statsDateUtc: 
   const sorted = positions.slice().sort((a, b) => getPositionExitTime(a) - getPositionExitTime(b));
   const totalTrades = sorted.length;
   const wins = sorted.filter(position => calculateTrackedPnlUsdc(position) > 0).length;
-  const dailyPositions = sorted.filter(position => isPositionClosedOnUtcDate(position, statsDateUtc));
-  const realizedDailyPnlUsdc = dailyPositions.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
+  const livePositions = sorted.filter(position => !isPaperPosition(position));
+  const paperPositions = sorted.filter(position => isPaperPosition(position));
+  const dailyLivePositions = livePositions.filter(position => isPositionClosedOnUtcDate(position, statsDateUtc));
+  const dailyPaperPositions = paperPositions.filter(position => isPositionClosedOnUtcDate(position, statsDateUtc));
+  const realizedDailyPnlUsdc = dailyLivePositions.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
+  const realizedDailyPaperPnlUsdc = dailyPaperPositions.reduce((sum, position) => sum + calculateTrackedPnlUsdc(position), 0);
 
   let recomputedConsecutiveLosses = 0;
   let recomputedLastLossTime = 0;
-  for (const position of dailyPositions) {
+  for (const position of dailyLivePositions) {
     const pnl = calculateTrackedPnlUsdc(position);
     const exitTime = getPositionExitTime(position);
     if (pnl < 0) {
@@ -218,6 +251,7 @@ export function recomputeSavedStatsForDate(positions: Position[], statsDateUtc: 
     totalTrades,
     wins,
     dailyPnlUsdc: realizedDailyPnlUsdc,
+    dailyPaperPnlUsdc: realizedDailyPaperPnlUsdc,
     consecutiveLosses: recomputedConsecutiveLosses,
     lastLossTime: recomputedLastLossTime,
   };
@@ -306,25 +340,28 @@ async function getDecimals(mint: string): Promise<number> {
 }
 
 export function getPortfolioState(): PortfolioState {
-  // Include unrealized PnL from open positions in equity
-  const openPnlUsdc = Array.from(openPositions.values()).reduce((sum, p) => {
-    const currentValue = p.remainingTokens * p.currentPrice;
-    const costBasis = (p.remainingTokens / p.initialTokens) * p.initialSizeUsdc;
-    return sum + (currentValue - costBasis);
-  }, 0);
-
+  const allOpenPositions = Array.from(openPositions.values());
+  const liveOpenPositions = allOpenPositions.filter(position => !isPaperPosition(position));
+  const paperOpenPositions = allOpenPositions.filter(position => isPaperPosition(position));
+  const openPnlUsdc = calculateOpenPnlUsdc(liveOpenPositions);
+  const paperOpenPnlUsdc = calculateOpenPnlUsdc(paperOpenPositions);
   const equityUsdc = dailyStartEquity + dailyPnlUsdc + openPnlUsdc;
-  const openExposureUsdc = Array.from(openPositions.values())
-    .reduce((sum, p) => sum + p.remainingTokens * p.currentPrice, 0);
+  const openExposureUsdc = calculateOpenExposureUsdc(liveOpenPositions);
+  const paperOpenExposureUsdc = calculateOpenExposureUsdc(paperOpenPositions);
 
   return {
     equityUsdc,
-    openPositions: openPositions.size,
+    openPositions: liveOpenPositions.length,
     openExposureUsdc,
     dailyPnlUsdc,
     openPnlUsdc,
     dailyTotalPnlUsdc: dailyPnlUsdc + openPnlUsdc,
     dailyPnlPct: dailyStartEquity > 0 ? ((dailyPnlUsdc + openPnlUsdc) / dailyStartEquity) * 100 : 0,
+    paperOpenPositions: paperOpenPositions.length,
+    paperOpenExposureUsdc,
+    dailyPaperPnlUsdc,
+    paperOpenPnlUsdc,
+    dailyPaperTotalPnlUsdc: dailyPaperPnlUsdc + paperOpenPnlUsdc,
     consecutiveLosses,
     lastLossTime,
     stoppedOutTokens,
@@ -339,8 +376,9 @@ function currentUtcDate(): string {
 async function computeCurrentTotalEquityUsdc(): Promise<number> {
   const walletBalances = await getWalletBalances();
   const solPriceUsd = getTokenPriceCached(SOL_MINT).priceUsd;
-  const openNotionalUsdc = Array.from(openPositions.values())
-    .reduce((sum, p) => sum + (p.remainingTokens * p.currentPrice), 0);
+  const openNotionalUsdc = calculateOpenExposureUsdc(
+    Array.from(openPositions.values()).filter(position => !isPaperPosition(position))
+  );
   return walletBalances.usdc + (walletBalances.sol * solPriceUsd) + openNotionalUsdc;
 }
 
@@ -400,6 +438,7 @@ export async function initPortfolio() {
 
 export function resetDailyStats() {
   dailyPnlUsdc = 0;
+  dailyPaperPnlUsdc = 0;
   consecutiveLosses = 0;
   lastLossTime = 0;
   dailyStatsDateUtc = currentUtcDate();
@@ -412,6 +451,7 @@ export async function rollDailyStatsIfNeeded(): Promise<boolean> {
 
   dailyStartEquity = await computeCurrentTotalEquityUsdc();
   dailyPnlUsdc = 0;
+  dailyPaperPnlUsdc = 0;
   consecutiveLosses = 0;
   lastLossTime = 0;
   dailyStatsDateUtc = today;
@@ -464,43 +504,47 @@ export async function openPosition(
   await rollDailyStatsIfNeeded();
   const cfg = loadStrategyConfig();
   const portfolio = getPortfolioState();
+  const executionMode = resolveExecutionMode(strategyPlan);
+  const isPaper = executionMode === 'paper';
 
-  const killCheck = checkKillSwitch(portfolio.dailyPnlPct, consecutiveLosses);
-  if (!killCheck.passed) {
-    log.warn('Kill switch active, not opening position', { reason: killCheck.reason });
-    recordSkip('kill_switch');
-    return null;
-  }
-
-  if (openPositions.size >= cfg.portfolio.maxConcurrentPositions) {
-    log.warn('Max concurrent positions reached', { current: openPositions.size });
-    recordSkip('max_positions');
-    return null;
-  }
-
-  const exposurePct = portfolio.equityUsdc > 0
-    ? ((portfolio.openExposureUsdc + sizeUsdc) / portfolio.equityUsdc) * 100
-    : 100;
-  if (exposurePct > cfg.portfolio.maxOpenExposurePct) {
-    log.warn('Would exceed max exposure', { exposurePct: exposurePct.toFixed(1) });
-    recordSkip('max_exposure');
-    return null;
-  }
-
-  // Capital gate: ensure sufficient USDC available after reservations
-  {
-    const balances = await getWalletBalances();
-    const spendable = balances.usdc - reservedUsdc;
-    if (spendable < sizeUsdc) {
-      log.warn('Entry skipped: insufficient USDC', {
-        mint,
-        required: sizeUsdc.toFixed(2),
-        walletUsdc: balances.usdc.toFixed(2),
-        reservedUsdc: reservedUsdc.toFixed(2),
-        spendable: spendable.toFixed(2),
-      });
-      recordSkip('capital_insufficient');
+  if (!isPaper) {
+    const killCheck = checkKillSwitch(portfolio.dailyPnlPct, consecutiveLosses);
+    if (!killCheck.passed) {
+      log.warn('Kill switch active, not opening position', { reason: killCheck.reason });
+      recordSkip('kill_switch');
       return null;
+    }
+
+    if (portfolio.openPositions >= cfg.portfolio.maxConcurrentPositions) {
+      log.warn('Max concurrent positions reached', { current: portfolio.openPositions });
+      recordSkip('max_positions');
+      return null;
+    }
+
+    const exposurePct = portfolio.equityUsdc > 0
+      ? ((portfolio.openExposureUsdc + sizeUsdc) / portfolio.equityUsdc) * 100
+      : 100;
+    if (exposurePct > cfg.portfolio.maxOpenExposurePct) {
+      log.warn('Would exceed max exposure', { exposurePct: exposurePct.toFixed(1) });
+      recordSkip('max_exposure');
+      return null;
+    }
+
+    // Capital gate: ensure sufficient USDC available after reservations
+    {
+      const balances = await getWalletBalances();
+      const spendable = balances.usdc - reservedUsdc;
+      if (spendable < sizeUsdc) {
+        log.warn('Entry skipped: insufficient USDC', {
+          mint,
+          required: sizeUsdc.toFixed(2),
+          walletUsdc: balances.usdc.toFixed(2),
+          reservedUsdc: reservedUsdc.toFixed(2),
+          spendable: spendable.toFixed(2),
+        });
+        recordSkip('capital_insufficient');
+        return null;
+      }
     }
   }
 
@@ -542,14 +586,16 @@ export async function openPosition(
     log.info('Opening position', { mint, sizeUsdc: sizeUsdc.toFixed(2) });
 
     inFlightEntriesByMint.add(mint);
-    reservedUsdc += sizeUsdc;
+    if (!isPaper) reservedUsdc += sizeUsdc;
     const buyStart = Date.now();
     let result!: SwapResult;
     try {
       result = await executeBuy(mint, sizeUsdc, slippageBps, strategyPlan);
     } finally {
       inFlightEntriesByMint.delete(mint);
-      reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
+      if (!isPaper) {
+        reservedUsdc = Math.max(0, reservedUsdc - sizeUsdc);
+      }
     }
 
     recordExecutionAttempt(result.success);
@@ -563,8 +609,10 @@ export async function openPosition(
         timeframeMinutes: strategyPlan?.timeframeMinutes,
         regime: strategyPlan?.entryRegime,
         exitMode: strategyPlan?.exitMode,
-        executionMode: resolveExecutionMode(strategyPlan),
+        executionMode,
         entryReason: strategyPlan?.entryReason,
+        paramsKey: strategyPlan?.paramsKey,
+        protectionKey: strategyPlan?.protectionKey,
         sizeUsdc: result.usdcAmount || sizeUsdc,
         slippageBps,
         quotedImpactPct: result.priceImpactPct || 0,
@@ -614,8 +662,10 @@ export async function openPosition(
       timeframeMinutes: strategyPlan?.timeframeMinutes,
       regime: strategyPlan?.entryRegime,
       exitMode: strategyPlan?.exitMode,
-      executionMode: resolveExecutionMode(strategyPlan),
+      executionMode,
       entryReason: strategyPlan?.entryReason,
+      paramsKey: strategyPlan?.paramsKey,
+      protectionKey: strategyPlan?.protectionKey,
       sizeUsdc: result.usdcAmount || sizeUsdc,
       slippageBps,
       quotedImpactPct: result.priceImpactPct || 0,
@@ -1072,6 +1122,7 @@ async function executeExit(
       slippageBps,
       position.strategyPlan,
       position.id,
+      reason,
     );
     recordExecutionAttempt(result.success);
     logExecution({
@@ -1086,6 +1137,9 @@ async function executeExit(
       exitMode: position.strategyPlan?.exitMode,
       executionMode: resolveExecutionMode(position.strategyPlan),
       entryReason: position.strategyPlan?.entryReason,
+      paramsKey: position.strategyPlan?.paramsKey,
+      protectionKey: position.strategyPlan?.protectionKey,
+      closeReason: reason,
       sizeUsdc: result.usdcAmount || 0,
       slippageBps,
       quotedImpactPct: result.priceImpactPct || 0,
@@ -1144,7 +1198,7 @@ async function executeExit(
     });
 
     if (sellPct >= 100) {
-      if (config.trading.paperTrading) {
+      if (isPaperStrategyPlan(position.strategyPlan)) {
         verifiedFlat = position.remainingTokens <= dustToleranceTokens;
       } else if (hasSiblingOpenPositions) {
         verifiedFlat = position.remainingTokens <= dustToleranceTokens;
@@ -1213,29 +1267,35 @@ function closePosition(position: Position, reason: string) {
 
   const exitSummary = summarizeTrackedExits(position);
   const pnlUsdc = calculateTrackedPnlUsdc(position);
+  const isPaper = isPaperPosition(position);
+  const closedAt = getPositionExitTime(position);
 
-  dailyPnlUsdc += pnlUsdc;
+  if (isPaper) {
+    dailyPaperPnlUsdc += pnlUsdc;
+  } else {
+    dailyPnlUsdc += pnlUsdc;
+  }
 
   const finalExitType = position.exits[position.exits.length - 1]?.type;
 
-  if (pnlUsdc < 0) {
+  if (!isPaper && pnlUsdc < 0) {
     consecutiveLosses++;
-    lastLossTime = Date.now();
+    lastLossTime = closedAt;
     if (finalExitType === 'hard_stop' || finalExitType === 'emergency') {
-      stoppedOutTokens.set(position.mint, Date.now());
+      stoppedOutTokens.set(position.mint, closedAt);
     }
-  } else {
+  } else if (!isPaper) {
     consecutiveLosses = 0;
   }
 
   // Per-route circuit breaker: 3 consecutive losses → 12-hour cooldown
   const routeId = position.strategyPlan?.routeId;
-  if (routeId) {
+  if (!isPaper && routeId) {
     if (pnlUsdc < 0) {
       const newCount = (routeLossCounts.get(routeId) ?? 0) + 1;
       routeLossCounts.set(routeId, newCount);
       if (newCount >= ROUTE_LOSS_LIMIT) {
-        const until = Date.now() + ROUTE_COOLDOWN_MS;
+        const until = closedAt + ROUTE_COOLDOWN_MS;
         routeCooldowns.set(routeId, until);
         log.warn('Route cooldown activated', {
           routeId,
@@ -1254,16 +1314,18 @@ function closePosition(position: Position, reason: string) {
   lpHistory.delete(position.mint);
 
   // Record to metrics tracker
-  recordClosedPosition(position, resolveExecutionMode(position.strategyPlan) === 'paper');
+  recordClosedPosition(position, isPaper);
 
   log.info('Position closed', {
     id: position.id,
     mint: position.mint,
+    executionMode: isPaper ? 'paper' : 'live',
     reason,
     pnlUsdc: pnlUsdc.toFixed(2),
     pnlPct: position.currentPnlPct.toFixed(1),
     holdTime: `${Math.round((Date.now() - position.entryTime) / 60_000)}m`,
     dailyPnl: dailyPnlUsdc.toFixed(2),
+    dailyPaperPnl: dailyPaperPnlUsdc.toFixed(2),
     consecutiveLosses,
     orphanedUsdcIgnored: exitSummary.orphanedUsdcOut.toFixed(4),
   });
@@ -1320,7 +1382,13 @@ export function loadPositionHistory() {
   type PositionFile = {
     open: Position[];
     closed?: Position[];
-    stats: { dailyPnlUsdc: number; dailyStartEquityUsdc?: number; consecutiveLosses: number; lastLossTime: number };
+    stats: {
+      dailyPnlUsdc: number;
+      dailyPaperPnlUsdc?: number;
+      dailyStartEquityUsdc?: number;
+      consecutiveLosses: number;
+      lastLossTime: number;
+    };
   };
 
   function tryLoadFile(date: string): PositionFile | null {
@@ -1352,15 +1420,17 @@ export function loadPositionHistory() {
     }
     const recomputedStats = recomputeSavedStats(closedPositions, today);
     dailyPnlUsdc = recomputedStats.dailyPnlUsdc;
+    dailyPaperPnlUsdc = recomputedStats.dailyPaperPnlUsdc;
     consecutiveLosses = recomputedStats.consecutiveLosses;
     lastLossTime = recomputedStats.lastLossTime;
-    recomputeRouteCooldowns(closedPositions);
+    recomputeRouteCooldowns(closedPositions.filter(position => !isPaperPosition(position)));
     // Restore re-entry lockouts that are still within the lockout window
     const reEntryCfg = loadStrategyConfig();
     const lockoutMs = reEntryCfg.portfolio.reEntryLockoutHours * 3_600_000;
     for (const p of closedPositions) {
       const lastExit = p.exits[p.exits.length - 1];
       if (!lastExit) continue;
+      if (isPaperPosition(p)) continue;
       const pnl = calculateTrackedPnlUsdc(p);
       if (pnl < 0 && (lastExit.type === 'hard_stop' || lastExit.type === 'emergency')) {
         if (lastExit.timestamp + lockoutMs > Date.now()) {
@@ -1375,6 +1445,7 @@ export function loadPositionHistory() {
       strippedNoopExits,
       dailyStartEquity: dailyStartEquity.toFixed(2),
       dailyPnlUsdc: dailyPnlUsdc.toFixed(2),
+      dailyPaperPnlUsdc: dailyPaperPnlUsdc.toFixed(2),
       consecutiveLosses,
     });
     return;
@@ -1391,6 +1462,7 @@ export function loadPositionHistory() {
     // Do NOT restore yesterday's dailyPnlUsdc/consecutiveLosses — start fresh for today
     dailyStartEquity = 0;
     dailyPnlUsdc = 0;
+    dailyPaperPnlUsdc = 0;
     consecutiveLosses = 0;
     lastLossTime = 0;
     dailyStatsDateUtc = today;

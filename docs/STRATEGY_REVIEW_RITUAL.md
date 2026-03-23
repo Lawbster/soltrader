@@ -34,6 +34,31 @@ Rules:
 
 ## Step 0: Dual Evidence Pack
 
+### Automated Run
+
+For a tagged dual-window run that keeps outputs isolated and writes an evidence manifest, summary, and agent prompt kit:
+
+```bash
+npm run strategy-review-run
+```
+
+Useful overrides:
+
+```bash
+npm run strategy-review-run -- --to 2026-03-22
+npm run strategy-review-run -- --full-robustness-timeframes 5,15
+npm run strategy-review-run -- --out-root data/strategy-review-runs/review-custom
+```
+
+The runner writes:
+
+- `evidence-manifest.json`
+- `strategy-review-summary.md`
+- `strategy-review-summary.json`
+- `agent-prompts/*.md`
+- isolated `recent-real-volume/` and `full-history/` bundles
+- `support-reports/` for QA and slippage context
+
 ### 0A. Recent Real-Volume Slice
 
 Run the recent slice first from the real-volume anchor.

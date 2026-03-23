@@ -149,6 +149,53 @@
               "exitMode": "indicator"
             },
             {
+              "enabled": true,
+              "executionMode": "paper",
+              "routeId": "pippin-5m-bb-squeeze-volume-side-paper",
+              "templateId": "bb-squeeze-volume-breakout",
+              "timeframeMinutes": 5,
+              "priority": 445,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 600,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "widthThreshold": 0.06,
+                "volZScoreMin": 1
+              },
+              "sl": -3,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "executionMode": "paper",
+              "routeId": "pippin-1m-adx-range-side-paper",
+              "templateId": "adx-range-rsi-bb",
+              "timeframeMinutes": 1,
+              "priority": 455,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "adxMax": 25,
+                "rsiEntry": 25,
+                "rsiExit": 60
+              },
+              "sl": -3,
+              "tp": 3,
+              "exitMode": "indicator"
+            },
+            {
               "enabled": false,
               "routeId": "pippin-1m-rsi-crsi-side-research",
               "templateId": "rsi-crsi-confluence",
@@ -462,6 +509,30 @@
               "sl": -5,
               "tp": 4,
               "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "executionMode": "paper",
+              "routeId": "pump-1m-rsi-session-side-paper",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 455,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 30,
+                "exit": 70,
+                "session": 16
+              },
+              "sl": -5,
+              "tp": 3,
+              "exitMode": "indicator"
             }
           ]
         },
@@ -733,6 +804,7 @@
           "routes": [
             {
               "enabled": true,
+              "executionMode": "live",
               "routeId": "sol-15m-rsi2-side-research",
               "templateId": "rsi2-micro-range",
               "timeframeMinutes": 15,
@@ -752,6 +824,30 @@
               },
               "sl": -1,
               "tp": 2,
+              "exitMode": "indicator"
+            },
+            {
+              "enabled": true,
+              "executionMode": "paper",
+              "routeId": "sol-1m-rsi-session-side-paper",
+              "templateId": "rsi-session-gate",
+              "timeframeMinutes": 1,
+              "priority": 430,
+              "protection": {
+                "profitLockArmPct": 1,
+                "profitLockPct": 0.2,
+                "trailArmPct": 2,
+                "trailGapPct": 1,
+                "staleMaxHoldMinutes": 360,
+                "staleMinPnlPct": 0
+              },
+              "params": {
+                "entry": 25,
+                "exit": 85,
+                "session": 16
+              },
+              "sl": -5,
+              "tp": 1,
               "exitMode": "indicator"
             }
           ]

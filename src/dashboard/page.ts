@@ -876,11 +876,16 @@ function renderPortfolio(s) {
     ? s.portfolio.dailyTotalPnlUsdc
     : (dailyRealizedPnlUsdc + openPnlUsdc);
   const dailyTotalPnlPct = Number.isFinite(s?.portfolio?.dailyPnlPct) ? s.portfolio.dailyPnlPct : 0;
-  // Compute open positions notional: initialSizeUsdc * remainingPct/100 * (1 + pnlPct/100)
-  const openNotional = (s.openPositions || []).reduce((sum, p) => {
+  const allOpenPositions = Array.isArray(s.openPositions) ? s.openPositions : [];
+  const liveOpenPositions = allOpenPositions.filter(p => p.executionMode !== 'paper');
+  const paperOpenPositions = allOpenPositions.filter(p => p.executionMode === 'paper');
+  const calcOpenNotional = positions => positions.reduce((sum, p) => {
     return sum + (p.initialSizeUsdc || 0) * (p.remainingPct / 100) * (1 + p.pnlPct / 100);
   }, 0);
-  const totalEquity = (wb.usdc || 0) + solUsd + openNotional;
+  const liveOpenNotional = calcOpenNotional(liveOpenPositions);
+  const paperOpenNotional = calcOpenNotional(paperOpenPositions);
+  const totalOpenNotional = liveOpenNotional + paperOpenNotional;
+  const totalEquity = (wb.usdc || 0) + solUsd + liveOpenNotional;
 
   const cards = [
     {
@@ -897,20 +902,22 @@ function renderPortfolio(s) {
     },
     {
       label: 'Open Trades',
-      value: s.openPositions.length,
-      sub: openNotional > 0 ? '~ $' + fmt(openNotional, 2) + ' notional' : 'No open positions',
-      cls: s.openPositions.length > 0 ? 'yellow' : '',
+      value: allOpenPositions.length,
+      sub: allOpenPositions.length > 0
+        ? ('Live ' + liveOpenPositions.length + ' (~ $' + fmt(liveOpenNotional, 2) + ') | Paper ' + paperOpenPositions.length + ' (~ $' + fmt(paperOpenNotional, 2) + ')')
+        : 'No open positions',
+      cls: allOpenPositions.length > 0 ? 'yellow' : '',
     },
     {
       label: 'Daily Realized',
       value: fmtSigned(dailyRealizedPnlUsdc, 2) + ' USDC',
-      sub: 'Closed positions today | Equity ~ $' + fmt(totalEquity, 2),
+      sub: 'Closed live positions today | Equity ~ $' + fmt(totalEquity, 2),
       cls: pnlColor(dailyRealizedPnlUsdc),
     },
     {
       label: 'Open PnL',
       value: fmtSigned(openPnlUsdc, 2) + ' USDC',
-      sub: s.openPositions.length > 0 ? 'Mark-to-market open trades' : 'No open exposure',
+      sub: liveOpenPositions.length > 0 ? 'Mark-to-market live trades' : 'No live open exposure',
       cls: pnlColor(openPnlUsdc),
     },
     {
@@ -951,6 +958,10 @@ function renderPortfolio(s) {
 
 function renderPerformance(trades) {
   const stats = computeTradeStats(trades);
+  const liveTrades = trades.filter(t => !t.isPaper);
+  const paperTrades = trades.filter(t => t.isPaper);
+  const liveStats = computeTradeStats(liveTrades);
+  const paperStats = computeTradeStats(paperTrades);
   const section = document.getElementById('perfSection');
   const rangeEl = document.getElementById('perfRange');
   if (rangeEl) rangeEl.textContent = formatTradeRangeLabel();
@@ -963,12 +974,24 @@ function renderPerformance(trades) {
     { label: 'Live / Paper', value: trades.filter(t => !t.isPaper).length + ' / ' + trades.filter(t => t.isPaper).length, cls: 'blue' },
     { label: 'Win Rate', value: fmtPct(stats.winRate), cls: stats.winRate >= 50 ? 'green' : 'red' },
     { label: 'Profit Factor', value: fmt(stats.profitFactor), cls: stats.profitFactor >= 1.25 ? 'green' : 'red' },
-    { label: 'Total PnL', value: fmt(stats.totalPnlUsdc, 2) + ' USDC', cls: pnlColor(stats.totalPnlUsdc) },
+    {
+      label: 'Live PnL',
+      value: fmt(liveStats.totalPnlUsdc, 2) + ' USDC',
+      cls: pnlColor(liveStats.totalPnlUsdc),
+      sub: liveStats.totalTrades > 0 ? (liveStats.totalTrades + ' live trades') : 'No live trades in range',
+    },
+    {
+      label: 'Paper PnL',
+      value: fmt(paperStats.totalPnlUsdc, 2) + ' USDC',
+      cls: pnlColor(paperStats.totalPnlUsdc),
+      sub: paperStats.totalTrades > 0 ? (paperStats.totalTrades + ' paper trades') : 'No paper trades in range',
+    },
     { label: 'Max Drawdown', value: fmtPct(stats.maxDrawdownPct), cls: stats.maxDrawdownPct <= 10 ? 'green' : 'red' },
     { label: 'Avg Hold', value: fmt(stats.avgHoldTimeMinutes, 1) + 'm', cls: 'blue' },
   ];
   el.innerHTML = cards.map(c =>
-    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div></div>'
+    '<div class="card"><h3>' + c.label + '</h3><div class="value ' + c.cls + '">' + c.value + '</div>' +
+    (c.sub ? '<div class="sub">' + c.sub + '</div>' : '') + '</div>'
   ).join('');
 }
 

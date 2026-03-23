@@ -82,7 +82,39 @@ export function loadCandles(mint: string, fromDate?: string, toDate?: string): C
     }
   }
 
-  return candles.sort((a, b) => a.timestamp - b.timestamp);
+  return sanitizeCandles(candles.sort((a, b) => a.timestamp - b.timestamp));
+}
+
+/** Clamp single-candle price spikes caused by thin-market oracle anomalies.
+ *  Any candle whose close deviates >80% from the previous close is flattened
+ *  to prevClose. Recovery candles (normal close, outlier open) have their open
+ *  pinned to prevClose and their high/low recomputed accordingly.
+ *  Flattening (not dropping) preserves timestamp continuity for aggregateCandles(). */
+const CANDLE_SPIKE_THRESHOLD = 0.8;
+
+function sanitizeCandles(candles: Candle[]): Candle[] {
+  if (candles.length === 0) return candles;
+  const out: Candle[] = [candles[0]];
+  for (let i = 1; i < candles.length; i++) {
+    const prev = out[out.length - 1].close;
+    let { open: o, high: h, low: l, close: c, ...rest } = candles[i];
+
+    if (Math.abs(c - prev) / prev > CANDLE_SPIKE_THRESHOLD) {
+      // Entire candle is an outlier — flatten to previous close
+      out.push({ ...rest, open: prev, high: prev, low: prev, close: prev });
+      continue;
+    }
+
+    if (Math.abs(o - prev) / prev > CANDLE_SPIKE_THRESHOLD) {
+      // Recovery candle: close returned to normal but open still carries spike price
+      o = prev;
+      h = Math.max(o, c);
+      l = Math.min(o, c);
+    }
+
+    out.push({ ...rest, open: o, high: h, low: l, close: c });
+  }
+  return out;
 }
 
 export function loadTokenDataset(mint: string, label: string): TokenDataset {

@@ -34,6 +34,11 @@ export interface PortfolioState {
   openPnlUsdc: number;
   dailyTotalPnlUsdc: number;
   dailyPnlPct: number;
+  paperOpenPositions: number;
+  paperOpenExposureUsdc: number;
+  dailyPaperPnlUsdc: number;
+  paperOpenPnlUsdc: number;
+  dailyPaperTotalPnlUsdc: number;
   consecutiveLosses: number;
   lastLossTime: number;
   stoppedOutTokens: Map<string, number>; // mint → stop-out timestamp

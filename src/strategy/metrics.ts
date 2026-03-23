@@ -26,6 +26,9 @@ export interface TradeMetric {
   entryRegime?: string;
   exitMode?: string;
   executionMode?: string;
+  paramsKey?: string;
+  protectionKey?: string;
+  closeReason?: string;
   isPaper: boolean;
 }
 
@@ -158,6 +161,9 @@ export function recordClosedPosition(position: Position, isPaper: boolean) {
     entryRegime: position.strategyPlan?.entryRegime,
     exitMode: position.strategyPlan?.exitMode,
     executionMode: position.strategyPlan?.executionMode ?? (isPaper ? 'paper' : 'live'),
+    paramsKey: position.strategyPlan?.paramsKey,
+    protectionKey: position.strategyPlan?.protectionKey,
+    closeReason: position.closeReason,
     isPaper,
   };
 

@@ -24,6 +24,7 @@ interface TradeContext {
   decisionId?: string;
   positionId?: string;
   strategyPlan?: StrategyPlan;
+  closeReason?: string;
 }
 
 // Cache token decimals to avoid repeated lookups
@@ -571,6 +572,9 @@ function logTrade(
     exitMode: context?.strategyPlan?.exitMode,
     executionMode: context?.strategyPlan?.executionMode,
     entryReason: context?.strategyPlan?.entryReason,
+    paramsKey: context?.strategyPlan?.paramsKey,
+    protectionKey: context?.strategyPlan?.protectionKey,
+    closeReason: context?.closeReason,
     error: result.error,
   };
   tradeLogs.push(entry);

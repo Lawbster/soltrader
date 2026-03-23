@@ -60,9 +60,13 @@ export interface SignalLogEntry {
   templateId?: string;
   timeframeMinutes?: number;
   regime?: string;
+  gateType?: string;
+  blockedRouteIds?: string[];
   exitMode?: string;
   executionMode?: string;
   entryReason?: string;
+  paramsKey?: string;
+  protectionKey?: string;
   score?: number;
   quotedImpactPct?: number;
   liquidityUsd: number;
@@ -88,6 +92,9 @@ export interface ExecutionLogEntry {
   exitMode?: string;
   executionMode?: string;
   entryReason?: string;
+  paramsKey?: string;
+  protectionKey?: string;
+  closeReason?: string;
   sizeUsdc: number;
   slippageBps: number;
   quotedImpactPct: number;

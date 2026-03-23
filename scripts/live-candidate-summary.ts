@@ -64,6 +64,11 @@ function utcDateToday(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
+function resolveDir(argName: string, fallback: string): string {
+  const value = getArg(argName);
+  return value ? path.resolve(value) : fallback;
+}
+
 function ensureDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
 }
@@ -158,7 +163,7 @@ function rowKey(row: CandidateRow): string {
   ].join('|');
 }
 
-function loadCandidateRows(sweepDate: string): CandidateRow[] {
+function loadCandidateRows(sweepDate: string, candidatesDir: string): CandidateRow[] {
   const rows: CandidateRow[] = [];
   const seen = new Set<string>();
   for (const tf of [1, 5, 15]) {
@@ -170,7 +175,7 @@ function loadCandidateRows(sweepDate: string): CandidateRow[] {
         `${sweepDate}-${tf}min.${bucket}-down.csv`,
       ];
       for (const file of files) {
-        parseCsv(path.join(CANDIDATES_DIR, file)).forEach((row, index) => {
+        parseCsv(path.join(candidatesDir, file)).forEach((row, index) => {
           const enriched: CandidateRow = {
             ...row,
             __bucket: bucket,
@@ -188,10 +193,10 @@ function loadCandidateRows(sweepDate: string): CandidateRow[] {
   return rows;
 }
 
-function loadSweepRows(sweepDate: string): SweepRow[] {
+function loadSweepRows(sweepDate: string, sweepDir: string): SweepRow[] {
   const rows: SweepRow[] = [];
   for (const tf of [1, 5, 15]) {
-    for (const row of parseCsv(path.join(SWEEP_RESULTS_DIR, `${sweepDate}-${tf}min.csv`))) {
+    for (const row of parseCsv(path.join(sweepDir, `${sweepDate}-${tf}min.csv`))) {
       rows.push(row);
     }
   }
@@ -350,18 +355,21 @@ function buildCsv(routes: LiveRoute[], candidateRows: CandidateRow[], sweepRows:
 
 function main() {
   const sweepDate = getArg('--sweep-date') ?? getArg('--date') ?? utcDateToday();
+  const candidateDir = resolveDir('--candidate-dir', CANDIDATES_DIR);
+  const sweepDir = resolveDir('--sweep-dir', SWEEP_RESULTS_DIR);
+  const outDir = resolveDir('--out-dir', REPORTS_DIR);
   const liveMap = readJson<LiveMap>(CONFIG_PATH);
   const routes = flattenLiveRoutes(liveMap);
-  const candidateRows = loadCandidateRows(sweepDate);
-  const sweepRows = loadSweepRows(sweepDate);
+  const candidateRows = loadCandidateRows(sweepDate, candidateDir);
+  const sweepRows = loadSweepRows(sweepDate, sweepDir);
 
   if (candidateRows.length === 0) {
-    throw new Error(`No candidate files found for ${sweepDate}. Run sweep-candidates for 1m/5m/15m first.`);
+    throw new Error(`No candidate files found for ${sweepDate} in ${candidateDir}. Run sweep-candidates for 1m/5m/15m first.`);
   }
 
-  ensureDir(REPORTS_DIR);
-  const mdPath = path.join(REPORTS_DIR, `${sweepDate}.live-candidate-summary.md`);
-  const csvPath = path.join(REPORTS_DIR, `${sweepDate}.live-candidate-summary.csv`);
+  ensureDir(outDir);
+  const mdPath = path.join(outDir, `${sweepDate}.live-candidate-summary.md`);
+  const csvPath = path.join(outDir, `${sweepDate}.live-candidate-summary.csv`);
   fs.writeFileSync(mdPath, buildMarkdown(sweepDate, routes, candidateRows, sweepRows));
   fs.writeFileSync(csvPath, buildCsv(routes, candidateRows, sweepRows));
   console.log(`Saved live candidate summary: ${mdPath}`);

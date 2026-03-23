@@ -40,6 +40,7 @@ export interface StrategyPlan {
   decisionId?: string; // ties signal -> execution -> trade -> closed position
   templateId?: TemplateId;                 // always set for template-routed tokens
   templateParams?: Record<string, number>; // template-specific params
+  paramsKey?: string;                      // canonicalized template params for parity joins
   exitMode?: ExitMode;                     // 'price' (default) | 'indicator'
   executionMode?: RouteExecutionMode;      // optional per-route execution override
   routeId?: string;                        // unique per-token route identifier
@@ -48,6 +49,7 @@ export interface StrategyPlan {
   entryRegime?: string;                    // regime active when the position was opened
   entryReason?: string;                    // concise why-this-opened summary for ops/dashboard
   protection?: RouteProtectionConfig;      // optional dynamic protection rules
+  protectionKey?: string;                  // canonicalized protection config for parity joins
   indicator?: {
     kind: 'rsi' | 'crsi';
     rsiPeriod: number;
@@ -124,6 +126,9 @@ export interface TradeLog {
   exitMode?: ExitMode;
   executionMode?: RouteExecutionMode;
   entryReason?: string;
+  paramsKey?: string;
+  protectionKey?: string;
+  closeReason?: string;
   error?: string;
 }
 

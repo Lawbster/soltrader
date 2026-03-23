@@ -11,6 +11,7 @@ import {
   initMetrics, saveMetrics, printMetricsSummary, getAggregateMetrics,
 } from './strategy';
 import { getLiveTokenStrategies, type TokenStrategy } from './strategy/live-strategy-map';
+import { buildNumericRecordKey, buildProtectionKey } from './strategy/route-fingerprint';
 import { startRegimeRefresh, getTokenRegimeCached } from './strategy/regime-detector';
 import { getTemplateMetadata } from './strategy/templates/catalog';
 import { StrategyPlan } from './execution/types';
@@ -46,6 +47,24 @@ function createDecisionId(mint: string, routeId?: string): string {
   const mintTag = mint.slice(0, 4).toLowerCase();
   const routeTag = (routeId ?? 'route').slice(0, 12).replace(/[^a-z0-9-]/gi, '').toLowerCase();
   return `dec-${Date.now()}-${mintTag}-${routeTag}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function resolveRouteExecutionMode(route?: TokenStrategy): 'live' | 'paper' {
+  return route?.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live');
+}
+
+function classifyRejectGate(reason?: string): string {
+  const value = (reason ?? '').trim();
+  if (!value) return 'reject';
+  if (value.startsWith('template:')) return 'template-reject';
+  if (value.startsWith('route-cooldown:')) return 'route-cooldown';
+  if (value.startsWith('Re-entry lockout')) return 're-entry-lockout';
+  if (value.startsWith('Score ')) return 'score-gate';
+  if (value.startsWith('Max positions:')) return 'max-positions';
+  if (value.startsWith('Max exposure:')) return 'max-exposure';
+  if (value.startsWith('Daily loss limit:')) return 'daily-loss-limit';
+  if (value.startsWith('Consecutive loss cooldown:')) return 'loss-cooldown';
+  return 'filter-reject';
 }
 
 // Tokens waiting for their age window before analysis
@@ -197,19 +216,23 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
   const skippedByBoundary: string[] = [];
   const skippedByWarmup: string[] = [];
   const skippedByOpenRoute: string[] = [];
+  const blockedRouteIds = new Set<string>();
   const indicatorCache = new Map<string, IndicatorSnapshot>();
   const defaultTimeframeMinutes = indicatorsCfg?.candleIntervalMinutes ?? 1;
   const nowMs = Date.now();
 
   for (const route of tokenStrategies) {
+    const routeRef = route.routeId ?? route.templateId;
     if (hasOpenPositionForRoute(mint, route.routeId)) {
-      skippedByOpenRoute.push(`${route.routeId ?? route.templateId}`);
+      skippedByOpenRoute.push(`${routeRef}`);
+      blockedRouteIds.add(routeRef);
       continue;
     }
 
     const evalGate = shouldEvaluateRouteNow(mint, route, defaultTimeframeMinutes, nowMs);
     if (!evalGate.evaluate) {
-      skippedByBoundary.push(`${route.routeId ?? route.templateId}@${evalGate.timeframeMinutes}m`);
+      skippedByBoundary.push(`${routeRef}@${evalGate.timeframeMinutes}m`);
+      blockedRouteIds.add(routeRef);
       continue;
     }
 
@@ -256,15 +279,17 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
 
       if ((indicators?.candleCount ?? 0) < requiredHistory) {
         skippedByWarmup.push(
-          `${route.routeId ?? route.templateId}@${intervalMinutes}m ${indicators?.candleCount ?? 0}/${requiredHistory}`
+          `${routeRef}@${intervalMinutes}m ${indicators?.candleCount ?? 0}/${requiredHistory}`
         );
+        blockedRouteIds.add(routeRef);
         continue;
       }
 
       if (routeRequiresAtrExit(route) && !Number.isFinite(indicators?.atr)) {
         skippedByWarmup.push(
-          `${route.routeId ?? route.templateId}@${intervalMinutes}m atr-missing`
+          `${routeRef}@${intervalMinutes}m atr-missing`
         );
+        blockedRouteIds.add(routeRef);
         continue;
       }
     }
@@ -307,6 +332,8 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
         source: 'none',
         candleCount: 0,
         entryDecision: false,
+        gateType: 'route-window',
+        blockedRouteIds: Array.from(blockedRouteIds),
         rejectReason: `route-window: ${reasons.join(' | ')}`,
         regime,
         liquidityUsd: tokenData.liquidityUsd,
@@ -343,6 +370,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       source: rejectIndicators?.candleCount ? 'price-feed' : 'none',
       candleCount: rejectIndicators?.candleCount ?? 0,
       entryDecision: false,
+      gateType: classifyRejectGate(rejectSignal?.reason || rejectSignal?.filterResult?.reason),
       rejectReason: rejectSignal
         ? `route:${rejectRoute?.routeId ?? rejectRoute?.templateId}@${topRejected?.timeframeMinutes}m ${rejectSignal.reason || rejectSignal.filterResult?.reason || ''}`
         : 'no-route-passed',
@@ -351,7 +379,9 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
       timeframeMinutes: topRejected?.timeframeMinutes,
       regime,
       exitMode: rejectRoute?.exitMode,
-      executionMode: rejectRoute?.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
+      executionMode: resolveRouteExecutionMode(rejectRoute),
+      paramsKey: buildNumericRecordKey(rejectRoute?.params),
+      protectionKey: buildProtectionKey(rejectRoute?.protection),
       score: rejectSignal?.scoreResult ? Math.round(rejectSignal.scoreResult.total) : undefined,
       liquidityUsd: tokenData.liquidityUsd,
       effectiveMaxUsdc: 0,
@@ -393,6 +423,7 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     source: winnerIndicators?.candleCount ? 'price-feed' : 'none',
     candleCount: winnerIndicators?.candleCount ?? 0,
     entryDecision: true,
+    gateType: 'accepted',
     rejectReason: '',
     acceptReason,
     routeId: winnerRoute.routeId ?? winnerRoute.templateId,
@@ -400,8 +431,10 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     timeframeMinutes: winner.timeframeMinutes,
     regime,
     exitMode: winnerRoute.exitMode,
-    executionMode: winnerRoute.executionMode ?? (config.trading.paperTrading ? 'paper' : 'live'),
+    executionMode: resolveRouteExecutionMode(winnerRoute),
     entryReason: acceptReason,
+    paramsKey: buildNumericRecordKey(winnerRoute.params),
+    protectionKey: buildProtectionKey(winnerRoute.protection),
     score: winnerScore,
     liquidityUsd: tokenData.liquidityUsd,
     effectiveMaxUsdc: winnerSignal.positionSizeUsdc,
@@ -435,14 +468,16 @@ async function analyzeCandidate(mint: string, launch: TokenLaunch) {
     decisionId,
     templateId: winnerRoute.templateId,
     templateParams: winnerRoute.params,
+    paramsKey: buildNumericRecordKey(winnerRoute.params),
     exitMode: winnerRoute.exitMode,
-    executionMode: winnerRoute.executionMode,
+    executionMode: resolveRouteExecutionMode(winnerRoute),
     routeId: winnerRoute.routeId,
     timeframeMinutes: winner.timeframeMinutes,
     priority: winnerRoute.priority,
     entryRegime: regime,
     entryReason: acceptReason,
     protection: winnerRoute.protection,
+    protectionKey: buildProtectionKey(winnerRoute.protection),
     indicator: winnerRoute.indicator,
   };
 
@@ -713,9 +748,13 @@ async function main() {
         tradeSubscriptions: getActiveSubscriptionCount(),
         priceHistory: priceHistoryCounts,
         openPositions: portfolio.openPositions,
+        paperOpenPositions: portfolio.paperOpenPositions,
+        liveOpenExposureUsdc: portfolio.openExposureUsdc.toFixed(2),
+        paperOpenExposureUsdc: portfolio.paperOpenExposureUsdc.toFixed(2),
         equityUsdc: displayedEquityUsdc.toFixed(2),
         trackedEquityUsdc: portfolio.equityUsdc.toFixed(2),
         dailyPnl: portfolio.dailyPnlPct.toFixed(2) + '%',
+        dailyPaperPnlUsdc: portfolio.dailyPaperPnlUsdc.toFixed(2),
         totalTrades: metrics.totalTrades,
         winRate: metrics.totalTrades > 0 ? metrics.winRate.toFixed(1) + '%' : 'N/A',
         profitFactor: metrics.totalTrades > 0 ? metrics.profitFactor.toFixed(2) : 'N/A',
