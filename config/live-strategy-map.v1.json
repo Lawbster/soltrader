@@ -804,7 +804,7 @@
           "routes": [
             {
               "enabled": true,
-              "executionMode": "live",
+              "executionMode": "paper",
               "routeId": "sol-15m-rsi2-side-research",
               "templateId": "rsi2-micro-range",
               "timeframeMinutes": 15,
